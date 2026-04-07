@@ -3,6 +3,7 @@ import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 import type { Logger } from "pino";
 
 import { evaluateAccess } from "../auth.js";
+import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "../onboarding.js";
 import { normalizeMessage } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
@@ -64,6 +65,28 @@ export function createDiscordClient(params: {
       },
       "Received Discord message"
     );
+
+    if (accessDecision.canUsePrivilegedFeatures) {
+      if (!normalized.isDirectMessage) {
+        return;
+      }
+
+      const content = normalized.content.trim();
+
+      if (!persistence.settings.hasCompletedOnboarding()) {
+        const response = content
+          ? handleOnboardingReply(persistence.settings, content)
+          : { reply: getOnboardingPrompt(persistence.settings), onboardingComplete: false };
+        void message.reply(response.reply);
+        return;
+      }
+
+      if (isSettingsCommand(content)) {
+        void message.reply(handleSettingsCommand(persistence.settings, content));
+      }
+
+      return;
+    }
 
     if (!accessDecision.canUsePrivilegedFeatures && accessDecision.shouldReply && accessDecision.responseMessage) {
       void message.reply(accessDecision.responseMessage);

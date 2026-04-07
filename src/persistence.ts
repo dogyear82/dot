@@ -3,10 +3,12 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
+import { createSettingsStore, type SettingsStore } from "./settings.js";
 import type { AccessAuditRecord, IncomingMessage } from "./types.js";
 
 export interface Persistence {
   db: Database.Database;
+  settings: SettingsStore;
   saveNormalizedMessage(message: IncomingMessage): void;
   saveAccessAudit(record: AccessAuditRecord): void;
   close(): void;
@@ -43,6 +45,12 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       can_use_privileged_features INTEGER NOT NULL,
       decision TEXT NOT NULL,
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
@@ -84,8 +92,11 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     )
   `);
 
+  const settings = createSettingsStore(db);
+
   return {
     db,
+    settings,
     saveNormalizedMessage(message) {
       saveStatement.run({
         ...message,

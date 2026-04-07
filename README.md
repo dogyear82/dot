@@ -38,3 +38,11 @@ This bootstrap includes:
 - structured logging
 - SQLite bootstrap
 - Compose and Ollama runtime contract
+- persistent user-editable settings
+- first-run owner onboarding in Discord DMs
+
+## Current owner commands
+
+- first DM message starts onboarding if setup is incomplete
+- `settings show`
+- `settings set <key> <value>`
