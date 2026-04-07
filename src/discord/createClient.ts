@@ -3,16 +3,18 @@ import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 import type { Logger } from "pino";
 
 import { evaluateAccess } from "../auth.js";
+import type { ChatService } from "../chat/modelRouter.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "../onboarding.js";
 import { normalizeMessage } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
 export function createDiscordClient(params: {
+  chatService: ChatService;
   logger: Logger;
   ownerUserId: string;
   persistence: Persistence;
 }) {
-  const { logger, ownerUserId, persistence } = params;
+  const { chatService, logger, ownerUserId, persistence } = params;
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -67,7 +69,7 @@ export function createDiscordClient(params: {
     );
 
     if (accessDecision.canUsePrivilegedFeatures) {
-      if (!normalized.isDirectMessage) {
+      if (!normalized.isDirectMessage && !normalized.mentionedBot) {
         return;
       }
 
@@ -83,7 +85,25 @@ export function createDiscordClient(params: {
 
       if (isSettingsCommand(content)) {
         void message.reply(handleSettingsCommand(persistence.settings, content));
+        return;
       }
+
+      if (!content) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          const response = await chatService.generateOwnerReply(content);
+          logger.info({ provider: response.provider, messageId: normalized.id }, "Generated owner chat response");
+          await message.reply(response.reply);
+        } catch (error) {
+          logger.error({ err: error, messageId: normalized.id }, "Failed to generate owner chat response");
+          await message.reply(
+            "I couldn't generate a response from the configured model provider. Check the model settings or provider configuration."
+          );
+        }
+      })();
 
       return;
     }

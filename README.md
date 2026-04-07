@@ -40,6 +40,13 @@ This bootstrap includes:
 - Compose and Ollama runtime contract
 - persistent user-editable settings
 - first-run owner onboarding in Discord DMs
+- owner chat replies backed by model routing
+
+## Model routing
+
+- default local runtime: Ollama
+- hosted fallback: OpenAI-compatible endpoint when `ONEMINAI_*` settings are configured
+- active persona is driven by persisted settings
 
 ## Current owner commands
 
