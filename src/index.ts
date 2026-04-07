@@ -9,7 +9,11 @@ async function main() {
   const config = loadConfig();
   const logger = createLogger(config.LOG_LEVEL);
   const persistence = initializePersistence(config.DATA_DIR, config.SQLITE_PATH);
-  const client = createDiscordClient(logger, persistence);
+  const client = createDiscordClient({
+    logger,
+    ownerUserId: config.DISCORD_OWNER_USER_ID,
+    persistence
+  });
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down");
