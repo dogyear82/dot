@@ -1,0 +1,23 @@
+services:
+  bot:
+    build:
+      context: .
+    env_file:
+      - .env
+    depends_on:
+      - ollama
+    volumes:
+      - dot_data:/app/data
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  dot_data:
+  ollama_data:
