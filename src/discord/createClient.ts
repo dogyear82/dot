@@ -2,10 +2,16 @@ import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 
 import type { Logger } from "pino";
 
+import { evaluateAccess } from "../auth.js";
 import { normalizeMessage } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
-export function createDiscordClient(logger: Logger, persistence: Persistence) {
+export function createDiscordClient(params: {
+  logger: Logger;
+  ownerUserId: string;
+  persistence: Persistence;
+}) {
+  const { logger, ownerUserId, persistence } = params;
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -33,17 +39,35 @@ export function createDiscordClient(logger: Logger, persistence: Persistence) {
 
     const normalized = normalizeMessage(message, client.user.id);
     persistence.saveNormalizedMessage(normalized);
+    const accessDecision = evaluateAccess({
+      authorId: normalized.authorId,
+      ownerUserId,
+      isDirectMessage: normalized.isDirectMessage,
+      mentionedBot: normalized.mentionedBot
+    });
+    persistence.saveAccessAudit({
+      messageId: normalized.id,
+      actorRole: accessDecision.actorRole,
+      canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
+      decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed"
+    });
 
     logger.info(
       {
         messageId: normalized.id,
         channelId: normalized.channelId,
         authorId: normalized.authorId,
+        actorRole: accessDecision.actorRole,
+        canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
         isDirectMessage: normalized.isDirectMessage,
         mentionedBot: normalized.mentionedBot
       },
       "Received Discord message"
     );
+
+    if (!accessDecision.canUsePrivilegedFeatures && accessDecision.shouldReply && accessDecision.responseMessage) {
+      void message.reply(accessDecision.responseMessage);
+    }
   });
 
   client.on(Events.Error, (error) => {

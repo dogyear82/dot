@@ -3,11 +3,12 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
-import type { IncomingMessage } from "./types.js";
+import type { AccessAuditRecord, IncomingMessage } from "./types.js";
 
 export interface Persistence {
   db: Database.Database;
   saveNormalizedMessage(message: IncomingMessage): void;
+  saveAccessAudit(record: AccessAuditRecord): void;
   close(): void;
 }
 
@@ -32,6 +33,15 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       is_direct_message INTEGER NOT NULL,
       mentioned_bot INTEGER NOT NULL,
       created_at TEXT NOT NULL,
+      recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS access_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      can_use_privileged_features INTEGER NOT NULL,
+      decision TEXT NOT NULL,
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -60,6 +70,20 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     )
   `);
 
+  const accessAuditStatement = db.prepare(`
+    INSERT INTO access_audit (
+      message_id,
+      actor_role,
+      can_use_privileged_features,
+      decision
+    ) VALUES (
+      @messageId,
+      @actorRole,
+      @canUsePrivilegedFeatures,
+      @decision
+    )
+  `);
+
   return {
     db,
     saveNormalizedMessage(message) {
@@ -67,6 +91,12 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         ...message,
         isDirectMessage: message.isDirectMessage ? 1 : 0,
         mentionedBot: message.mentionedBot ? 1 : 0
+      });
+    },
+    saveAccessAudit(record) {
+      accessAuditStatement.run({
+        ...record,
+        canUsePrivilegedFeatures: record.canUsePrivilegedFeatures ? 1 : 0
       });
     },
     close() {

@@ -9,3 +9,10 @@ export interface IncomingMessage {
   mentionedBot: boolean;
   createdAt: string;
 }
+
+export interface AccessAuditRecord {
+  messageId: string;
+  actorRole: "owner" | "non-owner";
+  canUsePrivilegedFeatures: boolean;
+  decision: "owner-allowed" | "non-owner-routed";
+}
