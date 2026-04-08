@@ -41,6 +41,7 @@ This bootstrap includes:
 - persistent user-editable settings
 - first-run owner onboarding in Discord DMs
 - owner chat replies backed by model routing
+- durable owner reminders with Discord notifications and acknowledgement commands
 
 ## Model routing
 
@@ -59,3 +60,13 @@ This bootstrap includes:
 - first DM message starts onboarding if setup is incomplete
 - `settings show`
 - `settings set <key> <value>`
+- `reminder add <duration> <message>`
+- `remind <duration> <message>`
+- `reminder show`
+- `reminder ack <id>`
+
+## Reminder Notes
+
+- Reminder notifications are sent through Discord.
+- `nag-only` enables repeated Discord follow-ups.
+- `discord-then-sms` is stored as a setting now, but SMS escalation is deferred until the later SMS story is implemented.

@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import { evaluateAccess } from "../auth.js";
 import type { ChatService } from "../chat/modelRouter.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "../onboarding.js";
+import { handleReminderCommand, isReminderCommand } from "../reminders.js";
 import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
@@ -87,6 +88,11 @@ export function createDiscordClient(params: {
 
       if (isSettingsCommand(content)) {
         void message.reply(handleSettingsCommand(persistence.settings, content));
+        return;
+      }
+
+      if (isReminderCommand(content)) {
+        void message.reply(handleReminderCommand(persistence, content));
         return;
       }
 
