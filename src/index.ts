@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { createDiscordClient } from "./discord/createClient.js";
 import { createLogger } from "./logger.js";
 import { initializePersistence } from "./persistence.js";
+import { startReminderScheduler } from "./reminders.js";
 
 async function main() {
   const config = loadConfig();
@@ -20,9 +21,11 @@ async function main() {
     ownerUserId: config.DISCORD_OWNER_USER_ID,
     persistence
   });
+  let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down");
+    reminderScheduler?.stop();
     await client.destroy();
     persistence.close();
     process.exit(0);
@@ -47,6 +50,12 @@ async function main() {
   );
 
   await client.login(config.DISCORD_BOT_TOKEN);
+  reminderScheduler = startReminderScheduler({
+    client,
+    logger,
+    ownerUserId: config.DISCORD_OWNER_USER_ID,
+    persistence
+  });
 }
 
 main().catch((error) => {
