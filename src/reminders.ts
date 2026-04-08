@@ -6,10 +6,18 @@ import type { ReminderRecord } from "./types.js";
 
 const REMINDER_POLL_INTERVAL_MS = 5000;
 const NAG_FOLLOW_UP_MS = 5 * 60 * 1000;
+const DELIVERY_RETRY_MS = 60 * 1000;
 const MAX_NAG_NOTIFICATIONS = 3;
 
 export function isReminderCommand(content: string): boolean {
-  return content.startsWith("reminder") || content.startsWith("remind ");
+  return (
+    content === "reminder" ||
+    content === "reminder help" ||
+    content === "reminder show" ||
+    content.startsWith("reminder add ") ||
+    content.startsWith("reminder ack ") ||
+    content.startsWith("remind ")
+  );
 }
 
 export function handleReminderCommand(persistence: Persistence, content: string, now = new Date()): string {
@@ -65,6 +73,10 @@ export function getNextReminderNotificationAt(
   now = new Date()
 ): string | null {
   if (escalationPolicy === "nag-only" || escalationPolicy === "discord-then-sms") {
+    if (escalationPolicy === "discord-then-sms") {
+      return null;
+    }
+
     if (reminder.notificationCount + 1 >= MAX_NAG_NOTIFICATIONS) {
       return null;
     }
@@ -78,6 +90,10 @@ export function getNextReminderNotificationAt(
 export function formatReminderNotification(reminder: ReminderRecord): string {
   const prefix = reminder.notificationCount === 0 ? "Reminder" : `Reminder follow-up ${reminder.notificationCount}`;
   return `${prefix} #${reminder.id}: ${reminder.message}\nReply with \`reminder ack ${reminder.id}\` when handled.`;
+}
+
+export function getReminderDeliveryRetryAt(now = new Date()): string {
+  return new Date(now.getTime() + DELIVERY_RETRY_MS).toISOString();
 }
 
 export function startReminderScheduler(params: {
@@ -111,10 +127,17 @@ export function startReminderScheduler(params: {
             persistence.settings.get("reminders.escalationPolicy") ?? "discord-only",
             new Date()
           );
-          persistence.recordReminderNotification(reminder.id, nextNotificationAt, reminder.message);
-          logger.info({ reminderId: reminder.id, nextNotificationAt }, "Sent reminder notification");
+          if (persistence.recordReminderNotification(reminder.id, nextNotificationAt, reminder.message)) {
+            logger.info({ reminderId: reminder.id, nextNotificationAt }, "Sent reminder notification");
+          }
         } catch (error) {
-          logger.error({ err: error, reminderId: reminder.id }, "Failed to send reminder notification");
+          const retryAt = getReminderDeliveryRetryAt(new Date());
+          persistence.recordReminderDeliveryFailure(
+            reminder.id,
+            retryAt,
+            error instanceof Error ? error.message : "unknown delivery failure"
+          );
+          logger.error({ err: error, reminderId: reminder.id, retryAt }, "Failed to send reminder notification");
         }
       }
     } catch (error) {

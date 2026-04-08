@@ -32,7 +32,7 @@ export interface ReminderRecord {
 export interface ReminderEvent {
   id: number;
   reminderId: number;
-  eventType: "created" | "notified" | "acknowledged";
+  eventType: "created" | "notified" | "acknowledged" | "delivery_failed";
   detail: string | null;
   createdAt: string;
 }

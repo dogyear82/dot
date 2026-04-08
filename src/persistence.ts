@@ -15,7 +15,8 @@ export interface Persistence {
   listPendingReminders(): ReminderRecord[];
   listDueReminders(now: string): ReminderRecord[];
   acknowledgeReminder(id: number): boolean;
-  recordReminderNotification(id: number, nextNotificationAt: string | null, detail?: string | null): void;
+  recordReminderNotification(id: number, nextNotificationAt: string | null, detail?: string | null): boolean;
+  recordReminderDeliveryFailure(id: number, retryAt: string, detail: string): boolean;
   listReminderEvents(reminderId: number): ReminderEvent[];
   close(): void;
 }
@@ -203,7 +204,7 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     SET notification_count = notification_count + 1,
         last_notified_at = CURRENT_TIMESTAMP,
         next_notification_at = ?
-    WHERE id = ?
+    WHERE id = ? AND status = 'pending'
   `);
 
   const listReminderEventsStatement = db.prepare<[number], ReminderEvent>(`
@@ -266,11 +267,27 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     },
     recordReminderNotification(id, nextNotificationAt, detail) {
       const transaction = db.transaction((reminderId: number, nextDue: string | null, eventDetail: string | null) => {
-        recordReminderNotificationStatement.run(nextDue, reminderId);
-        createReminderEventStatement.run(reminderId, "notified", eventDetail);
+        const result = recordReminderNotificationStatement.run(nextDue, reminderId);
+        if (result.changes > 0) {
+          createReminderEventStatement.run(reminderId, "notified", eventDetail);
+          return true;
+        }
+        return false;
       });
 
-      transaction(id, nextNotificationAt, detail ?? null);
+      return transaction(id, nextNotificationAt, detail ?? null);
+    },
+    recordReminderDeliveryFailure(id, retryAt, detail) {
+      const transaction = db.transaction((reminderId: number, nextDue: string, eventDetail: string) => {
+        const result = recordReminderNotificationStatement.run(nextDue, reminderId);
+        if (result.changes > 0) {
+          createReminderEventStatement.run(reminderId, "delivery_failed", eventDetail);
+          return true;
+        }
+        return false;
+      });
+
+      return transaction(id, retryAt, detail);
     },
     listReminderEvents(reminderId) {
       return listReminderEventsStatement.all(reminderId);

@@ -64,3 +64,9 @@ This bootstrap includes:
 - `remind <duration> <message>`
 - `reminder show`
 - `reminder ack <id>`
+
+## Reminder Notes
+
+- Reminder notifications are sent through Discord.
+- `nag-only` enables repeated Discord follow-ups.
+- `discord-then-sms` is stored as a setting now, but SMS escalation is deferred until the later SMS story is implemented.
