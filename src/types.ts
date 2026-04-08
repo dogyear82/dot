@@ -44,3 +44,12 @@ export interface OutlookCalendarEvent {
   endAt: string;
   webLink: string | null;
 }
+
+export interface ToolExecutionAuditRecord {
+  messageId: string;
+  toolName: string;
+  invocationSource: "explicit" | "inferred";
+  status: "executed" | "clarify" | "skipped" | "failed";
+  provider: string | null;
+  detail: string | null;
+}

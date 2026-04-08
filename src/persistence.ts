@@ -4,13 +4,14 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 import { createSettingsStore, type SettingsStore } from "./settings.js";
-import type { AccessAuditRecord, IncomingMessage, ReminderEvent, ReminderRecord } from "./types.js";
+import type { AccessAuditRecord, IncomingMessage, ReminderEvent, ReminderRecord, ToolExecutionAuditRecord } from "./types.js";
 
 export interface Persistence {
   db: Database.Database;
   settings: SettingsStore;
   saveNormalizedMessage(message: IncomingMessage): void;
   saveAccessAudit(record: AccessAuditRecord): void;
+  saveToolExecutionAudit(record: ToolExecutionAuditRecord): void;
   createReminder(message: string, dueAt: string): ReminderRecord;
   listPendingReminders(): ReminderRecord[];
   listDueReminders(now: string): ReminderRecord[];
@@ -51,6 +52,17 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       actor_role TEXT NOT NULL,
       can_use_privileged_features INTEGER NOT NULL,
       decision TEXT NOT NULL,
+      recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS tool_execution_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      invocation_source TEXT NOT NULL,
+      status TEXT NOT NULL,
+      provider TEXT,
+      detail TEXT,
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -117,6 +129,24 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @actorRole,
       @canUsePrivilegedFeatures,
       @decision
+    )
+  `);
+
+  const toolExecutionAuditStatement = db.prepare(`
+    INSERT INTO tool_execution_audit (
+      message_id,
+      tool_name,
+      invocation_source,
+      status,
+      provider,
+      detail
+    ) VALUES (
+      @messageId,
+      @toolName,
+      @invocationSource,
+      @status,
+      @provider,
+      @detail
     )
   `);
 
@@ -236,6 +266,9 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         ...record,
         canUsePrivilegedFeatures: record.canUsePrivilegedFeatures ? 1 : 0
       });
+    },
+    saveToolExecutionAudit(record) {
+      toolExecutionAuditStatement.run(record);
     },
     createReminder(message, dueAt) {
       const transaction = db.transaction((reminderMessage: string, reminderDueAt: string) => {

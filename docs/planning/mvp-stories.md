@@ -378,7 +378,7 @@ Out of scope:
 
 ### Goal
 
-Provide a general owner-only tool invocation pattern so the bot can shift from chat into structured action execution safely.
+Provide a general owner-only tool invocation pattern so the bot can shift from chat into structured action execution safely, whether the tool was explicitly requested or inferred from normal conversation.
 
 ### Scope Boundaries
 
@@ -386,6 +386,7 @@ In scope:
 
 - structured tool registry
 - owner-only invocation path
+- support for both explicit command invocation and model-inferred invocation
 - clarification prompts for missing arguments
 - execution result formatting
 
@@ -396,9 +397,11 @@ Out of scope:
 ### Acceptance Criteria
 
 1. The bot can invoke registered tools through a structured execution path instead of ad hoc command logic.
-2. Missing or ambiguous inputs trigger clarification prompts rather than guessed execution.
-3. Tool execution results are returned to the owner in a consistent format.
-4. Tool execution can be denied or deferred by the policy engine when required.
+2. Explicit owner commands can force the corresponding structured tool path instead of free-form chat handling.
+3. Conversational owner requests can be routed into registered tools when the model determines a tool is appropriate.
+4. Missing or ambiguous inputs trigger clarification prompts rather than guessed execution.
+5. Tool execution results are returned to the owner in a consistent format.
+6. Tool execution can be denied or deferred by the policy engine when required.
 
 ### Dependencies
 

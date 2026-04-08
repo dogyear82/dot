@@ -7,6 +7,7 @@ import type { ChatService } from "../chat/modelRouter.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "../onboarding.js";
 import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "../outlookCalendar.js";
 import { handleReminderCommand, isReminderCommand } from "../reminders.js";
+import { executeToolDecision } from "../toolInvocation.js";
 import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
@@ -94,7 +95,16 @@ export function createDiscordClient(params: {
       }
 
       if (isReminderCommand(content)) {
-        void message.reply(handleReminderCommand(persistence, content));
+        const reply = handleReminderCommand(persistence, content);
+        persistence.saveToolExecutionAudit({
+          messageId: normalized.id,
+          toolName: normalizeExplicitToolName(content),
+          invocationSource: "explicit",
+          status: "executed",
+          provider: null,
+          detail: content
+        });
+        void message.reply(reply);
         return;
       }
 
@@ -104,6 +114,14 @@ export function createDiscordClient(params: {
             calendarClient,
             content,
             persistence
+          });
+          persistence.saveToolExecutionAudit({
+            messageId: normalized.id,
+            toolName: normalizeExplicitToolName(content),
+            invocationSource: "explicit",
+            status: "executed",
+            provider: null,
+            detail: content
           });
           await message.reply(reply);
         })();
@@ -116,6 +134,63 @@ export function createDiscordClient(params: {
 
       void (async () => {
         try {
+          try {
+            const inferred = await chatService.inferToolDecision(content);
+            if (inferred.decision.decision === "clarify") {
+              persistence.saveToolExecutionAudit({
+                messageId: normalized.id,
+                toolName: inferred.decision.toolName,
+                invocationSource: "inferred",
+                status: "clarify",
+                provider: inferred.provider,
+                detail: inferred.decision.reason
+              });
+              await message.reply(inferred.decision.question);
+              return;
+            }
+
+            if (inferred.decision.decision === "execute") {
+              const reply = await executeToolDecision({
+                calendarClient,
+                decision: inferred.decision,
+                persistence
+              });
+              persistence.saveToolExecutionAudit({
+                messageId: normalized.id,
+                toolName: inferred.decision.toolName,
+                invocationSource: "inferred",
+                status: "executed",
+                provider: inferred.provider,
+                detail: inferred.decision.reason
+              });
+              logger.info(
+                { provider: inferred.provider, messageId: normalized.id, toolName: inferred.decision.toolName },
+                "Executed inferred tool decision"
+              );
+              await message.reply(reply);
+              return;
+            }
+
+            persistence.saveToolExecutionAudit({
+              messageId: normalized.id,
+              toolName: "none",
+              invocationSource: "inferred",
+              status: "skipped",
+              provider: inferred.provider,
+              detail: inferred.decision.reason
+            });
+          } catch (error) {
+            persistence.saveToolExecutionAudit({
+              messageId: normalized.id,
+              toolName: "inference-error",
+              invocationSource: "inferred",
+              status: "failed",
+              provider: null,
+              detail: error instanceof Error ? error.message : "unknown inference failure"
+            });
+            logger.warn({ err: error, messageId: normalized.id }, "Tool inference failed; falling back to chat");
+          }
+
           const response = await chatService.generateOwnerReply(content);
           logger.info({ provider: response.provider, messageId: normalized.id }, "Generated owner chat response");
           await message.reply(response.reply);
@@ -140,4 +215,28 @@ export function createDiscordClient(params: {
   });
 
   return client;
+}
+
+function normalizeExplicitToolName(content: string): string {
+  if (content.startsWith("reminder add ") || content.startsWith("remind ")) {
+    return "reminder.add";
+  }
+
+  if (content.startsWith("reminder ack ")) {
+    return "reminder.ack";
+  }
+
+  if (content.startsWith("reminder show") || content === "reminder") {
+    return "reminder.show";
+  }
+
+  if (content.startsWith("calendar remind ")) {
+    return "calendar.remind";
+  }
+
+  if (content.startsWith("calendar show") || content === "calendar") {
+    return "calendar.show";
+  }
+
+  return "explicit-command";
 }
