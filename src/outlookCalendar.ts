@@ -72,10 +72,10 @@ export class MicrosoftGraphOutlookCalendarClient implements OutlookCalendarClien
 
 export function isCalendarCommand(content: string): boolean {
   return (
-    content === "calendar" ||
-    content === "calendar help" ||
-    content === "calendar show" ||
-    content.startsWith("calendar remind ")
+    content === "!calendar" ||
+    content === "!calendar help" ||
+    content === "!calendar show" ||
+    content.startsWith("!calendar remind ")
   );
 }
 
@@ -86,16 +86,16 @@ export async function handleCalendarCommand(params: {
   persistence: Persistence;
 }): Promise<string> {
   const { calendarClient, content, now = new Date(), persistence } = params;
-  const parts = content.trim().split(/\s+/);
+  const parts = normalizeCalendarCommand(content).split(/\s+/);
 
   if (parts.length === 1 || parts[1] === "help") {
     return [
       "Calendar commands:",
-      "- `calendar show`",
-      "- `calendar remind <index> [lead-time]`",
+      "- `!calendar show`",
+      "- `!calendar remind <index> [lead-time]`",
       "Examples:",
-      "- `calendar remind 1`",
-      "- `calendar remind 2 15m`"
+      "- `!calendar remind 1`",
+      "- `!calendar remind 2 15m`"
     ].join("\n");
   }
 
@@ -118,7 +118,7 @@ export async function handleCalendarCommand(params: {
   if (parts[1] === "remind" && parts[2]) {
     const index = Number(parts[2]);
     if (!Number.isInteger(index) || index <= 0) {
-      return "Calendar event indexes must be positive integers. Use `calendar show` first.";
+      return "Calendar event indexes must be positive integers. Use `!calendar show` first.";
     }
 
     const leadTime = parts[3] ? parseDuration(parts[3]) : 0;
@@ -130,7 +130,7 @@ export async function handleCalendarCommand(params: {
       const events = await calendarClient.listUpcomingEvents(now, DEFAULT_EVENT_LIMIT);
       const selectedEvent = events[index - 1];
       if (!selectedEvent) {
-        return `Calendar event #${index} was not found. Use \`calendar show\` to refresh the list.`;
+        return `Calendar event #${index} was not found. Use \`!calendar show\` to refresh the list.`;
       }
 
       const dueAt = new Date(new Date(selectedEvent.startAt).getTime() - (leadTime ?? 0));
@@ -150,7 +150,7 @@ export async function handleCalendarCommand(params: {
     }
   }
 
-  return "Invalid calendar command. Use `calendar help`.";
+  return "Invalid calendar command. Use `!calendar help`.";
 }
 
 export function formatEventSummary(index: number, event: OutlookCalendarEvent): string {
@@ -221,4 +221,8 @@ function formatLeadTime(durationMs: number): string {
   }
 
   return `${durationMs}ms`;
+}
+
+function normalizeCalendarCommand(content: string) {
+  return content.trim().replace(/^!/, "");
 }

@@ -47,10 +47,10 @@ test("settings commands can show and update persisted settings", () => {
   const store = createStore();
   store.set("onboarding.completed", "true");
 
-  const showReply = handleSettingsCommand(store, "settings show");
+  const showReply = handleSettingsCommand(store, "!settings show");
   assert.match(showReply, /persona.mode/);
 
-  const setReply = handleSettingsCommand(store, "settings set channels.defaultPolicy whitelist");
+  const setReply = handleSettingsCommand(store, "!settings set channels.defaultPolicy whitelist");
   assert.match(setReply, /channels.defaultPolicy/);
   assert.equal(store.get("channels.defaultPolicy"), "whitelist");
 });
@@ -59,6 +59,6 @@ test("settings command returns a validation error instead of throwing", () => {
   const store = createStore();
   store.set("onboarding.completed", "true");
 
-  const reply = handleSettingsCommand(store, "settings set persona.mode invalid");
+  const reply = handleSettingsCommand(store, "!settings set persona.mode invalid");
   assert.match(reply, /Invalid value/);
 });

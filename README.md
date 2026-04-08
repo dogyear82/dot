@@ -58,14 +58,16 @@ This bootstrap includes:
 ## Current owner commands
 
 - first DM message starts onboarding if setup is incomplete
-- `settings show`
-- `settings set <key> <value>`
-- `calendar show`
-- `calendar remind <index> [lead-time]`
-- `reminder add <duration> <message>`
-- `remind <duration> <message>`
-- `reminder show`
-- `reminder ack <id>`
+- `!settings show`
+- `!settings set <key> <value>`
+- `!calendar show`
+- `!calendar remind <index> [lead-time]`
+- `!reminder add <duration> <message>`
+- `!remind <duration> <message>`
+- `!reminder show`
+- `!reminder ack <id>`
+
+Messages without a leading `!` are treated as normal conversation and can flow through tool inference.
 
 ## Reminder Notes
 
@@ -76,5 +78,5 @@ This bootstrap includes:
 ## Outlook Calendar Notes
 
 - Set `OUTLOOK_ACCESS_TOKEN` to a valid Microsoft Graph bearer token before using calendar commands.
-- `calendar show` lists upcoming Outlook events from the configured default or named calendar.
-- `calendar remind <index> [lead-time]` creates a Dot reminder from the indexed event returned by `calendar show`.
+- `!calendar show` lists upcoming Outlook events from the configured default or named calendar.
+- `!calendar remind <index> [lead-time]` creates a Dot reminder from the indexed event returned by `!calendar show`.

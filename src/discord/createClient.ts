@@ -218,24 +218,28 @@ export function createDiscordClient(params: {
 }
 
 function normalizeExplicitToolName(content: string): string {
-  if (content.startsWith("reminder add ") || content.startsWith("remind ")) {
+  if (content.startsWith("!reminder add ") || content.startsWith("!remind ")) {
     return "reminder.add";
   }
 
-  if (content.startsWith("reminder ack ")) {
+  if (content.startsWith("!reminder ack ")) {
     return "reminder.ack";
   }
 
-  if (content.startsWith("reminder show") || content === "reminder") {
+  if (content.startsWith("!reminder show") || content === "!reminder") {
     return "reminder.show";
   }
 
-  if (content.startsWith("calendar remind ")) {
+  if (content.startsWith("!calendar remind ")) {
     return "calendar.remind";
   }
 
-  if (content.startsWith("calendar show") || content === "calendar") {
+  if (content.startsWith("!calendar show") || content === "!calendar") {
     return "calendar.show";
+  }
+
+  if (content.startsWith("!settings")) {
+    return "settings";
   }
 
   return "explicit-command";

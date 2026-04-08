@@ -63,17 +63,17 @@ export function handleOnboardingReply(settingsStore: SettingsStore, reply: strin
 }
 
 export function isSettingsCommand(content: string): boolean {
-  return content.startsWith("settings");
+  return content.startsWith("!settings");
 }
 
 export function handleSettingsCommand(settingsStore: SettingsStore, content: string): string {
-  const parts = content.trim().split(/\s+/);
+  const parts = normalizeSettingsCommand(content).split(/\s+/);
 
   if (parts.length === 1 || parts[1] === "help") {
     return [
       "Settings commands:",
-      "- `settings show`",
-      "- `settings set <key> <value>`",
+      "- `!settings show`",
+      "- `!settings set <key> <value>`",
       "User-editable keys:",
       ...listUserEditableSettingDefinitions().map((definition) => `- \`${definition.key}\``)
     ].join("\n");
@@ -93,7 +93,7 @@ export function handleSettingsCommand(settingsStore: SettingsStore, content: str
     const definition = listUserEditableSettingDefinitions().find((item) => item.key === key);
 
     if (!definition) {
-      return "Unknown setting key. Use `settings help`.";
+      return "Unknown setting key. Use `!settings help`.";
     }
 
     try {
@@ -104,7 +104,7 @@ export function handleSettingsCommand(settingsStore: SettingsStore, content: str
     }
   }
 
-  return "Invalid settings command. Use `settings help`.";
+  return "Invalid settings command. Use `!settings help`.";
 }
 
 function getNextQuestion(settingsStore: SettingsStore) {
@@ -113,4 +113,8 @@ function getNextQuestion(settingsStore: SettingsStore) {
 
 function formatQuestion(label: string, description: string, allowedValues?: readonly string[]) {
   return `Setup: ${label}\n${description}\nReply with one of: ${allowedValues?.join(", ") ?? "free-form"}`;
+}
+
+function normalizeSettingsCommand(content: string) {
+  return content.trim().replace(/^!/, "");
 }

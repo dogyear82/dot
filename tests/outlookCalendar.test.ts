@@ -42,10 +42,10 @@ function createEvent(overrides: Partial<OutlookCalendarEvent> = {}): OutlookCale
 }
 
 test("isCalendarCommand only matches supported calendar commands", () => {
-  assert.equal(isCalendarCommand("calendar"), true);
-  assert.equal(isCalendarCommand("calendar help"), true);
-  assert.equal(isCalendarCommand("calendar show"), true);
-  assert.equal(isCalendarCommand("calendar remind 1"), true);
+  assert.equal(isCalendarCommand("!calendar"), true);
+  assert.equal(isCalendarCommand("!calendar help"), true);
+  assert.equal(isCalendarCommand("!calendar show"), true);
+  assert.equal(isCalendarCommand("!calendar remind 1"), true);
   assert.equal(isCalendarCommand("calendar reminders"), false);
   assert.equal(isCalendarCommand("calendarish"), false);
 });
@@ -60,7 +60,7 @@ test("handleCalendarCommand lists upcoming events", async () => {
           return [createEvent()];
         }
       },
-      content: "calendar show",
+      content: "!calendar show",
       now: new Date("2026-04-08T09:00:00.000Z"),
       persistence
     });
@@ -82,7 +82,7 @@ test("handleCalendarCommand can derive a reminder from an upcoming event", async
           return [createEvent()];
         }
       },
-      content: "calendar remind 1 15m",
+      content: "!calendar remind 1 15m",
       now: new Date("2026-04-08T09:00:00.000Z"),
       persistence
     });
@@ -107,7 +107,7 @@ test("handleCalendarCommand surfaces adapter failures without creating reminders
           throw new OutlookConfigurationError("Outlook calendar integration is not configured.");
         }
       },
-      content: "calendar remind 1",
+      content: "!calendar remind 1",
       now: new Date("2026-04-08T09:00:00.000Z"),
       persistence
     });

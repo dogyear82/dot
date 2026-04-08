@@ -97,24 +97,24 @@ export async function executeToolDecision(params: {
     case "reminder.add": {
       const duration = getRequiredStringArg(decision.args, "duration");
       const message = getRequiredStringArg(decision.args, "message");
-      return handleReminderCommand(persistence, `reminder add ${duration} ${message}`);
+      return handleReminderCommand(persistence, `!reminder add ${duration} ${message}`);
     }
     case "reminder.show":
-      return handleReminderCommand(persistence, "reminder show");
+      return handleReminderCommand(persistence, "!reminder show");
     case "reminder.ack": {
       const id = getRequiredNumericLikeArg(decision.args, "id");
-      return handleReminderCommand(persistence, `reminder ack ${id}`);
+      return handleReminderCommand(persistence, `!reminder ack ${id}`);
     }
     case "calendar.show":
       return handleCalendarCommand({
         calendarClient,
-        content: "calendar show",
+        content: "!calendar show",
         persistence
       });
     case "calendar.remind": {
       const index = getRequiredNumericLikeArg(decision.args, "index");
       const leadTime = getOptionalStringArg(decision.args, "leadTime");
-      const content = leadTime ? `calendar remind ${index} ${leadTime}` : `calendar remind ${index}`;
+      const content = leadTime ? `!calendar remind ${index} ${leadTime}` : `!calendar remind ${index}`;
       return handleCalendarCommand({
         calendarClient,
         content,
