@@ -47,46 +47,48 @@ The user strongly prefers local model execution when possible. The local model r
 - A colder, more detached diagnostic mode for self-debugging or technical introspection
 5. The balance between companion behavior and practical assistant behavior must be configurable.
 6. The system must support both explicit command-driven skill invocation and context-driven skill use when the bot believes a skill is necessary.
-7. If the user intent or execution target is unclear, the system must ask clarifying questions before taking action.
-8. The system must support a deterministic risk-classification layer outside the LLM.
-9. The deterministic layer must classify actions into at least low-risk and high-risk categories.
-10. Low-risk actions must be eligible for automatic execution.
-11. High-risk actions must require user confirmation before execution.
-12. Low-risk actions for v1 include:
+7. When the owner explicitly invokes a command or tool path, the system must execute that structured path rather than answering in free-form chat.
+8. When the owner speaks conversationally, the model may decide that a structured tool is the right next step, but the eventual side effect must still run through deterministic application code.
+9. If the user intent or execution target is unclear, the system must ask clarifying questions before taking action.
+10. The system must support a deterministic risk-classification layer outside the LLM.
+11. The deterministic layer must classify actions into at least low-risk and high-risk categories.
+12. Low-risk actions must be eligible for automatic execution.
+13. High-risk actions must require user confirmation before execution.
+14. Low-risk actions for v1 include:
 - Reminders
 - Drafting content
 - Summarization
 - Replies inside Discord
 - Banter / conversational responses
-13. High-risk actions for v1 include outbound messages or emails to anyone who is not already classified as family or close friend.
-14. The system must maintain persistent trust/contact metadata that can be used by deterministic policy code.
-15. If the bot is asked to message or email a person whose trust classification is unknown, the system must ask the user to classify that person before proceeding.
-16. The answer to a trust-classification prompt must be stored persistently for later policy decisions.
-17. The stored classification must be reusable by whichever subsystem actually sends email or SMS so risk enforcement does not depend on LLM memory.
-18. The system must support email actions on the user’s behalf.
-19. The system must support SMS actions directed only to the user in v1.
-20. The system must not support group SMS participation in v1.
-21. The system must support Outlook as the calendar source for reminders.
-22. The system must support reminder escalation when reminders are ignored.
-23. Reminder escalation behavior must be configurable.
-24. The bot must be able to nag or follow up multiple times if the user does not respond to a reminder, subject to configurable escalation rules.
-25. The system must provide a first-run onboarding flow that asks the user for initial configurable values.
-26. The user must be able to update settings later through Discord commands and/or conversational configuration.
-27. The system should support a model-routing strategy that prefers local models and can use 1minAI as a hosted option when configured.
-28. The system should support fallback between model providers without changing the Discord interaction model.
-29. The system must distinguish between the primary user and non-owner Discord users.
-30. Only the primary user may access general bot commands, AI tasking, configuration, and privileged tool execution.
-31. Non-owner Discord users must be restricted to interactions that help them contact, leave a message for, or otherwise interact with the primary user.
-32. The system must not execute arbitrary commands or privileged actions on behalf of non-owner users.
-33. The system must support intake of contact requests or messages from non-owner Discord users for delivery to the primary user.
-34. The system must persist those requests as internal tasks, notifications, inbox items, or an equivalent durable work queue.
-35. The system must surface pending third-party contact items prominently when the primary user next interacts with the bot.
-36. The system should prioritize newly received third-party contact items early in the next conversation with the primary user.
-37. The system should support internal task/state tracking for reminders, pending deliveries, follow-ups, and other deferred bot obligations.
-38. The system must support a containerized backend deployment model suitable for local self-hosting.
-39. The local model backend must support Ollama running in a containerized deployment.
-40. The repository should support starting the backend stack through a Podman Compose workflow on Linux.
-41. The system should be operable by cloning the repository onto another Linux machine and starting the stack with minimal manual setup beyond secrets/configuration.
+15. High-risk actions for v1 include outbound messages or emails to anyone who is not already classified as family or close friend.
+16. The system must maintain persistent trust/contact metadata that can be used by deterministic policy code.
+17. If the bot is asked to message or email a person whose trust classification is unknown, the system must ask the user to classify that person before proceeding.
+18. The answer to a trust-classification prompt must be stored persistently for later policy decisions.
+19. The stored classification must be reusable by whichever subsystem actually sends email or SMS so risk enforcement does not depend on LLM memory.
+20. The system must support email actions on the user’s behalf.
+21. The system must support SMS actions directed only to the user in v1.
+22. The system must not support group SMS participation in v1.
+23. The system must support Outlook as the calendar source for reminders.
+24. The system must support reminder escalation when reminders are ignored.
+25. Reminder escalation behavior must be configurable.
+26. The bot must be able to nag or follow up multiple times if the user does not respond to a reminder, subject to configurable escalation rules.
+27. The system must provide a first-run onboarding flow that asks the user for initial configurable values.
+28. The user must be able to update settings later through Discord commands and/or conversational configuration.
+29. The system should support a model-routing strategy that prefers local models and can use 1minAI as a hosted option when configured.
+30. The system should support fallback between model providers without changing the Discord interaction model.
+31. The system must distinguish between the primary user and non-owner Discord users.
+32. Only the primary user may access general bot commands, AI tasking, configuration, and privileged tool execution.
+33. Non-owner Discord users must be restricted to interactions that help them contact, leave a message for, or otherwise interact with the primary user.
+34. The system must not execute arbitrary commands or privileged actions on behalf of non-owner users.
+35. The system must support intake of contact requests or messages from non-owner Discord users for delivery to the primary user.
+36. The system must persist those requests as internal tasks, notifications, inbox items, or an equivalent durable work queue.
+37. The system must surface pending third-party contact items prominently when the primary user next interacts with the bot.
+38. The system should prioritize newly received third-party contact items early in the next conversation with the primary user.
+39. The system should support internal task/state tracking for reminders, pending deliveries, follow-ups, and other deferred bot obligations.
+40. The system must support a containerized backend deployment model suitable for local self-hosting.
+41. The local model backend must support Ollama running in a containerized deployment.
+42. The repository should support starting the backend stack through a Podman Compose workflow on Linux.
+43. The system should be operable by cloning the repository onto another Linux machine and starting the stack with minimal manual setup beyond secrets/configuration.
 
 ## Non-Functional Requirements
 
@@ -100,10 +102,11 @@ The user strongly prefers local model execution when possible. The local model r
 8. The system should persist user-specific state such as settings, trust/contact classifications, and reminder-related preferences.
 9. The system should remain operable for a single-user deployment without requiring a heavy admin interface.
 10. The system should separate LLM behavior from deterministic execution policy so safety logic is inspectable and testable.
-11. Deferred work items such as reminders and contact requests must survive restarts and not rely on transient model context.
-12. Backend services should be containerized so they can be started and stopped predictably.
-13. Deployment should prioritize portability across Linux machines owned by the user.
-14. Local development and self-hosting should be achievable through a documented Podman Compose workflow.
+11. Model-driven tool selection and deterministic tool execution should be separated so the assistant can act conversationally without free-form side effects.
+12. Deferred work items such as reminders and contact requests must survive restarts and not rely on transient model context.
+13. Backend services should be containerized so they can be started and stopped predictably.
+14. Deployment should prioritize portability across Linux machines owned by the user.
+15. Local development and self-hosting should be achievable through a documented Podman Compose workflow.
 
 ## Constraints
 
@@ -123,7 +126,7 @@ The user strongly prefers local model execution when possible. The local model r
 ## Open Questions
 
 1. What exact Discord channel participation policies should be available in v1, such as mention-only, whitelist-based participation, or free participation within approved channels?
-2. Should context-driven tool use be allowed to execute automatically for low-risk actions, or should the bot first announce intent before acting?
+2. Which owner-facing actions should be eligible for model-inferred tool use in v1, and which should remain explicit-command-only until later?
 3. For high-risk outbound communication, is the preferred workflow:
 - Block and ask for confirmation before sending
 - Save as draft first, then require confirmation

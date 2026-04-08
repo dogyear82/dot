@@ -11,17 +11,17 @@ const MAX_NAG_NOTIFICATIONS = 3;
 
 export function isReminderCommand(content: string): boolean {
   return (
-    content === "reminder" ||
-    content === "reminder help" ||
-    content === "reminder show" ||
-    content.startsWith("reminder add ") ||
-    content.startsWith("reminder ack ") ||
-    content.startsWith("remind ")
+    content === "!reminder" ||
+    content === "!reminder help" ||
+    content === "!reminder show" ||
+    content.startsWith("!reminder add ") ||
+    content.startsWith("!reminder ack ") ||
+    content.startsWith("!remind ")
   );
 }
 
 export function handleReminderCommand(persistence: Persistence, content: string, now = new Date()): string {
-  const parts = content.trim().split(/\s+/);
+  const parts = normalizeReminderCommand(content).split(/\s+/);
 
   if (parts[0] === "remind") {
     return handleReminderAdd(persistence, parts.slice(1), now);
@@ -30,10 +30,10 @@ export function handleReminderCommand(persistence: Persistence, content: string,
   if (parts.length === 1 || parts[1] === "help") {
     return [
       "Reminder commands:",
-      "- `reminder add <duration> <message>`",
-      "- `remind <duration> <message>`",
-      "- `reminder show`",
-      "- `reminder ack <id>`"
+      "- `!reminder add <duration> <message>`",
+      "- `!remind <duration> <message>`",
+      "- `!reminder show`",
+      "- `!reminder ack <id>`"
     ].join("\n");
   }
 
@@ -64,7 +64,7 @@ export function handleReminderCommand(persistence: Persistence, content: string,
       : `Reminder #${id} was not found or is already acknowledged.`;
   }
 
-  return "Invalid reminder command. Use `reminder help`.";
+  return "Invalid reminder command. Use `!reminder help`.";
 }
 
 export function getNextReminderNotificationAt(
@@ -163,7 +163,7 @@ function handleReminderAdd(persistence: Persistence, args: string[], now: Date):
   const reminderMessage = args.slice(1).join(" ").trim();
 
   if (!durationInput || !reminderMessage) {
-    return "Usage: `reminder add <duration> <message>` or `remind <duration> <message>`.";
+    return "Usage: `!reminder add <duration> <message>` or `!remind <duration> <message>`.";
   }
 
   const durationMs = parseDuration(durationInput);
@@ -203,4 +203,8 @@ export function parseDuration(input: string): number | null {
   }
 
   return value * unitMs;
+}
+
+function normalizeReminderCommand(content: string) {
+  return content.trim().replace(/^!/, "");
 }

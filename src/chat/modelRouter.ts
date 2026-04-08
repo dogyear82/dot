@@ -1,10 +1,12 @@
 import type { AppConfig } from "../config.js";
 import type { SettingsStore } from "../settings.js";
+import { buildToolInferencePrompt, parseToolDecision, type ToolDecision } from "../toolInvocation.js";
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
 import { OllamaChatProvider, OpenAiCompatibleChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
 
 export interface ChatService {
   generateOwnerReply(userMessage: string): Promise<{ provider: string; reply: string }>;
+  inferToolDecision(userMessage: string): Promise<{ provider: string; decision: ToolDecision }>;
 }
 
 export function createChatService(params: {
@@ -54,6 +56,36 @@ export function createChatService(params: {
       }
 
       throw new Error(`No chat provider could generate a response. ${failures.join("; ")}`);
+    },
+    async inferToolDecision(userMessage) {
+      const orderedProviders = orderProviders(providers, params.settings.get("models.primary") ?? "ollama");
+      const messages: ChatMessage[] = [
+        {
+          role: "system",
+          content: "Return only strict JSON. Do not add markdown fences."
+        },
+        {
+          role: "user",
+          content: buildToolInferencePrompt(userMessage)
+        }
+      ];
+      const failures: string[] = [];
+
+      for (const provider of orderedProviders) {
+        if (!provider.isAvailable()) {
+          failures.push(`${provider.name}: not configured`);
+          continue;
+        }
+
+        try {
+          const reply = await provider.generate(messages);
+          return { provider: provider.name, decision: parseToolDecision(reply) };
+        } catch (error) {
+          failures.push(`${provider.name}: ${formatError(error)}`);
+        }
+      }
+
+      throw new Error(`No chat provider could infer a tool decision. ${failures.join("; ")}`);
     }
   };
 }

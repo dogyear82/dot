@@ -113,3 +113,52 @@ test("chat service falls back when the preferred provider fails", async () => {
   assert.equal(result.provider, "1minai");
   assert.equal(result.reply, "hosted reply");
 });
+
+test("chat service can infer a structured tool decision", async () => {
+  const store = createStore();
+  store.set("models.primary", "ollama");
+
+  const service = createChatService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider(
+        "ollama",
+        true,
+        async () =>
+          '{"decision":"execute","toolName":"reminder.add","reason":"clear reminder intent","args":{"duration":"10m","message":"stretch"}}'
+      )
+    ]
+  });
+
+  const result = await service.inferToolDecision("remind me in ten minutes to stretch");
+  assert.equal(result.provider, "ollama");
+  assert.equal(result.decision.decision, "execute");
+  if (result.decision.decision !== "execute") {
+    throw new Error("expected execute tool decision");
+  }
+  assert.equal(result.decision.toolName, "reminder.add");
+  assert.deepEqual(result.decision.args, { duration: "10m", message: "stretch" });
+});
+
+test("chat service falls back to the next provider for invalid inference output", async () => {
+  const store = createStore();
+  store.set("models.primary", "ollama");
+
+  const service = createChatService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", true, async () => "not json"),
+      new FakeProvider(
+        "1minai",
+        true,
+        async () => '{"decision":"none","reason":"not enough confidence for a tool"}'
+      )
+    ]
+  });
+
+  const result = await service.inferToolDecision("hello there");
+  assert.equal(result.provider, "1minai");
+  assert.deepEqual(result.decision, { decision: "none", reason: "not enough confidence for a tool" });
+});

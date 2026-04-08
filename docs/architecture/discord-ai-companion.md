@@ -116,6 +116,10 @@ The orchestrator should not call providers directly. It should delegate to:
 - tool executor
 - task/inbox service
 
+Important constraint:
+
+- the orchestrator may use model output to decide whether a tool is appropriate, but any actual side effect must be executed through a structured tool interface
+
 ### 4. Persona and Settings Service
 
 Responsibilities:
@@ -152,6 +156,7 @@ Recommended interface:
 Important constraint:
 
 - risk approval decisions must not be delegated to the model router
+- the model router may help choose whether to use a tool, but it must not directly perform the side effect or free-form the final execution payload
 
 ### 6. Policy Engine
 
@@ -201,6 +206,12 @@ Responsibilities:
 - validate structured tool inputs
 - invoke side-effecting adapters only after policy approval
 - return structured execution results
+
+Design rule:
+
+- explicit commands always enter this layer directly
+- conversationally inferred actions may also enter this layer when the model chooses to act
+- once a tool path is chosen, deterministic code owns validation, policy checks, payload construction, and side effects
 
 Initial tool set:
 
@@ -307,7 +318,7 @@ Recommended persistent volumes:
 3. Conversation orchestrator loads pending inbox/reminder items.
 4. Orchestrator decides whether to answer directly, ask clarification, or invoke a tool.
 5. If a tool is needed, policy engine checks risk and prerequisites.
-6. Tool executor performs the action through the appropriate adapter.
+6. Tool executor performs the action through deterministic code and the appropriate adapter.
 7. Result and any durable state changes are persisted.
 
 ### Non-Owner Contact Relay
@@ -355,6 +366,9 @@ The model may propose intents or draft content, but the following must remain de
 - trust contact lookup
 - whether approval is required
 - whether a task should be persisted before execution
+- the concrete payload passed to side-effecting tools
+
+The model is allowed to decide that a tool should be used during normal conversation. The deterministic boundary starts once that decision crosses into structured tool execution.
 
 ### Separate Inbox From Chat History
 
@@ -397,7 +411,7 @@ Every side-effecting integration should be isolated behind an adapter so:
 
 1. Ambiguity around email and SMS providers can leak into design if adapters are not defined early.
 2. Name resolution for contacts can cause mistakes if aliases and endpoints are not modeled carefully.
-3. Allowing context-driven tool execution can create surprising behavior unless intent thresholds and policy gates are conservative.
+3. Allowing context-driven tool selection can create surprising behavior unless intent thresholds and policy gates are conservative.
 4. Reminder escalation can become noisy if acknowledgement and snooze semantics are underspecified.
 5. Discord-only configuration may become awkward if admin flows are not structured and stateful.
 

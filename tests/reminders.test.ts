@@ -39,11 +39,12 @@ test("parseDuration accepts compact duration strings", () => {
 });
 
 test("isReminderCommand only matches real reminder command prefixes", () => {
-  assert.equal(isReminderCommand("reminder"), true);
-  assert.equal(isReminderCommand("reminder add 10m stretch"), true);
-  assert.equal(isReminderCommand("reminder show"), true);
-  assert.equal(isReminderCommand("remind 10m stretch"), true);
+  assert.equal(isReminderCommand("!reminder"), true);
+  assert.equal(isReminderCommand("!reminder add 10m stretch"), true);
+  assert.equal(isReminderCommand("!reminder show"), true);
+  assert.equal(isReminderCommand("!remind 10m stretch"), true);
   assert.equal(isReminderCommand("reminders are useful"), false);
+  assert.equal(isReminderCommand("remind me in 10m to stretch"), false);
   assert.equal(isReminderCommand("reminder me later"), false);
 });
 
@@ -53,17 +54,17 @@ test("handleReminderCommand can add, show, and acknowledge reminders", () => {
   const persistence = initializePersistence(tempDir, sqlitePath);
   const now = new Date("2026-04-08T00:00:00.000Z");
 
-  const addReply = handleReminderCommand(persistence, "reminder add 10m stretch", now);
+  const addReply = handleReminderCommand(persistence, "!reminder add 10m stretch", now);
   assert.match(addReply, /Saved reminder #1/);
 
-  const showReply = handleReminderCommand(persistence, "reminder show", now);
+  const showReply = handleReminderCommand(persistence, "!reminder show", now);
   assert.match(showReply, /Pending reminders/);
   assert.match(showReply, /stretch/);
 
   const eventsBeforeAck = persistence.listReminderEvents(1);
   assert.equal(eventsBeforeAck[0]?.eventType, "created");
 
-  const ackReply = handleReminderCommand(persistence, "reminder ack 1", now);
+  const ackReply = handleReminderCommand(persistence, "!reminder ack 1", now);
   assert.match(ackReply, /Acknowledged reminder #1/);
   assert.equal(persistence.listPendingReminders().length, 0);
 
