@@ -36,3 +36,11 @@ export interface ReminderEvent {
   detail: string | null;
   createdAt: string;
 }
+
+export interface OutlookCalendarEvent {
+  id: string;
+  subject: string;
+  startAt: string;
+  endAt: string;
+  webLink: string | null;
+}

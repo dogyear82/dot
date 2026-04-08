@@ -16,7 +16,11 @@ const envSchema = z.object({
   ONEMINAI_API_KEY: z.string().optional().default(""),
   ONEMINAI_BASE_URL: z.string().default(""),
   ONEMINAI_MODEL: z.string().default(""),
-  MODEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20000)
+  MODEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
+  OUTLOOK_ACCESS_TOKEN: z.string().optional().default(""),
+  OUTLOOK_GRAPH_BASE_URL: z.string().url().default("https://graph.microsoft.com/v1.0"),
+  OUTLOOK_CALENDAR_ID: z.string().optional().default(""),
+  OUTLOOK_LOOKAHEAD_DAYS: z.coerce.number().int().positive().default(7)
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

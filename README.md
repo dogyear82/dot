@@ -60,6 +60,8 @@ This bootstrap includes:
 - first DM message starts onboarding if setup is incomplete
 - `settings show`
 - `settings set <key> <value>`
+- `calendar show`
+- `calendar remind <index> [lead-time]`
 - `reminder add <duration> <message>`
 - `remind <duration> <message>`
 - `reminder show`
@@ -70,3 +72,9 @@ This bootstrap includes:
 - Reminder notifications are sent through Discord.
 - `nag-only` enables repeated Discord follow-ups.
 - `discord-then-sms` is stored as a setting now, but SMS escalation is deferred until the later SMS story is implemented.
+
+## Outlook Calendar Notes
+
+- Set `OUTLOOK_ACCESS_TOKEN` to a valid Microsoft Graph bearer token before using calendar commands.
+- `calendar show` lists upcoming Outlook events from the configured default or named calendar.
+- `calendar remind <index> [lead-time]` creates a Dot reminder from the indexed event returned by `calendar show`.

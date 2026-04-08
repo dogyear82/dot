@@ -4,6 +4,7 @@ import { createChatService } from "./chat/modelRouter.js";
 import { loadConfig } from "./config.js";
 import { createDiscordClient } from "./discord/createClient.js";
 import { createLogger } from "./logger.js";
+import { MicrosoftGraphOutlookCalendarClient } from "./outlookCalendar.js";
 import { initializePersistence } from "./persistence.js";
 import { startReminderScheduler } from "./reminders.js";
 
@@ -11,11 +12,13 @@ async function main() {
   const config = loadConfig();
   const logger = createLogger(config.LOG_LEVEL);
   const persistence = initializePersistence(config.DATA_DIR, config.SQLITE_PATH);
+  const calendarClient = new MicrosoftGraphOutlookCalendarClient(config);
   const chatService = createChatService({
     config,
     settings: persistence.settings
   });
   const client = createDiscordClient({
+    calendarClient,
     chatService,
     logger,
     ownerUserId: config.DISCORD_OWNER_USER_ID,
