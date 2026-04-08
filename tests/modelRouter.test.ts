@@ -23,6 +23,10 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     ONEMINAI_BASE_URL: "",
     ONEMINAI_MODEL: "",
     MODEL_REQUEST_TIMEOUT_MS: 20000,
+    OUTLOOK_ACCESS_TOKEN: "",
+    OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0",
+    OUTLOOK_CALENDAR_ID: "",
+    OUTLOOK_LOOKAHEAD_DAYS: 7,
     ...overrides
   };
 }

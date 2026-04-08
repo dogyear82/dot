@@ -5,17 +5,19 @@ import type { Logger } from "pino";
 import { evaluateAccess } from "../auth.js";
 import type { ChatService } from "../chat/modelRouter.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "../onboarding.js";
+import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "../outlookCalendar.js";
 import { handleReminderCommand, isReminderCommand } from "../reminders.js";
 import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
 export function createDiscordClient(params: {
+  calendarClient: OutlookCalendarClient;
   chatService: ChatService;
   logger: Logger;
   ownerUserId: string;
   persistence: Persistence;
 }) {
-  const { chatService, logger, ownerUserId, persistence } = params;
+  const { calendarClient, chatService, logger, ownerUserId, persistence } = params;
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -93,6 +95,18 @@ export function createDiscordClient(params: {
 
       if (isReminderCommand(content)) {
         void message.reply(handleReminderCommand(persistence, content));
+        return;
+      }
+
+      if (isCalendarCommand(content)) {
+        void (async () => {
+          const reply = await handleCalendarCommand({
+            calendarClient,
+            content,
+            persistence
+          });
+          await message.reply(reply);
+        })();
         return;
       }
 
