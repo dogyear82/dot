@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeMessage } from "../src/discord/normalize.js";
+import { normalizeMessage, stripLeadingBotMention } from "../src/discord/normalize.js";
 
 test("normalizeMessage maps Discord message shape into IncomingMessage", () => {
   const createdAt = new Date("2026-04-07T00:00:00.000Z");
@@ -37,4 +37,10 @@ test("normalizeMessage maps Discord message shape into IncomingMessage", () => {
     mentionedBot: true,
     createdAt: createdAt.toISOString()
   });
+});
+
+test("stripLeadingBotMention removes a leading bot mention from server messages", () => {
+  assert.equal(stripLeadingBotMention("<@bot-1> sheltered", "bot-1"), "sheltered");
+  assert.equal(stripLeadingBotMention("<@!bot-1> settings show", "bot-1"), "settings show");
+  assert.equal(stripLeadingBotMention("hello dot", "bot-1"), "hello dot");
 });

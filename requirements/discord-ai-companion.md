@@ -85,7 +85,7 @@ The user strongly prefers local model execution when possible. The local model r
 37. The system should support internal task/state tracking for reminders, pending deliveries, follow-ups, and other deferred bot obligations.
 38. The system must support a containerized backend deployment model suitable for local self-hosting.
 39. The local model backend must support Ollama running in a containerized deployment.
-40. The repository should support starting the backend stack through a Docker Compose workflow on Linux.
+40. The repository should support starting the backend stack through a Podman Compose workflow on Linux.
 41. The system should be operable by cloning the repository onto another Linux machine and starting the stack with minimal manual setup beyond secrets/configuration.
 
 ## Non-Functional Requirements
@@ -103,7 +103,7 @@ The user strongly prefers local model execution when possible. The local model r
 11. Deferred work items such as reminders and contact requests must survive restarts and not rely on transient model context.
 12. Backend services should be containerized so they can be started and stopped predictably.
 13. Deployment should prioritize portability across Linux machines owned by the user.
-14. Local development and self-hosting should be achievable through a documented Docker Compose workflow.
+14. Local development and self-hosting should be achievable through a documented Podman Compose workflow.
 
 ## Constraints
 
@@ -118,7 +118,7 @@ The user strongly prefers local model execution when possible. The local model r
 9. Configuration should be managed through Discord interactions rather than manual source edits as the primary UX.
 10. Privileged bot use is reserved for the primary user only, even when the bot is present in shared Discord channels.
 11. Backend services should be designed to run in containers by default.
-12. The user wants to be able to clone the repository onto another Linux machine and bring the backend up via Docker Compose.
+12. The user wants to be able to clone the repository onto another Linux machine and bring the backend up via Podman Compose.
 
 ## Open Questions
 
@@ -140,4 +140,4 @@ The user strongly prefers local model execution when possible. The local model r
 13. How should the bot authenticate or identify the primary user authoritatively inside Discord: Discord user ID only, configurable allowlist, or another method?
 14. What exact capabilities should non-owner users have beyond leaving a message, such as asking whether the primary user is available, requesting a callback, or sending structured urgent notices?
 15. How should urgent third-party contact requests be escalated if the primary user does not respond in Discord?
-16. Should the Discord bot process itself also run in Docker by default, or is it acceptable to keep only supporting backend services containerized if Discord runtime constraints appear?
+16. Should the Discord bot process itself also run in Podman by default, or is it acceptable to keep only supporting backend services containerized if Discord runtime constraints appear?

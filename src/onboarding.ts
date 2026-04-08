@@ -96,8 +96,12 @@ export function handleSettingsCommand(settingsStore: SettingsStore, content: str
       return "Unknown setting key. Use `settings help`.";
     }
 
-    settingsStore.set(definition.key, value);
-    return `Updated \`${definition.key}\` to \`${value}\`.`;
+    try {
+      settingsStore.set(definition.key, value);
+      return `Updated \`${definition.key}\` to \`${value}\`.`;
+    } catch (error) {
+      return error instanceof Error ? error.message : "Failed to update setting.";
+    }
   }
 
   return "Invalid settings command. Use `settings help`.";

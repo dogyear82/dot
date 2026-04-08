@@ -1,5 +1,6 @@
 import process from "node:process";
 
+import { createChatService } from "./chat/modelRouter.js";
 import { loadConfig } from "./config.js";
 import { createDiscordClient } from "./discord/createClient.js";
 import { createLogger } from "./logger.js";
@@ -9,7 +10,12 @@ async function main() {
   const config = loadConfig();
   const logger = createLogger(config.LOG_LEVEL);
   const persistence = initializePersistence(config.DATA_DIR, config.SQLITE_PATH);
+  const chatService = createChatService({
+    config,
+    settings: persistence.settings
+  });
   const client = createDiscordClient({
+    chatService,
     logger,
     ownerUserId: config.DISCORD_OWNER_USER_ID,
     persistence

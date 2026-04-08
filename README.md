@@ -5,13 +5,13 @@ Bootstrap for a Discord-native AI companion.
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and fill in the required values.
-2. Start the backend stack:
+2. Start the backend stack with Podman:
 
 ```bash
-docker compose up --build
+podman compose up --build
 ```
 
-3. For local development without Docker:
+3. For local development without Podman:
 
 ```bash
 npm install
@@ -40,6 +40,19 @@ This bootstrap includes:
 - Compose and Ollama runtime contract
 - persistent user-editable settings
 - first-run owner onboarding in Discord DMs
+- owner chat replies backed by model routing
+
+## Model routing
+
+- default local runtime: Ollama
+- hosted fallback: OpenAI-compatible endpoint when `ONEMINAI_*` settings are configured
+- active persona is driven by persisted settings
+
+## Podman Notes
+
+- The bot image is built from `Containerfile`.
+- The Ollama service bind-mounts `${HOME}/ollama` into the container so existing local models are reused.
+- Set `OLLAMA_MODEL` in `.env` to a model you already have locally, such as `openhermes`.
 
 ## Current owner commands
 

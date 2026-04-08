@@ -6,7 +6,7 @@ Bring the backend up on a Linux machine and talk to the bot in Discord with the 
 
 ## Prerequisites
 
-- Linux machine with Docker Engine and Docker Compose
+- Linux machine with Podman and `podman compose`
 - Access to the Discord Developer Portal
 - A Discord server where you can invite the bot, or willingness to use DMs only
 - Required credentials for any enabled integrations
@@ -34,7 +34,7 @@ cd dot
 
 ### 2. Configure environment and secrets
 
-Create the runtime environment file expected by the app and Compose stack.
+Create the runtime environment file expected by the app and compose stack.
 
 Expected categories of configuration:
 
@@ -58,6 +58,13 @@ Recommended additional values:
 - `OLLAMA_MODEL`
 - `ONEMINAI_API_KEY`
 
+For local Ollama testing with existing models:
+
+- `OLLAMA_BASE_URL=http://ollama:11434`
+- `OLLAMA_MODEL=<an installed local model such as openhermes>`
+
+The compose stack bind-mounts `${HOME}/ollama` into the Ollama container so downloaded models are reused directly.
+
 ### 3. Create the Discord application
 
 In the Discord Developer Portal:
@@ -76,12 +83,12 @@ Recommended initial scope:
 
 ### 4. Start the backend stack
 
-The intended deployment model is Compose-based.
+The intended deployment model is Podman Compose-based.
 
 Target operator flow:
 
 ```bash
-docker compose up -d
+podman compose up -d
 ```
 
 Expected backend services:
@@ -96,8 +103,8 @@ Additional services may be included later if specific integrations require them.
 Typical checks:
 
 ```bash
-docker compose ps
-docker compose logs -f bot
+podman compose ps
+podman compose logs -f bot
 ```
 
 You should confirm:
@@ -151,7 +158,7 @@ If the implementation is complete, the shortest path to talking to the bot is:
 1. clone the repo
 2. set `DISCORD_BOT_TOKEN` and `DISCORD_OWNER_USER_ID`
 3. invite the bot to Discord
-4. run `docker compose up -d`
+4. run `podman compose up -d`
 5. DM the bot
 
 ## Operational Notes

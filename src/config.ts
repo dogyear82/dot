@@ -13,7 +13,10 @@ const envSchema = z.object({
   SQLITE_PATH: z.string().default("./data/dot.sqlite"),
   OLLAMA_BASE_URL: z.string().url().default("http://ollama:11434"),
   OLLAMA_MODEL: z.string().default("llama3.1:8b"),
-  ONEMINAI_API_KEY: z.string().optional().default("")
+  ONEMINAI_API_KEY: z.string().optional().default(""),
+  ONEMINAI_BASE_URL: z.string().default(""),
+  ONEMINAI_MODEL: z.string().default(""),
+  MODEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20000)
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

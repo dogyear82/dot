@@ -15,3 +15,8 @@ export function normalizeMessage(message: Message<boolean>, botUserId: string): 
     createdAt: message.createdAt.toISOString()
   };
 }
+
+export function stripLeadingBotMention(content: string, botUserId: string): string {
+  const mentionPattern = new RegExp(`^(?:<@!?${botUserId}>\\s*)+`);
+  return content.replace(mentionPattern, "").trim();
+}
