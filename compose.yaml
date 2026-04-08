@@ -2,6 +2,7 @@ services:
   bot:
     build:
       context: .
+      dockerfile: Containerfile
     env_file:
       - .env
     depends_on:
@@ -15,9 +16,8 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - ollama_data:/root/.ollama
+      - ${HOME}/ollama:/root/.ollama:Z
     restart: unless-stopped
 
 volumes:
   dot_data:
-  ollama_data:

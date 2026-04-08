@@ -21,7 +21,7 @@ The design optimizes for:
 3. Persist tasks, reminders, trust classifications, and settings outside model context.
 4. Route all external side effects through deterministic tool adapters.
 5. Prefer simple infrastructure that can run on one machine for v1.
-6. Prefer containerized infrastructure that can be started on another Linux machine with Docker Compose.
+6. Prefer containerized infrastructure that can be started on another Linux machine with Podman Compose.
 
 ## Recommended Technology Direction
 
@@ -36,14 +36,14 @@ Recommended baseline stack for v1:
 - Outlook integration: Microsoft Graph adapter
 - Email adapter: Microsoft Graph mail or SMTP-backed adapter, to be finalized
 - SMS adapter: provider TBD
-- Deployment: `Docker Compose`
+- Deployment: `Podman Compose`
 
 Rationale:
 
 - Discord and integration support are strong in Node.
 - A single-process service with SQLite is enough for a single-user bot and keeps operations simple.
 - Adapter boundaries allow model and messaging providers to change without rewriting the conversation layer.
-- Docker Compose aligns with the portability requirement for bringing the stack up quickly on another Linux machine.
+- Podman Compose aligns with the portability requirement for bringing the stack up quickly on another Linux machine.
 
 ## Deployment Shape
 
@@ -59,12 +59,12 @@ Recommended operational target:
 
 - clone the repository on a Linux machine
 - provide environment configuration and any required secrets
-- run `docker compose up -d`
+- run `podman compose up -d`
 
 Notes:
 
 - The simplest version keeps SQLite inside the bot container with a mounted volume.
-- If Discord connectivity works cleanly in Docker, the bot itself should be containerized too.
+- If Discord connectivity works cleanly in Podman, the bot itself should be containerized too.
 - Only split services further if a real operational constraint appears.
 
 ## Proposed Components
@@ -258,7 +258,7 @@ Responsibilities:
 
 Recommended design:
 
-- one Dockerfile for the bot service
+- one `Containerfile` for the bot service
 - one `compose.yaml` at repo root
 - explicit healthchecks where practical
 - restart policies suitable for a personal always-on bot

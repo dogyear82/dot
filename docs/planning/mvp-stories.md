@@ -18,7 +18,7 @@ In scope:
 - structured logging and error handling baseline
 - local persistence bootstrap
 - containerization baseline for local self-hosting
-- Compose-based startup path for Linux
+- Podman Compose-based startup path for Linux
 
 Out of scope:
 
@@ -33,7 +33,7 @@ Out of scope:
 3. The service logs startup, shutdown, and message-processing failures in a structured way.
 4. Local persistence is initialized automatically for development.
 5. The project contains a documented run path for local development.
-6. The backend can be started through a Docker Compose workflow on Linux.
+6. The backend can be started through a Podman Compose workflow on Linux.
 7. The local model runtime contract is defined around Ollama so later AI stories do not need to re-decide the integration boundary.
 
 ### Dependencies

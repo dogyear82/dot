@@ -5,7 +5,7 @@ import type { Logger } from "pino";
 import { evaluateAccess } from "../auth.js";
 import type { ChatService } from "../chat/modelRouter.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "../onboarding.js";
-import { normalizeMessage } from "./normalize.js";
+import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
 export function createDiscordClient(params: {
@@ -73,7 +73,9 @@ export function createDiscordClient(params: {
         return;
       }
 
-      const content = normalized.content.trim();
+      const content = normalized.isDirectMessage
+        ? normalized.content.trim()
+        : stripLeadingBotMention(normalized.content, client.user.id);
 
       if (!persistence.settings.hasCompletedOnboarding()) {
         const response = content
