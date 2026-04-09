@@ -15,6 +15,8 @@ export interface AccessAuditRecord {
   actorRole: "owner" | "non-owner";
   canUsePrivilegedFeatures: boolean;
   decision: "owner-allowed" | "non-owner-routed";
+  transport: string;
+  conversationId: string;
 }
 
 export interface ReminderRecord {

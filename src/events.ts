@@ -1,0 +1,65 @@
+import type { ActorRole } from "./auth.js";
+
+export interface CanonicalSender {
+  actorId: string;
+  displayName: string;
+  actorRole: ActorRole;
+}
+
+export interface InboundReplyRoute {
+  transport: "discord";
+  channelId: string;
+  guildId: string | null;
+  replyToMessageId: string;
+}
+
+export interface InboundMessagePayload {
+  content: string;
+  addressedContent: string;
+  isDirectMessage: boolean;
+  mentionedBot: boolean;
+}
+
+export interface InboundMessageReceivedEvent {
+  eventId: string;
+  eventType: "inbound.message.received";
+  occurredAt: string;
+  transport: "discord";
+  conversationId: string;
+  sourceMessageId: string;
+  correlationId: string;
+  sender: CanonicalSender;
+  replyRoute: InboundReplyRoute;
+  payload: InboundMessagePayload;
+}
+
+export interface OutboundMessageRequestedEvent {
+  eventId: string;
+  eventType: "outbound.message.requested";
+  occurredAt: string;
+  transport: "discord";
+  conversationId: string;
+  correlationId: string;
+  inResponseToEventId: string;
+  replyRoute: InboundReplyRoute;
+  content: string;
+}
+
+export function createOutboundMessageRequestedEvent(params: {
+  inboundEvent: InboundMessageReceivedEvent;
+  content: string;
+}): OutboundMessageRequestedEvent {
+  const { inboundEvent, content } = params;
+
+  return {
+    eventId: `${inboundEvent.eventId}:outbound:${Date.now()}`,
+    eventType: "outbound.message.requested",
+    occurredAt: new Date().toISOString(),
+    transport: inboundEvent.transport,
+    conversationId: inboundEvent.conversationId,
+    correlationId: inboundEvent.correlationId,
+    inResponseToEventId: inboundEvent.eventId,
+    replyRoute: inboundEvent.replyRoute,
+    content
+  };
+}

@@ -61,6 +61,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       actor_role TEXT NOT NULL,
       can_use_privileged_features INTEGER NOT NULL,
       decision TEXT NOT NULL,
+      transport TEXT,
+      conversation_id TEXT,
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -111,6 +113,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     );
   `);
 
+  ensureAccessAuditColumns(db);
+
   const saveStatement = db.prepare(`
     INSERT OR REPLACE INTO normalized_messages (
       id,
@@ -140,12 +144,16 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       message_id,
       actor_role,
       can_use_privileged_features,
-      decision
+      decision,
+      transport,
+      conversation_id
     ) VALUES (
       @messageId,
       @actorRole,
       @canUsePrivilegedFeatures,
-      @decision
+      @decision,
+      @transport,
+      @conversationId
     )
   `);
 
@@ -419,4 +427,17 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       db.close();
     }
   };
+}
+
+function ensureAccessAuditColumns(db: Database.Database) {
+  const columns = db.prepare<[], { name: string }>("PRAGMA table_info(access_audit)").all();
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("transport")) {
+    db.exec("ALTER TABLE access_audit ADD COLUMN transport TEXT");
+  }
+
+  if (!columnNames.has("conversation_id")) {
+    db.exec("ALTER TABLE access_audit ADD COLUMN conversation_id TEXT");
+  }
 }
