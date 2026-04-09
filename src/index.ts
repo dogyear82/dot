@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { createDiscordClient } from "./discord/createClient.js";
 import { createLogger } from "./logger.js";
 import { MicrosoftGraphOutlookCalendarClient } from "./outlookCalendar.js";
+import { MicrosoftOutlookOAuthClient } from "./outlookOAuth.js";
 import { initializePersistence } from "./persistence.js";
 import { startReminderScheduler } from "./reminders.js";
 
@@ -12,7 +13,8 @@ async function main() {
   const config = loadConfig();
   const logger = createLogger(config.LOG_LEVEL);
   const persistence = initializePersistence(config.DATA_DIR, config.SQLITE_PATH);
-  const calendarClient = new MicrosoftGraphOutlookCalendarClient(config);
+  const outlookOAuthClient = new MicrosoftOutlookOAuthClient(config, persistence);
+  const calendarClient = new MicrosoftGraphOutlookCalendarClient(config, outlookOAuthClient);
   const chatService = createChatService({
     config,
     settings: persistence.settings
@@ -21,6 +23,7 @@ async function main() {
     calendarClient,
     chatService,
     logger,
+    outlookOAuthClient,
     ownerUserId: config.DISCORD_OWNER_USER_ID,
     persistence
   });

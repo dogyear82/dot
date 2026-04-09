@@ -7,6 +7,8 @@ import { createSettingsStore, type SettingsStore } from "./settings.js";
 import type {
   AccessAuditRecord,
   IncomingMessage,
+  OAuthDeviceFlowRecord,
+  OAuthTokenRecord,
   PersonalityPresetRecord,
   ReminderEvent,
   ReminderRecord,
@@ -21,6 +23,12 @@ export interface Persistence {
   saveToolExecutionAudit(record: ToolExecutionAuditRecord): void;
   getPersonalityPreset(name: string): PersonalityPresetRecord | null;
   listPersonalityPresets(): PersonalityPresetRecord[];
+  getOAuthToken(provider: string): OAuthTokenRecord | null;
+  saveOAuthToken(record: OAuthTokenRecord): void;
+  clearOAuthToken(provider: string): void;
+  getOAuthDeviceFlow(provider: string): OAuthDeviceFlowRecord | null;
+  saveOAuthDeviceFlow(record: OAuthDeviceFlowRecord): void;
+  clearOAuthDeviceFlow(provider: string): void;
   createReminder(message: string, dueAt: string): ReminderRecord;
   listPendingReminders(): ReminderRecord[];
   listDueReminders(now: string): ReminderRecord[];
@@ -86,6 +94,28 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       self_concept TEXT NOT NULL,
       slider_values TEXT NOT NULL,
       is_built_in INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      provider TEXT PRIMARY KEY,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      expires_at TEXT NOT NULL,
+      scope TEXT,
+      token_type TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_device_flows (
+      provider TEXT PRIMARY KEY,
+      device_code TEXT NOT NULL,
+      user_code TEXT NOT NULL,
+      verification_uri TEXT NOT NULL,
+      verification_uri_complete TEXT,
+      expires_at TEXT NOT NULL,
+      interval_seconds INTEGER NOT NULL,
+      message TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -286,6 +316,100 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     ORDER BY name ASC
   `);
 
+  const getOAuthTokenStatement = db.prepare<[string], {
+    provider: string;
+    accessToken: string;
+    refreshToken: string | null;
+    expiresAt: string;
+    scope: string | null;
+    tokenType: string;
+  }>(`
+    SELECT
+      provider,
+      access_token AS accessToken,
+      refresh_token AS refreshToken,
+      expires_at AS expiresAt,
+      scope,
+      token_type AS tokenType
+    FROM oauth_tokens
+    WHERE provider = ?
+  `);
+
+  const upsertOAuthTokenStatement = db.prepare(`
+    INSERT INTO oauth_tokens (
+      provider,
+      access_token,
+      refresh_token,
+      expires_at,
+      scope,
+      token_type,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      expires_at = excluded.expires_at,
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+
+  const clearOAuthTokenStatement = db.prepare(`
+    DELETE FROM oauth_tokens
+    WHERE provider = ?
+  `);
+
+  const getOAuthDeviceFlowStatement = db.prepare<[string], {
+    provider: string;
+    deviceCode: string;
+    userCode: string;
+    verificationUri: string;
+    verificationUriComplete: string | null;
+    expiresAt: string;
+    intervalSeconds: number;
+    message: string;
+  }>(`
+    SELECT
+      provider,
+      device_code AS deviceCode,
+      user_code AS userCode,
+      verification_uri AS verificationUri,
+      verification_uri_complete AS verificationUriComplete,
+      expires_at AS expiresAt,
+      interval_seconds AS intervalSeconds,
+      message
+    FROM oauth_device_flows
+    WHERE provider = ?
+  `);
+
+  const upsertOAuthDeviceFlowStatement = db.prepare(`
+    INSERT INTO oauth_device_flows (
+      provider,
+      device_code,
+      user_code,
+      verification_uri,
+      verification_uri_complete,
+      expires_at,
+      interval_seconds,
+      message,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(provider) DO UPDATE SET
+      device_code = excluded.device_code,
+      user_code = excluded.user_code,
+      verification_uri = excluded.verification_uri,
+      verification_uri_complete = excluded.verification_uri_complete,
+      expires_at = excluded.expires_at,
+      interval_seconds = excluded.interval_seconds,
+      message = excluded.message,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+
+  const clearOAuthDeviceFlowStatement = db.prepare(`
+    DELETE FROM oauth_device_flows
+    WHERE provider = ?
+  `);
+
   const upsertPersonalityPresetStatement = db.prepare(`
     INSERT INTO personality_presets (
       name,
@@ -359,6 +483,62 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         sliderValues: JSON.parse(row.sliderValues) as Record<string, number>,
         isBuiltIn: row.isBuiltIn === 1
       }));
+    },
+    getOAuthToken(provider) {
+      const row = getOAuthTokenStatement.get(provider);
+      return row
+        ? {
+            provider: row.provider,
+            accessToken: row.accessToken,
+            refreshToken: row.refreshToken,
+            expiresAt: row.expiresAt,
+            scope: row.scope,
+            tokenType: row.tokenType
+          }
+        : null;
+    },
+    saveOAuthToken(record) {
+      upsertOAuthTokenStatement.run(
+        record.provider,
+        record.accessToken,
+        record.refreshToken,
+        record.expiresAt,
+        record.scope,
+        record.tokenType
+      );
+    },
+    clearOAuthToken(provider) {
+      clearOAuthTokenStatement.run(provider);
+    },
+    getOAuthDeviceFlow(provider) {
+      const row = getOAuthDeviceFlowStatement.get(provider);
+      return row
+        ? {
+            provider: row.provider,
+            deviceCode: row.deviceCode,
+            userCode: row.userCode,
+            verificationUri: row.verificationUri,
+            verificationUriComplete: row.verificationUriComplete,
+            expiresAt: row.expiresAt,
+            intervalSeconds: row.intervalSeconds,
+            message: row.message
+          }
+        : null;
+    },
+    saveOAuthDeviceFlow(record) {
+      upsertOAuthDeviceFlowStatement.run(
+        record.provider,
+        record.deviceCode,
+        record.userCode,
+        record.verificationUri,
+        record.verificationUriComplete,
+        record.expiresAt,
+        record.intervalSeconds,
+        record.message
+      );
+    },
+    clearOAuthDeviceFlow(provider) {
+      clearOAuthDeviceFlowStatement.run(provider);
     },
     createReminder(message, dueAt) {
       const transaction = db.transaction((reminderMessage: string, reminderDueAt: string) => {

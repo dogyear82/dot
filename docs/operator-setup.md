@@ -19,7 +19,7 @@ Minimum expected credentials:
 Optional credentials depending on enabled features:
 
 - 1minAI API credentials
-- Microsoft credentials for Outlook integration
+- Microsoft app registration / client ID for Outlook integration
 - Email provider credentials
 - SMS provider credentials
 
@@ -57,6 +57,8 @@ Recommended additional values:
 - `OLLAMA_BASE_URL`
 - `OLLAMA_MODEL`
 - `ONEMINAI_API_KEY`
+- `OUTLOOK_CLIENT_ID` if you want Outlook calendar support
+- `OUTLOOK_TENANT_ID` if you want to target a specific Microsoft tenant instead of `common`
 
 For local Ollama testing with existing models:
 
@@ -64,6 +66,16 @@ For local Ollama testing with existing models:
 - `OLLAMA_MODEL=<an installed local model such as openhermes>`
 
 The compose stack bind-mounts `${HOME}/ollama` into the Ollama container so downloaded models are reused directly.
+
+For Outlook OAuth:
+
+- set `OUTLOOK_CLIENT_ID`
+- optionally set `OUTLOOK_TENANT_ID` and `OUTLOOK_OAUTH_SCOPES`
+- start the bot
+- run `!calendar auth start`
+- complete the Microsoft device-code sign-in in a browser
+- run `!calendar auth complete`
+- verify with `!calendar auth status`
 
 ### 3. Create the Discord application
 

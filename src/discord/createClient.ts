@@ -6,6 +6,7 @@ import { evaluateAccess } from "../auth.js";
 import type { ChatService } from "../chat/modelRouter.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "../onboarding.js";
 import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "../outlookCalendar.js";
+import type { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
 import { handlePersonalityCommand, isPersonalityCommand } from "../personality.js";
 import { handleReminderCommand, isReminderCommand } from "../reminders.js";
 import { executeToolDecision } from "../toolInvocation.js";
@@ -16,10 +17,11 @@ export function createDiscordClient(params: {
   calendarClient: OutlookCalendarClient;
   chatService: ChatService;
   logger: Logger;
+  outlookOAuthClient: MicrosoftOutlookOAuthClient;
   ownerUserId: string;
   persistence: Persistence;
 }) {
-  const { calendarClient, chatService, logger, ownerUserId, persistence } = params;
+  const { calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence } = params;
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -57,7 +59,9 @@ export function createDiscordClient(params: {
       messageId: normalized.id,
       actorRole: accessDecision.actorRole,
       canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
-      decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed"
+      decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
+      transport: "discord",
+      conversationId: normalized.channelId
     });
 
     logger.info(
@@ -119,6 +123,7 @@ export function createDiscordClient(params: {
           const reply = await handleCalendarCommand({
             calendarClient,
             content,
+            oauthClient: outlookOAuthClient,
             persistence
           });
           persistence.saveToolExecutionAudit({
@@ -240,7 +245,14 @@ function normalizeExplicitToolName(content: string): string {
     return "calendar.remind";
   }
 
-  if (content.startsWith("!calendar show") || content === "!calendar") {
+  if (content.startsWith("!calendar auth")) {
+    return "calendar.auth";
+  }
+
+  if (
+    content.startsWith("!calendar show") ||
+    content === "!calendar"
+  ) {
     return "calendar.show";
   }
 
