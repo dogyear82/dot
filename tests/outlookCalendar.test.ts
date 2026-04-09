@@ -46,8 +46,54 @@ test("isCalendarCommand only matches supported calendar commands", () => {
   assert.equal(isCalendarCommand("!calendar help"), true);
   assert.equal(isCalendarCommand("!calendar show"), true);
   assert.equal(isCalendarCommand("!calendar remind 1"), true);
+  assert.equal(isCalendarCommand("!calendar auth start"), true);
   assert.equal(isCalendarCommand("calendar reminders"), false);
   assert.equal(isCalendarCommand("calendarish"), false);
+});
+
+test("handleCalendarCommand exposes Outlook auth commands", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const reply = await handleCalendarCommand({
+      calendarClient: {
+        async listUpcomingEvents() {
+          return [];
+        }
+      },
+      oauthClient: {
+        async startDeviceAuthorization() {
+          return {
+            provider: "microsoft_graph",
+            deviceCode: "device",
+            userCode: "ABCD-EFGH",
+            verificationUri: "https://microsoft.com/devicelogin",
+            verificationUriComplete: null,
+            expiresAt: "2026-04-09T01:00:00.000Z",
+            intervalSeconds: 5,
+            message: "Use a browser to open the page and enter the code."
+          };
+        },
+        async completeDeviceAuthorization() {
+          return "Outlook authorization complete.";
+        },
+        getAuthorizationStatus() {
+          return "Outlook authorization is pending.";
+        },
+        async getValidAccessToken() {
+          return "token";
+        }
+      } as never,
+      content: "!calendar auth start",
+      now: new Date("2026-04-08T09:00:00.000Z"),
+      persistence
+    });
+
+    assert.match(reply, /Outlook authorization started/);
+    assert.match(reply, /calendar auth complete/);
+  } finally {
+    cleanup();
+  }
 });
 
 test("handleCalendarCommand lists upcoming events", async () => {

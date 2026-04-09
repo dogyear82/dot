@@ -1,4 +1,5 @@
 import type { AppConfig } from "./config.js";
+import { MicrosoftOutlookOAuthClient, OutlookOAuthConfigurationError } from "./outlookOAuth.js";
 import type { Persistence } from "./persistence.js";
 import { parseDuration } from "./reminders.js";
 import type { OutlookCalendarEvent } from "./types.js";
@@ -30,14 +31,22 @@ interface MicrosoftGraphCalendarViewResponse {
 export class OutlookConfigurationError extends Error {}
 
 export class MicrosoftGraphOutlookCalendarClient implements OutlookCalendarClient {
-  constructor(private readonly config: Pick<AppConfig, "OUTLOOK_ACCESS_TOKEN" | "OUTLOOK_GRAPH_BASE_URL" | "OUTLOOK_CALENDAR_ID" | "OUTLOOK_LOOKAHEAD_DAYS">) {}
+  constructor(
+    private readonly config: Pick<
+      AppConfig,
+      | "OUTLOOK_ACCESS_TOKEN"
+      | "OUTLOOK_GRAPH_BASE_URL"
+      | "OUTLOOK_CALENDAR_ID"
+      | "OUTLOOK_LOOKAHEAD_DAYS"
+      | "OUTLOOK_CLIENT_ID"
+      | "OUTLOOK_TENANT_ID"
+      | "OUTLOOK_OAUTH_SCOPES"
+    >,
+    private readonly oauthClient?: MicrosoftOutlookOAuthClient
+  ) {}
 
   async listUpcomingEvents(now = new Date(), limit = DEFAULT_EVENT_LIMIT): Promise<OutlookCalendarEvent[]> {
-    if (!this.config.OUTLOOK_ACCESS_TOKEN) {
-      throw new OutlookConfigurationError(
-        "Outlook calendar integration is not configured. Set `OUTLOOK_ACCESS_TOKEN` before using calendar commands."
-      );
-    }
+    const accessToken = await this.resolveAccessToken(now);
 
     const start = now.toISOString();
     const end = new Date(now.getTime() + this.config.OUTLOOK_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -53,7 +62,7 @@ export class MicrosoftGraphOutlookCalendarClient implements OutlookCalendarClien
 
     const response = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${this.config.OUTLOOK_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${accessToken}`,
         Prefer: 'outlook.timezone="UTC"'
       }
     });
@@ -68,6 +77,30 @@ export class MicrosoftGraphOutlookCalendarClient implements OutlookCalendarClien
       .map((event) => mapMicrosoftGraphEvent(event))
       .filter((event): event is OutlookCalendarEvent => event != null);
   }
+
+  private async resolveAccessToken(now: Date): Promise<string> {
+    if (this.oauthClient) {
+      try {
+        return await this.oauthClient.getValidAccessToken(now);
+      } catch (error) {
+        if (!(error instanceof OutlookOAuthConfigurationError)) {
+          throw error;
+        }
+
+        if (!this.config.OUTLOOK_ACCESS_TOKEN) {
+          throw new OutlookConfigurationError(error.message);
+        }
+      }
+    }
+
+    if (this.config.OUTLOOK_ACCESS_TOKEN) {
+      return this.config.OUTLOOK_ACCESS_TOKEN;
+    }
+
+    throw new OutlookConfigurationError(
+      "Outlook calendar integration is not configured. Run `!calendar auth start` after setting `OUTLOOK_CLIENT_ID`."
+    );
+  }
 }
 
 export function isCalendarCommand(content: string): boolean {
@@ -75,7 +108,12 @@ export function isCalendarCommand(content: string): boolean {
     content === "!calendar" ||
     content === "!calendar help" ||
     content === "!calendar show" ||
-    content.startsWith("!calendar remind ")
+    content.startsWith("!calendar remind ") ||
+    content === "!calendar auth" ||
+    content === "!calendar auth help" ||
+    content === "!calendar auth start" ||
+    content === "!calendar auth complete" ||
+    content === "!calendar auth status"
   );
 }
 
@@ -83,9 +121,10 @@ export async function handleCalendarCommand(params: {
   calendarClient: OutlookCalendarClient;
   content: string;
   now?: Date;
+  oauthClient?: MicrosoftOutlookOAuthClient;
   persistence: Persistence;
 }): Promise<string> {
-  const { calendarClient, content, now = new Date(), persistence } = params;
+  const { calendarClient, content, now = new Date(), oauthClient, persistence } = params;
   const parts = normalizeCalendarCommand(content).split(/\s+/);
 
   if (parts.length === 1 || parts[1] === "help") {
@@ -93,10 +132,58 @@ export async function handleCalendarCommand(params: {
       "Calendar commands:",
       "- `!calendar show`",
       "- `!calendar remind <index> [lead-time]`",
+      "- `!calendar auth help|start|complete|status`",
       "Examples:",
       "- `!calendar remind 1`",
-      "- `!calendar remind 2 15m`"
+      "- `!calendar remind 2 15m`",
+      "- `!calendar auth start`"
     ].join("\n");
+  }
+
+  if (parts[1] === "auth") {
+    if (!oauthClient) {
+      return "Outlook OAuth is not configured in this runtime. Set `OUTLOOK_CLIENT_ID` and restart Dot.";
+    }
+
+    if (!parts[2] || parts[2] === "help") {
+      return [
+        "Calendar auth commands:",
+        "- `!calendar auth start`",
+        "- `!calendar auth complete`",
+        "- `!calendar auth status`"
+      ].join("\n");
+    }
+
+    if (parts[2] === "start") {
+      try {
+        const flow = await oauthClient.startDeviceAuthorization(now);
+        return [
+          "Outlook authorization started.",
+          flow.message,
+          `After signing in, run \`!calendar auth complete\`.`
+        ].join("\n");
+      } catch (error) {
+        return formatCalendarError(error);
+      }
+    }
+
+    if (parts[2] === "complete") {
+      try {
+        return await oauthClient.completeDeviceAuthorization(now);
+      } catch (error) {
+        return formatCalendarError(error);
+      }
+    }
+
+    if (parts[2] === "status") {
+      try {
+        return oauthClient.getAuthorizationStatus(now);
+      } catch (error) {
+        return formatCalendarError(error);
+      }
+    }
+
+    return "Invalid calendar auth command. Use `!calendar auth help`.";
   }
 
   if (parts[1] === "show") {
@@ -163,7 +250,7 @@ export function buildCalendarReminderMessage(event: OutlookCalendarEvent, leadTi
 }
 
 export function formatCalendarError(error: unknown): string {
-  if (error instanceof OutlookConfigurationError) {
+  if (error instanceof OutlookConfigurationError || error instanceof OutlookOAuthConfigurationError) {
     return error.message;
   }
 
