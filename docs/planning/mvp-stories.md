@@ -411,3 +411,43 @@ Out of scope:
 ### Risks / Open Questions
 
 - Automatic tool invocation thresholds should remain conservative at first release.
+
+## Story 12: Add Rich Personality Sliders and Preset Support
+
+### Goal
+
+Give Dot a richer, tweakable personality model with bounded numeric traits and at least one named preset so the bot can feel more distinct than a small set of hard-coded persona modes.
+
+### Scope Boundaries
+
+In scope:
+
+- bounded personality trait settings persisted in SQLite
+- prompt/personality wiring that maps those traits into behavior
+- one built-in preset for the initial release
+- active preset tracking and room for future saved presets
+
+Out of scope:
+
+- full dynamic mood simulation
+- large preset libraries
+- personality editing through a separate GUI
+
+### Acceptance Criteria
+
+1. The owner can configure a bounded set of personality traits through persistent settings.
+2. Trait values materially affect the bot's conversational style in a predictable way.
+3. The system supports at least one named built-in preset.
+4. The active preset and active trait values survive restarts.
+5. The data model leaves room for saving user-defined presets later without reworking the architecture.
+6. The bot remains openly AI rather than pretending to be human.
+
+### Dependencies
+
+- Story 4
+- Story 5
+
+### Risks / Open Questions
+
+- Too many sliders can make the personality unstable or contradictory.
+- The mapping from slider values to prompt behavior needs to stay legible and testable rather than degenerating into prompt soup.

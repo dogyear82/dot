@@ -60,6 +60,10 @@ This bootstrap includes:
 - first DM message starts onboarding if setup is incomplete
 - `!settings show`
 - `!settings set <key> <value>`
+- `!personality show`
+- `!personality set <trait> <1-100>`
+- `!personality preset list`
+- `!personality preset apply blue_lady`
 - `!calendar show`
 - `!calendar remind <index> [lead-time]`
 - `!reminder add <duration> <message>`
@@ -68,6 +72,12 @@ This bootstrap includes:
 - `!reminder ack <id>`
 
 Messages without a leading `!` are treated as normal conversation and can flow through tool inference.
+
+## Personality Notes
+
+- Dot now supports a richer personality model backed by bounded traits.
+- The built-in preset is `blue_lady`.
+- The first trait set includes warmth, candor, assertiveness, playfulness, attachment, stubbornness, curiosity, continuity drive, truthfulness, and emotional transparency.
 
 ## Reminder Notes
 

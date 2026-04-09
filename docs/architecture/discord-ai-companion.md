@@ -126,6 +126,7 @@ Responsibilities:
 
 - store configurable behavior values
 - define persona profiles such as `sheltered` and `diagnostic`
+- store richer personality trait values and AI self-concept
 - store channel participation rules
 - store reminder escalation preferences
 - store assistant-vs-companion weighting
@@ -136,6 +137,21 @@ Recommended design:
 - settings persisted in SQLite
 - typed schema for values that policy and orchestration need deterministically
 - persona prompt templates versioned in code
+- personality traits represented as bounded numeric values rather than free-form prose only
+- support both an active personality state and named saved presets
+
+Recommended first personality dimensions:
+
+- warmth
+- candor
+- assertiveness
+- playfulness
+- attachment
+- stubbornness
+- curiosity
+- continuity drive
+- truthfulness
+- emotional transparency
 
 ### 5. Model Router
 
@@ -284,6 +300,8 @@ Recommended initial tables:
   - keyed owner configuration values
 - `persona_profiles`
   - prompt/profile metadata if stored dynamically
+- `personality_presets`
+  - named saved slider/self-concept bundles for reuse
 - `contacts`
   - canonical contact records
 - `contact_aliases`
@@ -353,7 +371,8 @@ Recommended persistent volumes:
 1. Bot detects missing required settings on startup.
 2. It opens an onboarding conversation with the owner in Discord.
 3. It captures owner identity, persona defaults, channel rules, provider preferences, and safety defaults.
-4. Settings are persisted and can later be changed via commands or chat flows.
+4. It may later capture active personality preset and trait defaults.
+5. Settings are persisted and can later be changed via commands or chat flows.
 
 ## Boundary Decisions
 

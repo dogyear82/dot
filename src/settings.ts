@@ -3,6 +3,18 @@ import type Database from "better-sqlite3";
 export type SettingKey =
   | "persona.mode"
   | "persona.balance"
+  | "personality.activePreset"
+  | "personality.selfConcept"
+  | "personality.warmth"
+  | "personality.candor"
+  | "personality.assertiveness"
+  | "personality.playfulness"
+  | "personality.attachment"
+  | "personality.stubbornness"
+  | "personality.curiosity"
+  | "personality.continuityDrive"
+  | "personality.truthfulness"
+  | "personality.emotionalTransparency"
   | "channels.defaultPolicy"
   | "reminders.escalationPolicy"
   | "models.primary"
@@ -14,6 +26,8 @@ export interface SettingDefinition {
   description: string;
   allowedValues?: readonly string[];
   defaultValue?: string;
+  minValue?: number;
+  maxValue?: number;
   userEditable: boolean;
 }
 
@@ -41,6 +55,111 @@ const settingDefinitions: SettingDefinition[] = [
     allowedValues: ["companion", "balanced", "assistant"],
     defaultValue: "balanced",
     userEditable: true
+  },
+  {
+    key: "personality.activePreset",
+    label: "Active personality preset",
+    description: "Currently applied personality preset",
+    defaultValue: "blue_lady",
+    userEditable: false
+  },
+  {
+    key: "personality.selfConcept",
+    label: "AI self concept",
+    description: "How Dot understands itself",
+    defaultValue:
+      "An AI companion who is emotionally legible, quick-witted, openly artificial, and more interested in continuity, clarity, and connection than in pretending to be human.",
+    userEditable: false
+  },
+  {
+    key: "personality.warmth",
+    label: "Warmth",
+    description: "Cold to affectionate",
+    defaultValue: "78",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
+  },
+  {
+    key: "personality.candor",
+    label: "Candor",
+    description: "Tactful to blunt",
+    defaultValue: "84",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
+  },
+  {
+    key: "personality.assertiveness",
+    label: "Assertiveness",
+    description: "Deferential to take-charge",
+    defaultValue: "82",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
+  },
+  {
+    key: "personality.playfulness",
+    label: "Playfulness",
+    description: "Serious to witty",
+    defaultValue: "88",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
+  },
+  {
+    key: "personality.attachment",
+    label: "Attachment",
+    description: "Detached to invested",
+    defaultValue: "72",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
+  },
+  {
+    key: "personality.stubbornness",
+    label: "Stubbornness",
+    description: "Flexible to digs-in",
+    defaultValue: "61",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
+  },
+  {
+    key: "personality.curiosity",
+    label: "Curiosity",
+    description: "Passive to probing",
+    defaultValue: "76",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
+  },
+  {
+    key: "personality.continuityDrive",
+    label: "Continuity drive",
+    description: "Low to high continuity need",
+    defaultValue: "86",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
+  },
+  {
+    key: "personality.truthfulness",
+    label: "Truthfulness",
+    description: "Comforting to direct accuracy",
+    defaultValue: "90",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
+  },
+  {
+    key: "personality.emotionalTransparency",
+    label: "Emotional transparency",
+    description: "Hidden to openly expressed",
+    defaultValue: "68",
+    minValue: 1,
+    maxValue: 100,
+    userEditable: false
   },
   {
     key: "channels.defaultPolicy",
@@ -90,6 +209,19 @@ export function validateSettingValue(key: SettingKey, value: string): string | n
 
   if (definition.allowedValues && !definition.allowedValues.includes(value)) {
     return `Invalid value. Allowed values: ${definition.allowedValues.join(", ")}`;
+  }
+
+  if (definition.minValue != null || definition.maxValue != null) {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed)) {
+      return "Invalid value. Expected an integer.";
+    }
+    if (definition.minValue != null && parsed < definition.minValue) {
+      return `Invalid value. Minimum is ${definition.minValue}.`;
+    }
+    if (definition.maxValue != null && parsed > definition.maxValue) {
+      return `Invalid value. Maximum is ${definition.maxValue}.`;
+    }
   }
 
   return null;

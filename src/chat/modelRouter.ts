@@ -36,7 +36,8 @@ export function createChatService(params: {
       const messages = buildMessages({
         userMessage,
         mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
-        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance
+        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
+        settings: params.settings
       });
 
       const failures: string[] = [];
@@ -100,13 +101,15 @@ function buildMessages(params: {
   userMessage: string;
   mode: PersonaMode;
   balance: PersonaBalance;
+  settings: SettingsStore;
 }): ChatMessage[] {
   return [
     {
       role: "system",
       content: buildSystemPrompt({
         mode: params.mode,
-        balance: params.balance
+        balance: params.balance,
+        settings: params.settings
       })
     },
     {

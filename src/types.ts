@@ -53,3 +53,10 @@ export interface ToolExecutionAuditRecord {
   provider: string | null;
   detail: string | null;
 }
+
+export interface PersonalityPresetRecord {
+  name: string;
+  selfConcept: string;
+  sliderValues: Record<string, number>;
+  isBuiltIn: boolean;
+}
