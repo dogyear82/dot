@@ -12,6 +12,8 @@ export function normalizeMessage(message: Message<boolean>, botUserId: string): 
     content: message.content,
     isDirectMessage: message.guildId == null,
     mentionedBot: message.mentions.users.has(botUserId),
+    replyToMessageId: null,
+    replyToAuthorId: null,
     createdAt: message.createdAt.toISOString()
   };
 }

@@ -253,7 +253,11 @@ async function replyAndRecord(
   persistence: Persistence
 ) {
   const sent = await message.reply(content);
-  persistence.saveNormalizedMessage(normalizeMessage(sent, botUserId));
+  persistence.saveNormalizedMessage({
+    ...normalizeMessage(sent, botUserId),
+    replyToMessageId: message.id,
+    replyToAuthorId: message.author.id
+  });
 }
 
 function normalizeExplicitToolName(content: string): string {

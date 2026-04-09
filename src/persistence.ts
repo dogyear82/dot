@@ -52,6 +52,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       content TEXT NOT NULL,
       is_direct_message INTEGER NOT NULL,
       mentioned_bot INTEGER NOT NULL,
+      reply_to_message_id TEXT,
+      reply_to_author_id TEXT,
       created_at TEXT NOT NULL,
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -112,6 +114,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     );
   `);
 
+  ensureNormalizedMessageColumns(db);
+
   const saveStatement = db.prepare(`
     INSERT OR REPLACE INTO normalized_messages (
       id,
@@ -122,6 +126,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       content,
       is_direct_message,
       mentioned_bot,
+      reply_to_message_id,
+      reply_to_author_id,
       created_at
     ) VALUES (
       @id,
@@ -132,6 +138,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @content,
       @isDirectMessage,
       @mentionedBot,
+      @replyToMessageId,
+      @replyToAuthorId,
       @createdAt
     )
   `);
@@ -163,10 +171,12 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       content,
       is_direct_message AS isDirectMessage,
       mentioned_bot AS mentionedBot,
+      reply_to_message_id AS replyToMessageId,
+      reply_to_author_id AS replyToAuthorId,
       created_at AS createdAt
     FROM normalized_messages
     WHERE channel_id = ?
-    ORDER BY datetime(created_at) DESC, recorded_at DESC
+    ORDER BY created_at DESC, recorded_at DESC, id DESC
     LIMIT ?
   `);
 
@@ -348,7 +358,9 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       saveStatement.run({
         ...message,
         isDirectMessage: message.isDirectMessage ? 1 : 0,
-        mentionedBot: message.mentionedBot ? 1 : 0
+        mentionedBot: message.mentionedBot ? 1 : 0,
+        replyToMessageId: message.replyToMessageId ?? null,
+        replyToAuthorId: message.replyToAuthorId ?? null
       });
     },
     listRecentNormalizedMessages(channelId, limit) {
@@ -447,4 +459,17 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       db.close();
     }
   };
+}
+
+function ensureNormalizedMessageColumns(db: Database.Database) {
+  const columns = db.prepare<[], { name: string }>("PRAGMA table_info(normalized_messages)").all();
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("reply_to_message_id")) {
+    db.exec("ALTER TABLE normalized_messages ADD COLUMN reply_to_message_id TEXT");
+  }
+
+  if (!columnNames.has("reply_to_author_id")) {
+    db.exec("ALTER TABLE normalized_messages ADD COLUMN reply_to_author_id TEXT");
+  }
 }

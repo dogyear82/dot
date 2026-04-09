@@ -7,6 +7,8 @@ export interface IncomingMessage {
   content: string;
   isDirectMessage: boolean;
   mentionedBot: boolean;
+  replyToMessageId?: string | null;
+  replyToAuthorId?: string | null;
   createdAt: string;
 }
 

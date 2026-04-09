@@ -33,6 +33,10 @@ export function shouldTreatOwnerMessageAsAddressed(params: {
     return false;
   }
 
+  if (mostRecentMessage.replyToAuthorId !== message.authorId) {
+    return false;
+  }
+
   const currentCreatedAt = Date.parse(message.createdAt);
   const recentCreatedAt = Date.parse(mostRecentMessage.createdAt);
   if (Number.isNaN(currentCreatedAt) || Number.isNaN(recentCreatedAt)) {

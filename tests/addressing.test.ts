@@ -14,6 +14,8 @@ function message(overrides: Partial<IncomingMessage> = {}): IncomingMessage {
     content: "hello",
     isDirectMessage: false,
     mentionedBot: false,
+    replyToMessageId: null,
+    replyToAuthorId: null,
     createdAt: "2026-04-09T00:00:00.000Z",
     ...overrides
   };
@@ -77,6 +79,8 @@ test("addressedness is true when the bot was the most recent speaker in the chan
           authorId: "bot-1",
           authorUsername: "Dot",
           content: "You have a meeting today.",
+          replyToMessageId: "msg-owner-previous",
+          replyToAuthorId: "owner-1",
           createdAt: "2026-04-09T00:03:00.000Z"
         })
       ]
@@ -114,6 +118,28 @@ test("addressedness stays false when recent bot context is stale or absent", () 
           id: "msg-owner-older",
           authorId: "owner-1",
           content: "previous owner message"
+        })
+      ]
+    }),
+    false
+  );
+});
+
+test("addressedness stays false when the bot last replied to someone else", () => {
+  assert.equal(
+    shouldTreatOwnerMessageAsAddressed({
+      message: message({ createdAt: "2026-04-09T00:04:00.000Z", content: "and tomorrow?" }),
+      botUserId: "bot-1",
+      defaultChannelPolicy: "mention-only",
+      recentMessages: [
+        message({
+          id: "msg-bot",
+          authorId: "bot-1",
+          authorUsername: "Dot",
+          content: "I can only help non-owner users get in touch with the owner.",
+          replyToMessageId: "msg-non-owner",
+          replyToAuthorId: "user-2",
+          createdAt: "2026-04-09T00:03:00.000Z"
         })
       ]
     }),
