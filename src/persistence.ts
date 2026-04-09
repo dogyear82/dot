@@ -17,6 +17,7 @@ export interface Persistence {
   db: Database.Database;
   settings: SettingsStore;
   saveNormalizedMessage(message: IncomingMessage): void;
+  listRecentNormalizedMessages(channelId: string, limit: number): IncomingMessage[];
   saveAccessAudit(record: AccessAuditRecord): void;
   saveToolExecutionAudit(record: ToolExecutionAuditRecord): void;
   getPersonalityPreset(name: string): PersonalityPresetRecord | null;
@@ -147,6 +148,26 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @canUsePrivilegedFeatures,
       @decision
     )
+  `);
+
+  const listRecentNormalizedMessagesStatement = db.prepare<
+    [string, number],
+    Omit<IncomingMessage, "isDirectMessage" | "mentionedBot"> & { isDirectMessage: number; mentionedBot: number }
+  >(`
+    SELECT
+      id,
+      channel_id AS channelId,
+      guild_id AS guildId,
+      author_id AS authorId,
+      author_username AS authorUsername,
+      content,
+      is_direct_message AS isDirectMessage,
+      mentioned_bot AS mentionedBot,
+      created_at AS createdAt
+    FROM normalized_messages
+    WHERE channel_id = ?
+    ORDER BY datetime(created_at) DESC, recorded_at DESC
+    LIMIT ?
   `);
 
   const toolExecutionAuditStatement = db.prepare(`
@@ -329,6 +350,13 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         isDirectMessage: message.isDirectMessage ? 1 : 0,
         mentionedBot: message.mentionedBot ? 1 : 0
       });
+    },
+    listRecentNormalizedMessages(channelId, limit) {
+      return listRecentNormalizedMessagesStatement.all(channelId, limit).map((row) => ({
+        ...row,
+        isDirectMessage: row.isDirectMessage === 1,
+        mentionedBot: row.mentionedBot === 1
+      }));
     },
     saveAccessAudit(record) {
       accessAuditStatement.run({

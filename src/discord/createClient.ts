@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
+import { Client, Events, GatewayIntentBits, Partials, type Message } from "discord.js";
 
 import type { Logger } from "pino";
 
@@ -9,6 +9,7 @@ import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } 
 import { handlePersonalityCommand, isPersonalityCommand } from "../personality.js";
 import { handleReminderCommand, isReminderCommand } from "../reminders.js";
 import { executeToolDecision } from "../toolInvocation.js";
+import { shouldTreatOwnerMessageAsAddressed } from "./addressing.js";
 import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
@@ -44,8 +45,9 @@ export function createDiscordClient(params: {
     if (message.author.bot || !client.user) {
       return;
     }
+    const botUserId = client.user.id;
 
-    const normalized = normalizeMessage(message, client.user.id);
+    const normalized = normalizeMessage(message, botUserId);
     persistence.saveNormalizedMessage(normalized);
     const accessDecision = evaluateAccess({
       authorId: normalized.authorId,
@@ -74,29 +76,47 @@ export function createDiscordClient(params: {
     );
 
     if (accessDecision.canUsePrivilegedFeatures) {
-      if (!normalized.isDirectMessage && !normalized.mentionedBot) {
+      const isAddressed = shouldTreatOwnerMessageAsAddressed({
+        message: normalized,
+        botUserId,
+        defaultChannelPolicy: persistence.settings.get("channels.defaultPolicy"),
+        recentMessages: normalized.isDirectMessage ? [] : persistence.listRecentNormalizedMessages(normalized.channelId, 3)
+      });
+
+      logger.info(
+        {
+          messageId: normalized.id,
+          channelId: normalized.channelId,
+          addressed: isAddressed,
+          isDirectMessage: normalized.isDirectMessage,
+          mentionedBot: normalized.mentionedBot
+        },
+        "Evaluated owner addressedness"
+      );
+
+      if (!isAddressed) {
         return;
       }
 
-      const content = normalized.isDirectMessage
+      const content = normalized.isDirectMessage || !normalized.mentionedBot
         ? normalized.content.trim()
-        : stripLeadingBotMention(normalized.content, client.user.id);
+        : stripLeadingBotMention(normalized.content, botUserId);
 
       if (!persistence.settings.hasCompletedOnboarding()) {
         const response = content
           ? handleOnboardingReply(persistence.settings, content)
           : { reply: getOnboardingPrompt(persistence.settings), onboardingComplete: false };
-        void message.reply(response.reply);
+        void replyAndRecord(message, response.reply, botUserId, persistence);
         return;
       }
 
       if (isSettingsCommand(content)) {
-        void message.reply(handleSettingsCommand(persistence.settings, content));
+        void replyAndRecord(message, handleSettingsCommand(persistence.settings, content), botUserId, persistence);
         return;
       }
 
       if (isPersonalityCommand(content)) {
-        void message.reply(handlePersonalityCommand(persistence, content));
+        void replyAndRecord(message, handlePersonalityCommand(persistence, content), botUserId, persistence);
         return;
       }
 
@@ -110,7 +130,7 @@ export function createDiscordClient(params: {
           provider: null,
           detail: content
         });
-        void message.reply(reply);
+        void replyAndRecord(message, reply, botUserId, persistence);
         return;
       }
 
@@ -129,7 +149,7 @@ export function createDiscordClient(params: {
             provider: null,
             detail: content
           });
-          await message.reply(reply);
+          await replyAndRecord(message, reply, botUserId, persistence);
         })();
         return;
       }
@@ -151,7 +171,7 @@ export function createDiscordClient(params: {
                 provider: inferred.provider,
                 detail: inferred.decision.reason
               });
-              await message.reply(inferred.decision.question);
+              await replyAndRecord(message, inferred.decision.question, botUserId, persistence);
               return;
             }
 
@@ -173,7 +193,7 @@ export function createDiscordClient(params: {
                 { provider: inferred.provider, messageId: normalized.id, toolName: inferred.decision.toolName },
                 "Executed inferred tool decision"
               );
-              await message.reply(reply);
+              await replyAndRecord(message, reply, botUserId, persistence);
               return;
             }
 
@@ -199,11 +219,14 @@ export function createDiscordClient(params: {
 
           const response = await chatService.generateOwnerReply(content);
           logger.info({ provider: response.provider, messageId: normalized.id }, "Generated owner chat response");
-          await message.reply(response.reply);
+          await replyAndRecord(message, response.reply, botUserId, persistence);
         } catch (error) {
           logger.error({ err: error, messageId: normalized.id }, "Failed to generate owner chat response");
-          await message.reply(
-            "I couldn't generate a response from the configured model provider. Check the model settings or provider configuration."
+          await replyAndRecord(
+            message,
+            "I couldn't generate a response from the configured model provider. Check the model settings or provider configuration.",
+            botUserId,
+            persistence
           );
         }
       })();
@@ -212,7 +235,7 @@ export function createDiscordClient(params: {
     }
 
     if (!accessDecision.canUsePrivilegedFeatures && accessDecision.shouldReply && accessDecision.responseMessage) {
-      void message.reply(accessDecision.responseMessage);
+      void replyAndRecord(message, accessDecision.responseMessage, botUserId, persistence);
     }
   });
 
@@ -221,6 +244,16 @@ export function createDiscordClient(params: {
   });
 
   return client;
+}
+
+async function replyAndRecord(
+  message: Message<boolean>,
+  content: string,
+  botUserId: string,
+  persistence: Persistence
+) {
+  const sent = await message.reply(content);
+  persistence.saveNormalizedMessage(normalizeMessage(sent, botUserId));
 }
 
 function normalizeExplicitToolName(content: string): string {
