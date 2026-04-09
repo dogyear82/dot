@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { initializePersistence } from "../src/persistence.js";
-import { executeToolDecision, parseToolDecision } from "../src/toolInvocation.js";
+import { executeToolDecision, inferDeterministicToolDecision, parseToolDecision } from "../src/toolInvocation.js";
 
 function createPersistence() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-tool-invoke-"));
@@ -36,6 +36,24 @@ test("parseToolDecision accepts execute and clarify responses", () => {
       question: "When should I remind you?"
     }
   );
+});
+
+test("inferDeterministicToolDecision catches obvious calendar-view requests", () => {
+  assert.deepEqual(inferDeterministicToolDecision("what's my calendar looking like this week?"), {
+    decision: "execute",
+    toolName: "calendar.show",
+    reason: "clear calendar-view intent from deterministic phrase matching",
+    args: {}
+  });
+
+  assert.deepEqual(inferDeterministicToolDecision("Do I have any meetings or appointments today?"), {
+    decision: "execute",
+    toolName: "calendar.show",
+    reason: "clear calendar-view intent from deterministic phrase matching",
+    args: {}
+  });
+
+  assert.equal(inferDeterministicToolDecision("how's your day going?"), null);
 });
 
 test("executeToolDecision runs deterministic reminder and calendar handlers", async () => {

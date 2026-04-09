@@ -162,3 +162,27 @@ test("chat service falls back to the next provider for invalid inference output"
   assert.equal(result.provider, "1minai");
   assert.deepEqual(result.decision, { decision: "none", reason: "not enough confidence for a tool" });
 });
+
+test("chat service uses deterministic calendar inference for obvious schedule questions", async () => {
+  const store = createStore();
+  store.set("models.primary", "ollama");
+
+  const service = createChatService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", true, async () => {
+        throw new Error("model should not be called for deterministic calendar intent");
+      })
+    ]
+  });
+
+  const result = await service.inferToolDecision("what's my calendar looking like this week?");
+  assert.equal(result.provider, "deterministic");
+  assert.deepEqual(result.decision, {
+    decision: "execute",
+    toolName: "calendar.show",
+    reason: "clear calendar-view intent from deterministic phrase matching",
+    args: {}
+  });
+});

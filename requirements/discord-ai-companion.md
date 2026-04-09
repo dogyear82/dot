@@ -38,6 +38,7 @@ The user strongly prefers local model execution when possible. The local model r
 11. Another Discord user leaves a message for the primary user through the bot when the primary user is unavailable.
 12. The bot stores that contact request as an internal task or pending delivery item and surfaces it prominently to the primary user during the next relevant interaction.
 13. The bot helps mediate contact between other users and the primary user without granting those other users access to privileged bot capabilities.
+14. The system should evolve toward transport-agnostic messaging so future inputs such as SMS or WhatsApp can reuse the same core conversation and tool workflows.
 
 ## Functional Requirements
 
@@ -94,6 +95,10 @@ The user strongly prefers local model execution when possible. The local model r
 44. The local model backend must support Ollama running in a containerized deployment.
 45. The repository should support starting the backend stack through a Podman Compose workflow on Linux.
 46. The system should be operable by cloning the repository onto another Linux machine and starting the stack with minimal manual setup beyond secrets/configuration.
+47. The system must carry canonical routing metadata for inbound messages so downstream services can reply through the correct transport, conversation, and destination later.
+48. The system must separate transport-specific input/output handling from core orchestration logic.
+49. The system should expose an internal event-driven seam between channel adapters and the core processing pipeline.
+50. The first event-driven implementation may remain in one process, but it must preserve contracts that allow later process separation without redesigning message flow.
 
 ## Non-Functional Requirements
 
@@ -113,6 +118,9 @@ The user strongly prefers local model execution when possible. The local model r
 14. Backend services should be containerized so they can be started and stopped predictably.
 15. Deployment should prioritize portability across Linux machines owned by the user.
 16. Local development and self-hosting should be achievable through a documented Podman Compose workflow.
+17. The architecture should allow adding new transports without rewriting core orchestration, policy, reminder, or tool workflows.
+18. The architecture should favor a modular-monolith migration path first, with event contracts and durable queues/outbox patterns before introducing a heavier broker or many independent services.
+19. Transport adapters should remain thin and focused on normalization, routing metadata, and final delivery rather than business logic.
 
 ## Constraints
 
@@ -128,6 +136,7 @@ The user strongly prefers local model execution when possible. The local model r
 10. Privileged bot use is reserved for the primary user only, even when the bot is present in shared Discord channels.
 11. Backend services should be designed to run in containers by default.
 12. The user wants to be able to clone the repository onto another Linux machine and bring the backend up via Podman Compose.
+13. The near-term architecture should avoid premature distributed-system complexity while still creating clean seams for future transport adapters and process splits.
 
 ## Open Questions
 
@@ -151,3 +160,6 @@ The user strongly prefers local model execution when possible. The local model r
 15. What exact capabilities should non-owner users have beyond leaving a message, such as asking whether the primary user is available, requesting a callback, or sending structured urgent notices?
 16. How should urgent third-party contact requests be escalated if the primary user does not respond in Discord?
 17. Should the Discord bot process itself also run in Podman by default, or is it acceptable to keep only supporting backend services containerized if Discord runtime constraints appear?
+18. What should the first internal event bus implementation be: in-process pub/sub only, SQLite-backed outbox/inbox, or another lightweight approach?
+19. Which transport should follow Discord first once the channel-agnostic message flow exists?
+20. How much channel-specific metadata belongs in the canonical envelope versus transport-specific extension fields?

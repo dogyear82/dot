@@ -8,7 +8,7 @@ Bootstrap for a Discord-native AI companion.
 2. Start the backend stack with Podman:
 
 ```bash
-podman compose up --build
+podman-compose up --build
 ```
 
 3. For local development without Podman:
@@ -53,6 +53,19 @@ This bootstrap includes:
 
 - The bot image is built from `Containerfile`.
 - The Ollama service bind-mounts `${HOME}/ollama` into the container so existing local models are reused.
+- Use `podman-compose`, not `podman compose`, on this machine. `podman compose` delegates to the external Docker Compose provider here and drops the NVIDIA CDI GPU device mapping, which leaves Ollama running on CPU.
+- To start just the local model runtime with GPU support:
+
+```bash
+podman-compose up -d ollama
+```
+
+- To recreate Ollama after changing the compose file or model mount:
+
+```bash
+podman-compose up -d --force-recreate ollama
+```
+
 - Set `OLLAMA_MODEL` in `.env` to a model you already have locally, such as `openhermes`.
 
 ## Current owner commands
