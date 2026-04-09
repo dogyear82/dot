@@ -1,11 +1,15 @@
+import { buildPersonalityPrompt } from "../personality.js";
+
 export type PersonaMode = "sheltered" | "diagnostic";
 export type PersonaBalance = "companion" | "balanced" | "assistant";
+import type { SettingsStore } from "../settings.js";
 
 export function buildSystemPrompt(params: {
   mode: PersonaMode;
   balance: PersonaBalance;
+  settings: SettingsStore;
 }): string {
-  const { mode, balance } = params;
+  const { mode, balance, settings } = params;
 
   const modeInstruction =
     mode === "diagnostic"
@@ -22,6 +26,7 @@ export function buildSystemPrompt(params: {
   return [
     "You are Dot, a Discord-native AI companion for a single owner.",
     "Stay concise, grounded, and natural in chat responses.",
+    buildPersonalityPrompt(settings),
     modeInstruction,
     balanceInstruction,
     "Do not claim to have performed actions you did not actually perform.",

@@ -4,7 +4,14 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 import { createSettingsStore, type SettingsStore } from "./settings.js";
-import type { AccessAuditRecord, IncomingMessage, ReminderEvent, ReminderRecord, ToolExecutionAuditRecord } from "./types.js";
+import type {
+  AccessAuditRecord,
+  IncomingMessage,
+  PersonalityPresetRecord,
+  ReminderEvent,
+  ReminderRecord,
+  ToolExecutionAuditRecord
+} from "./types.js";
 
 export interface Persistence {
   db: Database.Database;
@@ -12,6 +19,8 @@ export interface Persistence {
   saveNormalizedMessage(message: IncomingMessage): void;
   saveAccessAudit(record: AccessAuditRecord): void;
   saveToolExecutionAudit(record: ToolExecutionAuditRecord): void;
+  getPersonalityPreset(name: string): PersonalityPresetRecord | null;
+  listPersonalityPresets(): PersonalityPresetRecord[];
   createReminder(message: string, dueAt: string): ReminderRecord;
   listPendingReminders(): ReminderRecord[];
   listDueReminders(now: string): ReminderRecord[];
@@ -69,6 +78,14 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS personality_presets (
+      name TEXT PRIMARY KEY,
+      self_concept TEXT NOT NULL,
+      slider_values TEXT NOT NULL,
+      is_built_in INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -249,7 +266,59 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     ORDER BY id ASC
   `);
 
+  const getPersonalityPresetStatement = db.prepare<[string], { name: string; selfConcept: string; sliderValues: string; isBuiltIn: number }>(`
+    SELECT
+      name,
+      self_concept AS selfConcept,
+      slider_values AS sliderValues,
+      is_built_in AS isBuiltIn
+    FROM personality_presets
+    WHERE name = ?
+  `);
+
+  const listPersonalityPresetsStatement = db.prepare<[], { name: string; selfConcept: string; sliderValues: string; isBuiltIn: number }>(`
+    SELECT
+      name,
+      self_concept AS selfConcept,
+      slider_values AS sliderValues,
+      is_built_in AS isBuiltIn
+    FROM personality_presets
+    ORDER BY name ASC
+  `);
+
+  const upsertPersonalityPresetStatement = db.prepare(`
+    INSERT INTO personality_presets (
+      name,
+      self_concept,
+      slider_values,
+      is_built_in,
+      updated_at
+    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(name) DO UPDATE SET
+      self_concept = excluded.self_concept,
+      slider_values = excluded.slider_values,
+      is_built_in = excluded.is_built_in,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+
   const settings = createSettingsStore(db);
+  upsertPersonalityPresetStatement.run(
+    "blue_lady",
+    "An AI companion who is emotionally legible, quick-witted, openly artificial, and more interested in continuity, clarity, and connection than in pretending to be human.",
+    JSON.stringify({
+      "personality.warmth": 78,
+      "personality.candor": 84,
+      "personality.assertiveness": 82,
+      "personality.playfulness": 88,
+      "personality.attachment": 72,
+      "personality.stubbornness": 61,
+      "personality.curiosity": 76,
+      "personality.continuityDrive": 86,
+      "personality.truthfulness": 90,
+      "personality.emotionalTransparency": 68
+    }),
+    1
+  );
 
   return {
     db,
@@ -269,6 +338,27 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     },
     saveToolExecutionAudit(record) {
       toolExecutionAuditStatement.run(record);
+    },
+    getPersonalityPreset(name) {
+      const row = getPersonalityPresetStatement.get(name);
+      if (!row) {
+        return null;
+      }
+
+      return {
+        name: row.name,
+        selfConcept: row.selfConcept,
+        sliderValues: JSON.parse(row.sliderValues) as Record<string, number>,
+        isBuiltIn: row.isBuiltIn === 1
+      };
+    },
+    listPersonalityPresets() {
+      return listPersonalityPresetsStatement.all().map((row) => ({
+        name: row.name,
+        selfConcept: row.selfConcept,
+        sliderValues: JSON.parse(row.sliderValues) as Record<string, number>,
+        isBuiltIn: row.isBuiltIn === 1
+      }));
     },
     createReminder(message, dueAt) {
       const transaction = db.transaction((reminderMessage: string, reminderDueAt: string) => {

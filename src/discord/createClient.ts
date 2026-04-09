@@ -6,6 +6,7 @@ import { evaluateAccess } from "../auth.js";
 import type { ChatService } from "../chat/modelRouter.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "../onboarding.js";
 import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "../outlookCalendar.js";
+import { handlePersonalityCommand, isPersonalityCommand } from "../personality.js";
 import { handleReminderCommand, isReminderCommand } from "../reminders.js";
 import { executeToolDecision } from "../toolInvocation.js";
 import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
@@ -91,6 +92,11 @@ export function createDiscordClient(params: {
 
       if (isSettingsCommand(content)) {
         void message.reply(handleSettingsCommand(persistence.settings, content));
+        return;
+      }
+
+      if (isPersonalityCommand(content)) {
+        void message.reply(handlePersonalityCommand(persistence, content));
         return;
       }
 
@@ -240,6 +246,10 @@ function normalizeExplicitToolName(content: string): string {
 
   if (content.startsWith("!settings")) {
     return "settings";
+  }
+
+  if (content.startsWith("!personality")) {
+    return "personality";
   }
 
   return "explicit-command";

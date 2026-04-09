@@ -22,6 +22,8 @@ The design optimizes for:
 4. Route all external side effects through deterministic tool adapters.
 5. Prefer simple infrastructure that can run on one machine for v1.
 6. Prefer containerized infrastructure that can be started on another Linux machine with Podman Compose.
+7. Treat transport adapters as edge services that publish and consume internal events instead of embedding core orchestration logic directly in channel handlers.
+8. Preserve enough routing metadata on every inbound event that replies can be delivered back through the correct transport, conversation, and destination later.
 
 ## Recommended Technology Direction
 
@@ -44,6 +46,7 @@ Rationale:
 - A single-process service with SQLite is enough for a single-user bot and keeps operations simple.
 - Adapter boundaries allow model and messaging providers to change without rewriting the conversation layer.
 - Podman Compose aligns with the portability requirement for bringing the stack up quickly on another Linux machine.
+- An event-driven seam inside the application allows the system to grow toward multiple transports and smaller services without forcing a full distributed system immediately.
 
 ## Deployment Shape
 
@@ -66,6 +69,7 @@ Notes:
 - The simplest version keeps SQLite inside the bot container with a mounted volume.
 - If Discord connectivity works cleanly in Podman, the bot itself should be containerized too.
 - Only split services further if a real operational constraint appears.
+- The recommended migration path is internal event-driven architecture first, process separation later if and when the boundaries prove valuable operationally.
 
 ## Proposed Components
 
@@ -76,7 +80,9 @@ Responsibilities:
 - connect to Discord events
 - normalize incoming messages, mentions, DMs, and channel context
 - identify the sender and channel
-- hand normalized events to the application layer
+- produce a canonical inbound event with transport-specific routing metadata
+- publish that event to the internal message bus instead of calling orchestration logic directly
+- subscribe to outbound message events that target Discord
 - send replies, drafts, prompts, and reminder notifications back to Discord
 
 Key outputs:
@@ -84,6 +90,12 @@ Key outputs:
 - `IncomingMessage`
 - `InteractionContext`
 - `UserIdentity`
+- `TransportEnvelope`
+- `InboundMessageReceived`
+
+Key rule:
+
+- the Discord adapter should know Discord-specific IDs and delivery APIs, but it should not own conversation orchestration, tool selection, or policy decisions
 
 ### 2. Identity and Access Controller
 
@@ -99,15 +111,53 @@ Key decisions:
 - owner identity must be deterministic and not inferred by the LLM
 - authorization checks happen before model/tool orchestration
 
-### 3. Conversation Orchestrator
+### 3. Internal Event Bus and Envelope
 
 Responsibilities:
 
+- provide a stable transport-neutral message contract between adapters and core services
+- carry origin metadata needed for later reply delivery
+- decouple inbound transport handling from downstream processing and outbound delivery
+- allow the system to remain one process in v1 while preserving seams for future service splitting
+
+Recommended design:
+
+- start with an in-process event bus and typed event contracts
+- treat bus abstraction as mandatory even if the first implementation is just local process pub/sub
+- only graduate to an external broker if reliability or independent scaling actually demands it
+
+Recommended core event fields:
+
+- `eventId`
+- `eventType`
+- `occurredAt`
+- `transport`
+- `conversationId`
+- `messageId`
+- `sender`
+- `recipient`
+- `replyRoute`
+- `payload`
+
+Examples:
+
+- `InboundMessageReceived`
+- `OutboundMessageRequested`
+- `ReminderDue`
+- `ToolExecutionCompleted`
+- `DeliveryFailed`
+
+### 4. Conversation Orchestrator
+
+Responsibilities:
+
+- consume canonical inbound events from the message bus
 - decide how to handle each incoming event
 - assemble the right context for a model call
 - choose between chat-only response, clarification, tool proposal, or tool execution
 - pull pending inbox/tasks that should be surfaced to the owner
 - switch between regular companion mode and diagnostic mode
+- emit outbound message requests and state-change events rather than writing directly to Discord
 
 The orchestrator should not call providers directly. It should delegate to:
 
@@ -115,17 +165,19 @@ The orchestrator should not call providers directly. It should delegate to:
 - policy engine
 - tool executor
 - task/inbox service
+- outbound delivery routing
 
 Important constraint:
 
 - the orchestrator may use model output to decide whether a tool is appropriate, but any actual side effect must be executed through a structured tool interface
 
-### 4. Persona and Settings Service
+### 5. Persona and Settings Service
 
 Responsibilities:
 
 - store configurable behavior values
 - define persona profiles such as `sheltered` and `diagnostic`
+- store richer personality trait values and AI self-concept
 - store channel participation rules
 - store reminder escalation preferences
 - store assistant-vs-companion weighting
@@ -136,8 +188,23 @@ Recommended design:
 - settings persisted in SQLite
 - typed schema for values that policy and orchestration need deterministically
 - persona prompt templates versioned in code
+- personality traits represented as bounded numeric values rather than free-form prose only
+- support both an active personality state and named saved presets
 
-### 5. Model Router
+Recommended first personality dimensions:
+
+- warmth
+- candor
+- assertiveness
+- playfulness
+- attachment
+- stubbornness
+- curiosity
+- continuity drive
+- truthfulness
+- emotional transparency
+
+### 6. Model Router
 
 Responsibilities:
 
@@ -158,7 +225,7 @@ Important constraint:
 - risk approval decisions must not be delegated to the model router
 - the model router may help choose whether to use a tool, but it must not directly perform the side effect or free-form the final execution payload
 
-### 6. Policy Engine
+### 7. Policy Engine
 
 Responsibilities:
 
@@ -182,7 +249,7 @@ Policy inputs:
 - channel/context
 - current configuration
 
-### 7. Contact and Trust Directory
+### 8. Contact and Trust Directory
 
 Responsibilities:
 
@@ -198,7 +265,7 @@ Recommended minimum schema:
 - `contact_channels` for email, phone, Discord handle
 - `trust_classifications`
 
-### 8. Tool Registry and Executor
+### 9. Tool Registry and Executor
 
 Responsibilities:
 
@@ -222,7 +289,7 @@ Initial tool set:
 - SMS send-to-owner
 - contact request intake
 
-### 9. Task, Reminder, and Inbox Service
+### 10. Task, Reminder, and Inbox Service
 
 Responsibilities:
 
@@ -243,7 +310,27 @@ Important note:
 
 - this subsystem is required, not optional, because reminders and relayed messages must survive restarts
 
-### 10. External Integration Adapters
+### 11. Outbound Delivery Router
+
+Responsibilities:
+
+- consume outbound message events and hand them to the correct transport adapter
+- keep routing logic transport-neutral at the orchestration layer
+- validate that outbound delivery has enough reply-route metadata before attempting delivery
+- record delivery success/failure as durable events for later retry or diagnosis
+
+Recommended design:
+
+- separate "generate a reply" from "deliver a reply"
+- preserve transport-specific routing details inside a structured `replyRoute` object rather than scattering Discord-specific IDs through core services
+
+Examples of route fields:
+
+- Discord: guild ID, channel ID, thread ID, message reference, DM flag
+- SMS: phone number, provider account, conversation/thread key
+- WhatsApp: account identifier, chat identifier, reply token or thread key if required
+
+### 12. External Integration Adapters
 
 Responsibilities:
 
@@ -258,7 +345,7 @@ Initial adapters:
 - `OllamaAdapter`
 - `OneMinAiAdapter`
 
-### 11. Container and Runtime Packaging
+### 13. Container and Runtime Packaging
 
 Responsibilities:
 
@@ -284,6 +371,8 @@ Recommended initial tables:
   - keyed owner configuration values
 - `persona_profiles`
   - prompt/profile metadata if stored dynamically
+- `personality_presets`
+  - named saved slider/self-concept bundles for reuse
 - `contacts`
   - canonical contact records
 - `contact_aliases`
@@ -302,6 +391,10 @@ Recommended initial tables:
   - approval requests waiting on owner input
 - `tool_executions`
   - structured audit record of tool calls and outcomes
+- `event_log`
+  - canonical inbound and outbound event audit trail
+- `delivery_routes`
+  - persisted reply-route metadata when needed for delayed follow-up or deferred delivery
 
 Recommended persistent volumes:
 
@@ -314,22 +407,25 @@ Recommended persistent volumes:
 ### Owner Conversation
 
 1. Discord event enters through the gateway adapter.
-2. Identity controller marks the sender as owner.
-3. Conversation orchestrator loads pending inbox/reminder items.
-4. Orchestrator decides whether to answer directly, ask clarification, or invoke a tool.
-5. If a tool is needed, policy engine checks risk and prerequisites.
-6. Tool executor performs the action through deterministic code and the appropriate adapter.
-7. Result and any durable state changes are persisted.
+2. The adapter normalizes the message into a canonical envelope and publishes `InboundMessageReceived`.
+3. Identity controller marks the sender as owner.
+4. Conversation orchestrator loads pending inbox/reminder items.
+5. Orchestrator decides whether to answer directly, ask clarification, or invoke a tool.
+6. If a tool is needed, policy engine checks risk and prerequisites.
+7. Tool executor performs the action through deterministic code and the appropriate adapter.
+8. Orchestrator emits `OutboundMessageRequested` with reply-route metadata.
+9. The outbound delivery router hands the message back to the Discord adapter for final delivery.
 
 ### Non-Owner Contact Relay
 
 1. Non-owner user sends a message in an allowed Discord context.
-2. Identity controller blocks privileged bot functions.
-3. Orchestrator treats the interaction as contact-routing only.
-4. Bot collects enough structured detail to relay the message to the owner.
-5. Task/inbox service stores a `pending_contact_request`.
-6. The owner sees that pending item prominently in the next relevant conversation.
-7. Optional escalation can later notify the owner via reminder/SMS rules.
+2. The adapter publishes a canonical inbound event that retains Discord reply-route metadata.
+3. Identity controller blocks privileged bot functions.
+4. Orchestrator treats the interaction as contact-routing only.
+5. Bot collects enough structured detail to relay the message to the owner.
+6. Task/inbox service stores a `pending_contact_request`.
+7. The owner sees that pending item prominently in the next relevant conversation.
+8. Optional escalation can later notify the owner via reminder/SMS rules.
 
 ### High-Risk Outbound Communication
 
@@ -344,16 +440,18 @@ Recommended persistent volumes:
 
 1. Owner creates a reminder or the bot creates one from context.
 2. Task service stores the reminder and escalation policy.
-3. Scheduler wakes on due time and sends a Discord reminder.
-4. If not acknowledged, the task transitions through escalation steps.
-5. Later steps may trigger repeat Discord messages or an SMS to the owner, depending on configuration.
+3. Scheduler wakes on due time and emits a reminder-due event with the stored reply route.
+4. Outbound delivery routing sends a Discord reminder or another channel-appropriate notification.
+5. If not acknowledged, the task transitions through escalation steps.
+6. Later steps may trigger repeat Discord messages or an SMS to the owner, depending on configuration.
 
 ### First-Run Onboarding
 
 1. Bot detects missing required settings on startup.
 2. It opens an onboarding conversation with the owner in Discord.
 3. It captures owner identity, persona defaults, channel rules, provider preferences, and safety defaults.
-4. Settings are persisted and can later be changed via commands or chat flows.
+4. It may later capture active personality preset and trait defaults.
+5. Settings are persisted and can later be changed via commands or chat flows.
 
 ## Boundary Decisions
 
@@ -382,6 +480,16 @@ Every side-effecting integration should be isolated behind an adapter so:
 - provider replacement is cheaper
 - failures are easier to classify and retry
 
+### Keep Transport Logic at the Edge
+
+Transport-facing services should:
+
+- translate between provider payloads and canonical internal events
+- retain the minimum routing metadata needed for follow-up delivery
+- avoid embedding business logic that would need to be duplicated for Discord, SMS, WhatsApp, or future transports
+
+The core application should work in terms of canonical events and reply routes, not raw Discord message objects.
+
 ## Phased Delivery Recommendation
 
 ### Phase 1
@@ -400,12 +508,20 @@ Every side-effecting integration should be isolated behind an adapter so:
 - reminder engine
 - Outlook calendar integration
 
+### Phase 2.5
+
+- canonical inbound/outbound event envelope
+- in-process message bus
+- transport-neutral outbound delivery routing
+- Discord adapter refactor around event publication and delivery subscription
+
 ### Phase 3
 
 - SMS-to-owner escalation
 - email draft/send workflow
 - approval and confirmation flows
 - richer diagnostic mode
+- additional transport adapters if warranted
 
 ## Main Risks
 
@@ -414,6 +530,8 @@ Every side-effecting integration should be isolated behind an adapter so:
 3. Allowing context-driven tool selection can create surprising behavior unless intent thresholds and policy gates are conservative.
 4. Reminder escalation can become noisy if acknowledgement and snooze semantics are underspecified.
 5. Discord-only configuration may become awkward if admin flows are not structured and stateful.
+6. Splitting into too many services too early can add operational cost before the boundaries deliver enough value.
+7. Event contracts can become vague if transport-specific routing metadata is not defined carefully up front.
 
 ## Architectural Decisions Still Needed
 
@@ -423,6 +541,8 @@ Every side-effecting integration should be isolated behind an adapter so:
 4. Email provider choice and authentication method.
 5. SMS provider choice and delivery guarantees.
 6. Which local models are acceptable for default deployment.
+7. Which event bus implementation should be used first: in-process pub/sub only, SQLite-backed queueing, or an external broker later?
+8. Which transports after Discord are the first intended follow-ons: SMS, WhatsApp, or something else?
 
 ## Recommended First ADRs
 

@@ -10,14 +10,17 @@ services:
     volumes:
       - dot_data:/app/data
     restart: unless-stopped
-
+    
   ollama:
     image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
     ports:
       - "11434:11434"
     volumes:
       - ${HOME}/ollama:/root/.ollama:Z
-    restart: unless-stopped
+    devices:
+      - nvidia.com/gpu=all
 
 volumes:
   dot_data:

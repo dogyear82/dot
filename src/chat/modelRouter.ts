@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config.js";
 import type { SettingsStore } from "../settings.js";
-import { buildToolInferencePrompt, parseToolDecision, type ToolDecision } from "../toolInvocation.js";
+import { buildToolInferencePrompt, inferDeterministicToolDecision, parseToolDecision, type ToolDecision } from "../toolInvocation.js";
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
 import { OllamaChatProvider, OpenAiCompatibleChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
 
@@ -36,7 +36,8 @@ export function createChatService(params: {
       const messages = buildMessages({
         userMessage,
         mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
-        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance
+        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
+        settings: params.settings
       });
 
       const failures: string[] = [];
@@ -58,6 +59,11 @@ export function createChatService(params: {
       throw new Error(`No chat provider could generate a response. ${failures.join("; ")}`);
     },
     async inferToolDecision(userMessage) {
+      const deterministicDecision = inferDeterministicToolDecision(userMessage);
+      if (deterministicDecision) {
+        return { provider: "deterministic", decision: deterministicDecision };
+      }
+
       const orderedProviders = orderProviders(providers, params.settings.get("models.primary") ?? "ollama");
       const messages: ChatMessage[] = [
         {
@@ -100,13 +106,15 @@ function buildMessages(params: {
   userMessage: string;
   mode: PersonaMode;
   balance: PersonaBalance;
+  settings: SettingsStore;
 }): ChatMessage[] {
   return [
     {
       role: "system",
       content: buildSystemPrompt({
         mode: params.mode,
-        balance: params.balance
+        balance: params.balance,
+        settings: params.settings
       })
     },
     {

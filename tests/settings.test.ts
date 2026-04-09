@@ -62,3 +62,11 @@ test("settings command returns a validation error instead of throwing", () => {
   const reply = handleSettingsCommand(store, "!settings set persona.mode invalid");
   assert.match(reply, /Invalid value/);
 });
+
+test("settings store enforces personality slider bounds", () => {
+  const store = createStore();
+
+  assert.throws(() => {
+    store.set("personality.warmth", "101");
+  }, /Maximum is 100/);
+});

@@ -27,6 +27,21 @@ export type ToolDecision =
       args: Record<string, string | number>;
     };
 
+export function inferDeterministicToolDecision(userMessage: string): ToolDecision | null {
+  const normalized = normalizeUserMessage(userMessage);
+
+  if (looksLikeCalendarShowIntent(normalized)) {
+    return {
+      decision: "execute",
+      toolName: "calendar.show",
+      reason: "clear calendar-view intent from deterministic phrase matching",
+      args: {}
+    };
+  }
+
+  return null;
+}
+
 export function buildToolInferencePrompt(userMessage: string): string {
   return [
     "You decide whether an owner message should invoke one of Dot's existing tools.",
@@ -44,6 +59,11 @@ export function buildToolInferencePrompt(userMessage: string): string {
     '{"decision":"none","reason":"..."}',
     '{"decision":"clarify","toolName":"reminder.add","reason":"...","question":"When should I remind you?"}',
     '{"decision":"execute","toolName":"reminder.add","reason":"...","args":{"duration":"10m","message":"stretch"}}',
+    '{"decision":"execute","toolName":"calendar.show","reason":"owner is asking to see upcoming calendar items","args":{}}',
+    'Examples that should usually map to calendar.show:',
+    '- "what\'s my calendar looking like this week?"',
+    '- "do i have any meetings or appointments today?"',
+    '- "what is on my schedule tomorrow?"',
     `Owner message: ${JSON.stringify(userMessage)}`
   ].join("\n");
 }
@@ -169,4 +189,33 @@ function extractJsonObject(payload: string): string {
   }
 
   throw new Error("Tool inference returned non-JSON output");
+}
+
+function looksLikeCalendarShowIntent(normalized: string): boolean {
+  if (
+    /(?:what(?:'s| is) my calendar(?: looking like)?|show my calendar|check my calendar)/.test(normalized) ||
+    /(?:what(?:'s| is) on my schedule|show my schedule|check my schedule)/.test(normalized)
+  ) {
+    return true;
+  }
+
+  if (
+    /do i have/.test(normalized) &&
+    /\b(meeting|meetings|appointment|appointments|event|events)\b/.test(normalized)
+  ) {
+    return true;
+  }
+
+  if (
+    /\b(calendar|schedule)\b/.test(normalized) &&
+    /\b(today|tomorrow|tonight|this week|this afternoon|this morning|upcoming|coming up)\b/.test(normalized)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function normalizeUserMessage(userMessage: string): string {
+  return userMessage.trim().toLowerCase().replace(/\s+/g, " ");
 }

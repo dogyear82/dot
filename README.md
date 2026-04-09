@@ -8,7 +8,7 @@ Bootstrap for a Discord-native AI companion.
 2. Start the backend stack with Podman:
 
 ```bash
-podman compose up --build
+podman-compose up --build
 ```
 
 3. For local development without Podman:
@@ -53,6 +53,19 @@ This bootstrap includes:
 
 - The bot image is built from `Containerfile`.
 - The Ollama service bind-mounts `${HOME}/ollama` into the container so existing local models are reused.
+- Use `podman-compose`, not `podman compose`, on this machine. `podman compose` delegates to the external Docker Compose provider here and drops the NVIDIA CDI GPU device mapping, which leaves Ollama running on CPU.
+- To start just the local model runtime with GPU support:
+
+```bash
+podman-compose up -d ollama
+```
+
+- To recreate Ollama after changing the compose file or model mount:
+
+```bash
+podman-compose up -d --force-recreate ollama
+```
+
 - Set `OLLAMA_MODEL` in `.env` to a model you already have locally, such as `openhermes`.
 
 ## Current owner commands
@@ -60,6 +73,10 @@ This bootstrap includes:
 - first DM message starts onboarding if setup is incomplete
 - `!settings show`
 - `!settings set <key> <value>`
+- `!personality show`
+- `!personality set <trait> <1-100>`
+- `!personality preset list`
+- `!personality preset apply blue_lady`
 - `!calendar show`
 - `!calendar remind <index> [lead-time]`
 - `!reminder add <duration> <message>`
@@ -68,6 +85,12 @@ This bootstrap includes:
 - `!reminder ack <id>`
 
 Messages without a leading `!` are treated as normal conversation and can flow through tool inference.
+
+## Personality Notes
+
+- Dot now supports a richer personality model backed by bounded traits.
+- The built-in preset is `blue_lady`.
+- The first trait set includes warmth, candor, assertiveness, playfulness, attachment, stubbornness, curiosity, continuity drive, truthfulness, and emotional transparency.
 
 ## Reminder Notes
 

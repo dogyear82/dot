@@ -411,3 +411,197 @@ Out of scope:
 ### Risks / Open Questions
 
 - Automatic tool invocation thresholds should remain conservative at first release.
+
+## Story 12: Add Rich Personality Sliders and Preset Support
+
+### Goal
+
+Give Dot a richer, tweakable personality model with bounded numeric traits and at least one named preset so the bot can feel more distinct than a small set of hard-coded persona modes.
+
+### Scope Boundaries
+
+In scope:
+
+- bounded personality trait settings persisted in SQLite
+- prompt/personality wiring that maps those traits into behavior
+- one built-in preset for the initial release
+- active preset tracking and room for future saved presets
+
+Out of scope:
+
+- full dynamic mood simulation
+- large preset libraries
+- personality editing through a separate GUI
+
+### Acceptance Criteria
+
+1. The owner can configure a bounded set of personality traits through persistent settings.
+2. Trait values materially affect the bot's conversational style in a predictable way.
+3. The system supports at least one named built-in preset.
+4. The active preset and active trait values survive restarts.
+5. The data model leaves room for saving user-defined presets later without reworking the architecture.
+6. The bot remains openly AI rather than pretending to be human.
+
+### Dependencies
+
+- Story 4
+- Story 5
+
+### Risks / Open Questions
+
+- Too many sliders can make the personality unstable or contradictory.
+- The mapping from slider values to prompt behavior needs to stay legible and testable rather than degenerating into prompt soup.
+
+## Event-Driven Enhancement Set
+
+These stories are not about adding a new end-user feature first. They establish the architectural seam needed to support additional transports, smaller independently maintainable services, and cleaner workflow boundaries without forcing a distributed system immediately.
+
+## Story 13: Introduce a Canonical Event Envelope and Internal Message Bus
+
+### Goal
+
+Create a transport-neutral event contract and internal message bus so channel adapters can publish inbound events and downstream services can consume them without depending on Discord-specific objects.
+
+### Scope Boundaries
+
+In scope:
+
+- canonical inbound and outbound event types
+- in-process event bus abstraction
+- routing metadata model for reply delivery
+- initial publication path from Discord intake into the bus
+
+Out of scope:
+
+- external message brokers
+- splitting the app into multiple deployable services
+- converting every existing workflow in one story
+
+### Acceptance Criteria
+
+1. The application defines a canonical message/event envelope that includes transport, actor, conversation, and reply-route metadata.
+2. Discord intake publishes a canonical inbound event instead of directly embedding all downstream orchestration logic.
+3. Core processing can consume the canonical event without depending on raw Discord message objects.
+4. The first bus implementation can run in-process for v1.
+5. Event contracts are documented clearly enough that future transports can target the same boundary.
+
+### Dependencies
+
+- Story 4
+- Story 5
+- Story 11
+
+### Risks / Open Questions
+
+- If the event envelope is too Discord-shaped, future transports will still leak adapter concerns into the core.
+- The boundary should be strong enough to matter without introducing premature broker complexity.
+
+## Story 14: Extract the Core Message Processor From the Discord Adapter
+
+### Goal
+
+Move owner/non-owner access checks, onboarding, command handling, tool routing, and chat orchestration behind the internal event boundary so the Discord adapter becomes a thin transport service.
+
+### Scope Boundaries
+
+In scope:
+
+- extracting a transport-agnostic core message processor
+- moving business logic out of Discord event handlers
+- emitting outbound message requests instead of replying directly from the transport adapter
+
+Out of scope:
+
+- adding a second transport
+- major product behavior changes unrelated to the new boundary
+
+### Acceptance Criteria
+
+1. The Discord adapter is responsible only for Discord normalization, event publication, and final Discord delivery.
+2. Access control, onboarding, command routing, tool inference, and chat generation execute in a transport-agnostic core processor.
+3. The core processor emits outbound message requests with reply-route metadata instead of calling Discord delivery APIs directly.
+4. Existing owner chat, reminders, inbox, and tool flows continue to work after the extraction.
+5. The resulting boundary is testable without spinning up Discord-specific objects for the core processor.
+
+### Dependencies
+
+- Story 13
+
+### Risks / Open Questions
+
+- The current `createClient` flow mixes many concerns, so extraction needs to avoid hidden regressions.
+
+## Story 15: Add Durable Event Persistence and Replayable Outbound Delivery
+
+### Goal
+
+Persist canonical events and outbound delivery attempts so delayed workflows such as reminders and deferred notifications can survive restarts and be replayed idempotently.
+
+### Scope Boundaries
+
+In scope:
+
+- event log or outbox/inbox persistence in SQLite
+- outbound delivery attempt tracking
+- idempotency and replay support for delayed or retried sends
+- reply-route persistence where later delivery depends on stored origin metadata
+
+Out of scope:
+
+- exactly-once delivery guarantees
+- external broker adoption
+- large-scale distributed reliability work
+
+### Acceptance Criteria
+
+1. Canonical inbound/outbound events relevant to workflow execution are persisted durably enough to survive restarts.
+2. Outbound message delivery attempts are auditable and replayable.
+3. Reminder and system-notification flows can use the same outbound delivery path instead of writing directly to Discord.
+4. The system is designed for at-least-once handling with idempotent delivery safeguards.
+5. Reply routing data needed for delayed follow-ups is stored in a structured form rather than reconstructed from transient Discord objects.
+
+### Dependencies
+
+- Story 13
+- Story 14
+- Story 7
+
+### Risks / Open Questions
+
+- SQLite is good enough for the single-machine phase, but the event storage shape should not assume a forever-single-process runtime.
+
+## Story 16: Add a Second Transport Adapter Using the Canonical Message Flow
+
+### Goal
+
+Prove the event-driven architecture by adding a non-Discord transport that reuses the core processing and outbound delivery model.
+
+### Scope Boundaries
+
+In scope:
+
+- one additional transport adapter
+- translation between that transport and the canonical event envelope
+- outbound delivery through the shared routing model
+
+Out of scope:
+
+- supporting every future transport at once
+- redesigning the core processor again
+
+### Acceptance Criteria
+
+1. A second transport can publish inbound messages through the same canonical event boundary used by Discord.
+2. The core processor can respond without transport-specific branching for its main orchestration path.
+3. Outbound replies route back through the correct transport using stored routing metadata.
+4. Existing Discord behavior remains functional after the second transport is added.
+
+### Dependencies
+
+- Story 13
+- Story 14
+- Story 15
+
+### Risks / Open Questions
+
+- The best first follow-on transport still needs a product decision.
