@@ -12,6 +12,8 @@ import { executeToolDecision } from "../toolInvocation.js";
 import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
+const OWNER_CHAT_HISTORY_LIMIT = 8;
+
 export function createDiscordClient(params: {
   calendarClient: OutlookCalendarClient;
   chatService: ChatService;
@@ -197,9 +199,25 @@ export function createDiscordClient(params: {
             logger.warn({ err: error, messageId: normalized.id }, "Tool inference failed; falling back to chat");
           }
 
-          const response = await chatService.generateOwnerReply(content);
+          const recentTurns = persistence.listRecentChatTurns(normalized.channelId, OWNER_CHAT_HISTORY_LIMIT);
+          persistence.saveChatTurn({
+            channelId: normalized.channelId,
+            actorRole: "owner",
+            content,
+            sourceMessageId: normalized.id,
+            createdAt: normalized.createdAt
+          });
+
+          const response = await chatService.generateOwnerReply(content, recentTurns);
           logger.info({ provider: response.provider, messageId: normalized.id }, "Generated owner chat response");
           await message.reply(response.reply);
+          persistence.saveChatTurn({
+            channelId: normalized.channelId,
+            actorRole: "bot",
+            content: response.reply,
+            sourceMessageId: normalized.id,
+            createdAt: new Date().toISOString()
+          });
         } catch (error) {
           logger.error({ err: error, messageId: normalized.id }, "Failed to generate owner chat response");
           await message.reply(

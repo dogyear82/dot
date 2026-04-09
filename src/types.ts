@@ -10,6 +10,15 @@ export interface IncomingMessage {
   createdAt: string;
 }
 
+export interface ChatTurn {
+  id: number;
+  channelId: string;
+  actorRole: "owner" | "bot";
+  content: string;
+  sourceMessageId: string | null;
+  createdAt: string;
+}
+
 export interface AccessAuditRecord {
   messageId: string;
   actorRole: "owner" | "non-owner";

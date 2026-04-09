@@ -1,13 +1,16 @@
 import type { AppConfig } from "../config.js";
+import type { ChatTurn } from "../types.js";
 import type { SettingsStore } from "../settings.js";
 import { buildToolInferencePrompt, inferDeterministicToolDecision, parseToolDecision, type ToolDecision } from "../toolInvocation.js";
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
 import { OllamaChatProvider, OpenAiCompatibleChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
 
 export interface ChatService {
-  generateOwnerReply(userMessage: string): Promise<{ provider: string; reply: string }>;
+  generateOwnerReply(userMessage: string, recentTurns?: ChatTurn[]): Promise<{ provider: string; reply: string }>;
   inferToolDecision(userMessage: string): Promise<{ provider: string; decision: ToolDecision }>;
 }
+
+const OWNER_CHAT_HISTORY_LIMIT = 8;
 
 export function createChatService(params: {
   config: AppConfig;
@@ -31,13 +34,14 @@ export function createChatService(params: {
     ];
 
   return {
-    async generateOwnerReply(userMessage) {
+    async generateOwnerReply(userMessage, recentTurns = []) {
       const orderedProviders = orderProviders(providers, params.settings.get("models.primary") ?? "ollama");
       const messages = buildMessages({
         userMessage,
         mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
         balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
-        settings: params.settings
+        settings: params.settings,
+        recentTurns
       });
 
       const failures: string[] = [];
@@ -107,7 +111,13 @@ function buildMessages(params: {
   mode: PersonaMode;
   balance: PersonaBalance;
   settings: SettingsStore;
+  recentTurns: ChatTurn[];
 }): ChatMessage[] {
+  const recentMessages = params.recentTurns.slice(-OWNER_CHAT_HISTORY_LIMIT).map<ChatMessage>((turn) => ({
+    role: turn.actorRole === "owner" ? "user" : "assistant",
+    content: turn.content
+  }));
+
   return [
     {
       role: "system",
@@ -117,6 +127,7 @@ function buildMessages(params: {
         settings: params.settings
       })
     },
+    ...recentMessages,
     {
       role: "user",
       content: params.userMessage

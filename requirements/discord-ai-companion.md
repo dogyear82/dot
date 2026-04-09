@@ -99,6 +99,8 @@ The user strongly prefers local model execution when possible. The local model r
 48. The system must separate transport-specific input/output handling from core orchestration logic.
 49. The system should expose an internal event-driven seam between channel adapters and the core processing pipeline.
 50. The first event-driven implementation may remain in one process, but it must preserve contracts that allow later process separation without redesigning message flow.
+51. Owner chat generation must include a bounded recent-turn window so normal conversation can continue across turns and restarts without relying on unbounded prompt growth.
+52. Recent-turn chat continuity must stay separate from long-term memory, trust/contact data, reminder state, and raw transport/audit logs.
 
 ## Non-Functional Requirements
 
@@ -121,6 +123,7 @@ The user strongly prefers local model execution when possible. The local model r
 17. The architecture should allow adding new transports without rewriting core orchestration, policy, reminder, or tool workflows.
 18. The architecture should favor a modular-monolith migration path first, with event contracts and durable queues/outbox patterns before introducing a heavier broker or many independent services.
 19. Transport adapters should remain thin and focused on normalization, routing metadata, and final delivery rather than business logic.
+20. Short-term chat continuity should use a deterministic bounded window so prompt size and included turns remain predictable and testable.
 
 ## Constraints
 

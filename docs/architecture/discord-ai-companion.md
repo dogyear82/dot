@@ -24,6 +24,7 @@ The design optimizes for:
 6. Prefer containerized infrastructure that can be started on another Linux machine with Podman Compose.
 7. Treat transport adapters as edge services that publish and consume internal events instead of embedding core orchestration logic directly in channel handlers.
 8. Preserve enough routing metadata on every inbound event that replies can be delivered back through the correct transport, conversation, and destination later.
+9. Keep short-term chat continuity in a dedicated bounded store instead of mixing it with long-term memory, trust records, or raw transport logs.
 
 ## Recommended Technology Direction
 
@@ -154,6 +155,7 @@ Responsibilities:
 - consume canonical inbound events from the message bus
 - decide how to handle each incoming event
 - assemble the right context for a model call
+- load a bounded recent-turn window for owner chat continuity
 - choose between chat-only response, clarification, tool proposal, or tool execution
 - pull pending inbox/tasks that should be surfaced to the owner
 - switch between regular companion mode and diagnostic mode
@@ -170,6 +172,13 @@ The orchestrator should not call providers directly. It should delegate to:
 Important constraint:
 
 - the orchestrator may use model output to decide whether a tool is appropriate, but any actual side effect must be executed through a structured tool interface
+
+Recommended recent chat continuity rule:
+
+- persist only direct owner/bot conversational turns in a dedicated `chat_turns` store
+- exclude explicit command traffic, tool execution replies, reminder/system notifications, and audit records from the prompt window
+- assemble the prompt from the last bounded set of turns for the current Discord conversation/channel
+- keep the trimming rule deterministic, for example last `N` turns, so the context window stays restart-safe and testable
 
 ### 5. Persona and Settings Service
 

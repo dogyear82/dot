@@ -7,6 +7,7 @@ import type { AppConfig } from "../src/config.js";
 import { createChatService, orderProviders } from "../src/chat/modelRouter.js";
 import type { ChatMessage, ChatProvider } from "../src/chat/providers.js";
 import { createSettingsStore } from "../src/settings.js";
+import type { ChatTurn } from "../src/types.js";
 
 function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -112,6 +113,41 @@ test("chat service falls back when the preferred provider fails", async () => {
   const result = await service.generateOwnerReply("hello");
   assert.equal(result.provider, "1minai");
   assert.equal(result.reply, "hosted reply");
+});
+
+test("chat service includes bounded recent conversation turns before the current owner message", async () => {
+  const store = createStore();
+  store.set("models.primary", "ollama");
+
+  const recentTurns: ChatTurn[] = Array.from({ length: 10 }, (_, index) => ({
+    id: index + 1,
+    channelId: "channel-1",
+    actorRole: index % 2 === 0 ? "owner" : "bot",
+    content: `turn-${index + 1}`,
+    sourceMessageId: `msg-${index + 1}`,
+    createdAt: `2026-04-09T00:00:${String(index).padStart(2, "0")}.000Z`
+  }));
+
+  const service = createChatService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", true, async (messages) => {
+        assert.equal(messages[0]?.role, "system");
+        assert.equal(messages.length, 10);
+        assert.deepEqual(
+          messages.slice(1, -1).map((message) => message.content),
+          ["turn-3", "turn-4", "turn-5", "turn-6", "turn-7", "turn-8", "turn-9", "turn-10"]
+        );
+        assert.equal(messages.at(-1)?.role, "user");
+        assert.equal(messages.at(-1)?.content, "current turn");
+        return "reply with context";
+      })
+    ]
+  });
+
+  const result = await service.generateOwnerReply("current turn", recentTurns);
+  assert.equal(result.reply, "reply with context");
 });
 
 test("chat service can infer a structured tool decision", async () => {

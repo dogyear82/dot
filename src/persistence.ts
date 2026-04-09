@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { createSettingsStore, type SettingsStore } from "./settings.js";
 import type {
   AccessAuditRecord,
+  ChatTurn,
   IncomingMessage,
   PersonalityPresetRecord,
   ReminderEvent,
@@ -17,6 +18,8 @@ export interface Persistence {
   db: Database.Database;
   settings: SettingsStore;
   saveNormalizedMessage(message: IncomingMessage): void;
+  saveChatTurn(turn: Omit<ChatTurn, "id">): void;
+  listRecentChatTurns(channelId: string, limit: number): ChatTurn[];
   saveAccessAudit(record: AccessAuditRecord): void;
   saveToolExecutionAudit(record: ToolExecutionAuditRecord): void;
   getPersonalityPreset(name: string): PersonalityPresetRecord | null;
@@ -109,6 +112,15 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(reminder_id) REFERENCES reminders(id)
     );
+
+    CREATE TABLE IF NOT EXISTS chat_turns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_message_id TEXT,
+      created_at TEXT NOT NULL
+    );
   `);
 
   const saveStatement = db.prepare(`
@@ -165,6 +177,36 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @provider,
       @detail
     )
+  `);
+
+  const saveChatTurnStatement = db.prepare(`
+    INSERT INTO chat_turns (
+      channel_id,
+      actor_role,
+      content,
+      source_message_id,
+      created_at
+    ) VALUES (
+      @channelId,
+      @actorRole,
+      @content,
+      @sourceMessageId,
+      @createdAt
+    )
+  `);
+
+  const listRecentChatTurnsStatement = db.prepare<[string, number], ChatTurn>(`
+    SELECT
+      id,
+      channel_id AS channelId,
+      actor_role AS actorRole,
+      content,
+      source_message_id AS sourceMessageId,
+      created_at AS createdAt
+    FROM chat_turns
+    WHERE channel_id = ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT ?
   `);
 
   const createReminderStatement = db.prepare(`
@@ -329,6 +371,15 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         isDirectMessage: message.isDirectMessage ? 1 : 0,
         mentionedBot: message.mentionedBot ? 1 : 0
       });
+    },
+    saveChatTurn(turn) {
+      saveChatTurnStatement.run({
+        ...turn,
+        sourceMessageId: turn.sourceMessageId ?? null
+      });
+    },
+    listRecentChatTurns(channelId, limit) {
+      return listRecentChatTurnsStatement.all(channelId, limit).reverse();
     },
     saveAccessAudit(record) {
       accessAuditStatement.run({
