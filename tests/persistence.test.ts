@@ -48,6 +48,41 @@ test("access audit persists transport and conversation id", () => {
   }
 });
 
+test("listRecentNormalizedMessages preserves millisecond ordering within the same second", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    persistence.saveNormalizedMessage({
+      id: "msg-older",
+      channelId: "chan-1",
+      guildId: "guild-1",
+      authorId: "owner-1",
+      authorUsername: "owner",
+      content: "first",
+      isDirectMessage: false,
+      mentionedBot: false,
+      createdAt: "2026-04-09T00:00:00.100Z"
+    });
+    persistence.saveNormalizedMessage({
+      id: "msg-newer",
+      channelId: "chan-1",
+      guildId: "guild-1",
+      authorId: "owner-1",
+      authorUsername: "owner",
+      content: "second",
+      isDirectMessage: false,
+      mentionedBot: false,
+      createdAt: "2026-04-09T00:00:00.900Z"
+    });
+
+    const recentMessages = persistence.listRecentNormalizedMessages("chan-1", 2);
+    assert.equal(recentMessages[0]?.id, "msg-newer");
+    assert.equal(recentMessages[1]?.id, "msg-older");
+  } finally {
+    cleanup();
+  }
+});
+
 test("initializePersistence migrates legacy access_audit tables with transport metadata columns", () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-persistence-legacy-"));
   const sqlitePath = path.join(dataDir, "dot.sqlite");

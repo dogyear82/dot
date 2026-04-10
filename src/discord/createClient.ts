@@ -10,6 +10,7 @@ import type { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
 import { handlePersonalityCommand, isPersonalityCommand } from "../personality.js";
 import { handleReminderCommand, isReminderCommand } from "../reminders.js";
 import { executeToolDecision } from "../toolInvocation.js";
+import { shouldTreatOwnerMessageAsAddressed } from "./addressing.js";
 import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
@@ -80,29 +81,68 @@ export function createDiscordClient(params: {
     );
 
     if (accessDecision.canUsePrivilegedFeatures) {
-      if (!normalized.isDirectMessage && !normalized.mentionedBot) {
+      const recentConversation = persistence.listRecentConversationTurns(normalized.channelId, RECENT_CHAT_HISTORY_LIMIT);
+      const recentMessages = persistence.listRecentNormalizedMessages(normalized.channelId, RECENT_CHAT_HISTORY_LIMIT);
+      const defaultChannelPolicy = persistence.settings.get("channels.defaultPolicy");
+      const isAddressed = shouldTreatOwnerMessageAsAddressed({
+        message: normalized,
+        defaultChannelPolicy,
+        recentConversation,
+        recentMessages
+      });
+
+      if (!isAddressed) {
         return;
       }
 
-      const content = normalized.isDirectMessage
-        ? normalized.content.trim()
-        : stripLeadingBotMention(normalized.content, client.user.id);
+      const content =
+        normalized.isDirectMessage || !normalized.mentionedBot
+          ? normalized.content.trim()
+          : stripLeadingBotMention(normalized.content, client.user.id);
+      let hasSavedUserTurn = false;
+
+      const saveUserConversationTurn = () => {
+        if (hasSavedUserTurn || !content) {
+          return;
+        }
+
+        persistence.saveConversationTurn({
+          conversationId: normalized.channelId,
+          role: "user",
+          content,
+          sourceMessageId: normalized.id,
+          createdAt: normalized.createdAt
+        });
+        hasSavedUserTurn = true;
+      };
+
+      const replyAndRecordConversation = async (reply: string) => {
+        saveUserConversationTurn();
+        const replyMessage = await message.reply(reply);
+        persistence.saveConversationTurn({
+          conversationId: normalized.channelId,
+          role: "assistant",
+          content: reply,
+          sourceMessageId: replyMessage.id,
+          createdAt: replyMessage.createdAt.toISOString()
+        });
+      };
 
       if (!persistence.settings.hasCompletedOnboarding()) {
         const response = content
           ? handleOnboardingReply(persistence.settings, content)
           : { reply: getOnboardingPrompt(persistence.settings), onboardingComplete: false };
-        void message.reply(response.reply);
+        void replyAndRecordConversation(response.reply);
         return;
       }
 
       if (isSettingsCommand(content)) {
-        void message.reply(handleSettingsCommand(persistence.settings, content));
+        void replyAndRecordConversation(handleSettingsCommand(persistence.settings, content));
         return;
       }
 
       if (isPersonalityCommand(content)) {
-        void message.reply(handlePersonalityCommand(persistence, content));
+        void replyAndRecordConversation(handlePersonalityCommand(persistence, content));
         return;
       }
 
@@ -116,7 +156,7 @@ export function createDiscordClient(params: {
           provider: null,
           detail: content
         });
-        void message.reply(reply);
+        void replyAndRecordConversation(reply);
         return;
       }
 
@@ -136,7 +176,7 @@ export function createDiscordClient(params: {
             provider: null,
             detail: content
           });
-          await message.reply(reply);
+          await replyAndRecordConversation(reply);
         })();
         return;
       }
@@ -158,7 +198,7 @@ export function createDiscordClient(params: {
                 provider: inferred.provider,
                 detail: inferred.decision.reason
               });
-              await message.reply(inferred.decision.question);
+              await replyAndRecordConversation(inferred.decision.question);
               return;
             }
 
@@ -180,7 +220,7 @@ export function createDiscordClient(params: {
                 { provider: inferred.provider, messageId: normalized.id, toolName: inferred.decision.toolName },
                 "Executed inferred tool decision"
               );
-              await message.reply(reply);
+              await replyAndRecordConversation(reply);
               return;
             }
 
@@ -204,27 +244,14 @@ export function createDiscordClient(params: {
             logger.warn({ err: error, messageId: normalized.id }, "Tool inference failed; falling back to chat");
           }
 
-          persistence.saveConversationTurn({
-            conversationId: normalized.channelId,
-            role: "user",
-            content,
-            sourceMessageId: normalized.id,
-            createdAt: normalized.createdAt
-          });
-          const recentConversation = persistence.listRecentConversationTurns(normalized.channelId, RECENT_CHAT_HISTORY_LIMIT);
+          saveUserConversationTurn();
+          const updatedConversation = persistence.listRecentConversationTurns(normalized.channelId, RECENT_CHAT_HISTORY_LIMIT);
           const response = await chatService.generateOwnerReply({
             userMessage: content,
-            recentConversation: recentConversation.slice(0, -1)
+            recentConversation: updatedConversation.slice(0, -1)
           });
           logger.info({ provider: response.provider, messageId: normalized.id }, "Generated owner chat response");
-          const replyMessage = await message.reply(response.reply);
-          persistence.saveConversationTurn({
-            conversationId: normalized.channelId,
-            role: "assistant",
-            content: response.reply,
-            sourceMessageId: replyMessage.id,
-            createdAt: replyMessage.createdAt.toISOString()
-          });
+          await replyAndRecordConversation(response.reply);
         } catch (error) {
           logger.error({ err: error, messageId: normalized.id }, "Failed to generate owner chat response");
           await message.reply(
