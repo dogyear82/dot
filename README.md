@@ -113,6 +113,9 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 
 ## Outlook Calendar Notes
 
-- Set `OUTLOOK_ACCESS_TOKEN` to a valid Microsoft Graph bearer token before using calendar commands.
+- Preferred setup is Microsoft device-code OAuth with `OUTLOOK_CLIENT_ID` and optional `OUTLOOK_TENANT_ID`.
+- Legacy `OUTLOOK_ACCESS_TOKEN` still works as a fallback, but durable OAuth is now the intended path.
+- After starting Dot, run `!calendar auth start`, complete the Microsoft sign-in in a browser, then run `!calendar auth complete`.
+- `!calendar auth status` reports whether Outlook is connected, pending, or needs to be reauthorized.
 - `!calendar show` lists upcoming Outlook events from the configured default or named calendar.
 - `!calendar remind <index> [lead-time]` creates a Dot reminder from the indexed event returned by `!calendar show`.

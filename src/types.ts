@@ -56,6 +56,26 @@ export interface OutlookCalendarEvent {
   webLink: string | null;
 }
 
+export interface OAuthTokenRecord {
+  provider: string;
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: string;
+  scope: string | null;
+  tokenType: string;
+}
+
+export interface OAuthDeviceFlowRecord {
+  provider: string;
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string | null;
+  expiresAt: string;
+  intervalSeconds: number;
+  message: string;
+}
+
 export interface ToolExecutionAuditRecord {
   messageId: string;
   toolName: string;

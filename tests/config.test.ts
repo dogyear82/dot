@@ -12,4 +12,6 @@ test("loadConfig applies defaults for optional values", () => {
   assert.equal(config.NODE_ENV, "development");
   assert.equal(config.OLLAMA_BASE_URL, "http://ollama:11434");
   assert.equal(config.OLLAMA_MODEL, "llama3.1:8b");
+  assert.equal(config.OUTLOOK_TENANT_ID, "common");
+  assert.equal(config.OUTLOOK_OAUTH_SCOPES, "offline_access openid profile User.Read Calendars.Read");
 });
