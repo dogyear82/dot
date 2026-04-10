@@ -16,7 +16,28 @@ export function normalizeMessage(message: Message<boolean>, botUserId: string): 
   };
 }
 
+export function stripLeadingBotAddress(content: string, params: { botUserId: string; botUsername: string }): string {
+  const { botUserId, botUsername } = params;
+  const mentionPattern = new RegExp(`^(?:<@!?${botUserId}>\\s*)+`);
+  const strippedMention = content.replace(mentionPattern, "").trim();
+  if (strippedMention !== content.trim()) {
+    return strippedMention;
+  }
+
+  if (!botUsername.trim()) {
+    return content.trim();
+  }
+
+  const escapedUsername = escapeRegExp(botUsername.trim());
+  const plainTextPattern = new RegExp(`^@?${escapedUsername}\\b[,:;!?-]*\\s*`, "i");
+  return content.replace(plainTextPattern, "").trim();
+}
+
 export function stripLeadingBotMention(content: string, botUserId: string): string {
   const mentionPattern = new RegExp(`^(?:<@!?${botUserId}>\\s*)+`);
   return content.replace(mentionPattern, "").trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

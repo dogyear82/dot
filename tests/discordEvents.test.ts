@@ -20,6 +20,7 @@ test("createDiscordInboundMessageEvent produces a canonical transport-neutral en
   const event = createDiscordInboundMessageEvent({
     message,
     botUserId: "bot-1",
+    botUsername: "Dot",
     ownerUserId: "owner-1"
   });
 
@@ -30,4 +31,28 @@ test("createDiscordInboundMessageEvent produces a canonical transport-neutral en
   assert.equal(event.replyRoute.replyToMessageId, "msg-1");
   assert.equal(event.payload.content, "<@bot-1> hello there");
   assert.equal(event.payload.addressedContent, "hello there");
+});
+
+test("createDiscordInboundMessageEvent strips a plain-text bot address prefix", () => {
+  const message: IncomingMessage = {
+    id: "msg-2",
+    channelId: "channel-1",
+    guildId: "guild-1",
+    authorId: "owner-1",
+    authorUsername: "tan",
+    content: "@Dot !settings show",
+    isDirectMessage: false,
+    mentionedBot: false,
+    createdAt: "2026-04-09T00:00:00.000Z"
+  };
+
+  const event = createDiscordInboundMessageEvent({
+    message,
+    botUserId: "bot-1",
+    botUsername: "Dot",
+    ownerUserId: "owner-1"
+  });
+
+  assert.equal(event.payload.content, "@Dot !settings show");
+  assert.equal(event.payload.addressedContent, "!settings show");
 });

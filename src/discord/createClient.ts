@@ -3,7 +3,7 @@ import { Client, Events, GatewayIntentBits, Partials, type Message } from "disco
 import type { Logger } from "pino";
 
 import type { EventBus } from "../eventBus.js";
-import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
+import { normalizeMessage } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 import { createDiscordInboundMessageEvent } from "./events.js";
 
@@ -47,6 +47,7 @@ export function createDiscordClient(params: {
     const inboundEvent = createDiscordInboundMessageEvent({
       message: normalized,
       botUserId,
+      botUsername: client.user.username,
       ownerUserId
     });
 

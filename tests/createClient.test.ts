@@ -235,3 +235,81 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
     cleanup();
   }
 });
+
+test("Discord ingress normalizes a plain-text @Dot command before pipeline routing", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const replies: string[] = [];
+  const bus = createInMemoryEventBus();
+
+  try {
+    const unsubscribe = registerMessagePipeline({
+      bus,
+      calendarClient: {
+        listUpcomingEvents: async () => []
+      } as never,
+      chatService: {
+        inferToolDecision: async () => ({
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "none",
+            reason: "not a tool request"
+          }
+        }),
+        generateOwnerReply: async () => ({
+          route: "local",
+          powerStatus: "standby",
+          reply: "freeform reply"
+        }),
+        getPowerStatus: () => "standby"
+      },
+      logger: createLogger() as never,
+      outlookOAuthClient: {} as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    const client = createDiscordClient({
+      bus,
+      logger: createLogger() as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    try {
+      Object.defineProperty(client, "user", {
+        configurable: true,
+        value: {
+          id: "bot-1",
+          username: "Dot"
+        }
+      });
+
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-plain-at-command",
+          content: "@Dot !settings show",
+          mentionedBot: false,
+          createdAt: "2026-04-09T00:00:00.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(replies.length, 1);
+      assert.match(replies[0] ?? "", /Current settings:/);
+
+      const turns = persistence.listRecentConversationTurns("chan-1", 10);
+      assert.equal(turns[0]?.role, "user");
+      assert.equal(turns[0]?.content, "!settings show");
+      assert.equal(turns[1]?.role, "assistant");
+      assert.match(turns[1]?.content ?? "", /Current settings:/);
+    } finally {
+      unsubscribe();
+      await client.destroy();
+    }
+  } finally {
+    cleanup();
+  }
+});
