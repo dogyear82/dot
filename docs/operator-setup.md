@@ -76,7 +76,10 @@ For 1minAI chat:
 Current implementation note:
 
 - Dot currently posts to `https://api.1min.ai/api/chat-with-ai` and sends credentials with the `API-KEY` header.
-- Until `DOT-22` lands, hosted routing is still controlled by the existing `models.primary` setting rather than `llm.mode`.
+- Hosted routing is controlled by the persisted `llm.mode` setting:
+  `lite` keeps Dot local-only, `normal` allows hosted fallback on hard failures, and `power` allows hosted usage as a first-class route.
+- Replies now include a simple power indicator:
+  `[power: off]`, `[power: standby]`, or `[power: engaged]`.
 
 The compose stack bind-mounts `${HOME}/ollama` into the Ollama container so downloaded models are reused directly.
 

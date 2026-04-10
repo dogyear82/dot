@@ -74,10 +74,13 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
   };
   const chatService: ChatService = {
     async generateOwnerReply() {
-      return { provider: "ollama", reply: "chat reply" };
+      return { route: "local", powerStatus: "standby", reply: "chat reply" };
     },
     async inferToolDecision() {
-      return { provider: "ollama", decision: { decision: "none", reason: "not needed" } };
+      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+    },
+    getPowerStatus() {
+      return "standby";
     }
   };
 
@@ -103,6 +106,7 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
     assert.equal(outbound[0]?.replyRoute.replyToMessageId, "msg-1");
     assert.equal(outbound[0]?.recordConversationTurn, true);
     assert.match(outbound[0]?.content ?? "", /Current settings:/);
+    assert.match(outbound[0]?.content ?? "", /\[power: standby\]/);
   } finally {
     unsubscribe();
     cleanup();
@@ -119,10 +123,13 @@ test("message pipeline preserves transport and conversation metadata in access a
   };
   const chatService: ChatService = {
     async generateOwnerReply() {
-      return { provider: "ollama", reply: "chat reply" };
+      return { route: "local", powerStatus: "standby", reply: "chat reply" };
     },
     async inferToolDecision() {
-      return { provider: "ollama", decision: { decision: "none", reason: "not needed" } };
+      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+    },
+    getPowerStatus() {
+      return "standby";
     }
   };
 
@@ -149,6 +156,66 @@ test("message pipeline preserves transport and conversation metadata in access a
 
     assert.equal(auditRow?.transport, "discord");
     assert.equal(auditRow?.conversationId, "channel-1");
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline appends an engaged power indicator when chat uses the hosted path", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      return { route: "hosted", powerStatus: "engaged", reply: "hosted chat reply" };
+    },
+    async inferToolDecision() {
+      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+    },
+    getPowerStatus(route = "none") {
+      return route === "hosted" ? "engaged" : "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  persistence.settings.set("channels.defaultPolicy", "whitelist");
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          content: "tell me something interesting",
+          addressedContent: "tell me something interesting",
+          isDirectMessage: false,
+          mentionedBot: true
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.equal(outbound[0]?.recordConversationTurn, true);
+    assert.match(outbound[0]?.content ?? "", /hosted chat reply/);
+    assert.match(outbound[0]?.content ?? "", /\[power: engaged\]/);
   } finally {
     unsubscribe();
     cleanup();

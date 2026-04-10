@@ -112,7 +112,8 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
       } as never,
       chatService: {
         inferToolDecision: async () => ({
-          provider: "test",
+          route: "local",
+          powerStatus: "standby",
           decision: {
             decision: "none",
             reason: "not a tool request"
@@ -125,10 +126,12 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
           });
 
           return {
-            provider: "test",
+            route: "local",
+            powerStatus: "standby",
             reply: "freeform reply"
           };
-        }
+        },
+        getPowerStatus: () => "standby"
       },
       logger: createLogger() as never,
       outlookOAuthClient: {} as never,
@@ -172,7 +175,7 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
           {
             role: "assistant",
             content:
-              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `models.primary`"
+              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[power: standby]"
           }
         ]
       );
@@ -192,12 +195,12 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
       assert.equal(generatedMessages[0]?.userMessage, "and what about tomorrow?");
       assert.deepEqual(generatedMessages[0]?.recentConversation, [
         { role: "user", content: "!settings" },
-        {
-          role: "assistant",
-          content:
-            "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `models.primary`"
-        }
-      ]);
+          {
+            role: "assistant",
+            content:
+              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[power: standby]"
+          }
+        ]);
 
       (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
         Events.MessageCreate,

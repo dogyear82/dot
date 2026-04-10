@@ -5,19 +5,26 @@ import { buildToolInferencePrompt, inferDeterministicToolDecision, parseToolDeci
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
 import { OllamaChatProvider, OneMinAiChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
 
-export interface ChatService {
+export type LlmMode = "lite" | "normal" | "power";
+export type LlmRoute = "none" | "deterministic" | "local" | "hosted";
+export type LlmPowerStatus = "off" | "standby" | "engaged";
+
+export interface LlmService {
   generateOwnerReply(params: {
     userMessage: string;
     recentConversation?: ConversationTurnRecord[];
-  }): Promise<{ provider: string; reply: string }>;
-  inferToolDecision(userMessage: string): Promise<{ provider: string; decision: ToolDecision }>;
+  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
+  inferToolDecision(userMessage: string): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ToolDecision }>;
+  getPowerStatus(route?: LlmRoute): LlmPowerStatus;
 }
 
-export function createChatService(params: {
+export type ChatService = LlmService;
+
+export function createLlmService(params: {
   config: AppConfig;
   settings: SettingsStore;
   providers?: ChatProvider[];
-}): ChatService {
+}): LlmService {
   const providers =
     params.providers ??
     [
@@ -34,9 +41,18 @@ export function createChatService(params: {
       )
     ];
 
+  const getPowerStatus = (route: LlmRoute = "none"): LlmPowerStatus => {
+    const mode = getLlmMode(params.settings);
+
+    if (mode === "lite") {
+      return "off";
+    }
+
+    return route === "hosted" ? "engaged" : "standby";
+  };
+
   return {
     async generateOwnerReply({ userMessage, recentConversation }) {
-      const orderedProviders = orderProviders(providers, params.settings.get("models.primary") ?? "ollama");
       const messages = buildMessages({
         userMessage,
         recentConversation,
@@ -44,32 +60,25 @@ export function createChatService(params: {
         balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
         settings: params.settings
       });
+      const { route, reply } = await executeProviderRequest({
+        mode: getLlmMode(params.settings),
+        providers,
+        invoke: (provider) => provider.generate(messages),
+        failurePrefix: "No LLM provider could generate a response."
+      });
 
-      const failures: string[] = [];
-
-      for (const provider of orderedProviders) {
-        if (!provider.isAvailable()) {
-          failures.push(`${provider.name}: not configured`);
-          continue;
-        }
-
-        try {
-          const reply = await provider.generate(messages);
-          return { provider: provider.name, reply };
-        } catch (error) {
-          failures.push(`${provider.name}: ${formatError(error)}`);
-        }
-      }
-
-      throw new Error(`No chat provider could generate a response. ${failures.join("; ")}`);
+      return { route, powerStatus: getPowerStatus(route), reply };
     },
     async inferToolDecision(userMessage) {
       const deterministicDecision = inferDeterministicToolDecision(userMessage);
       if (deterministicDecision) {
-        return { provider: "deterministic", decision: deterministicDecision };
+        return {
+          route: "deterministic",
+          powerStatus: getPowerStatus("deterministic"),
+          decision: deterministicDecision
+        };
       }
 
-      const orderedProviders = orderProviders(providers, params.settings.get("models.primary") ?? "ollama");
       const messages: ChatMessage[] = [
         {
           role: "system",
@@ -80,31 +89,73 @@ export function createChatService(params: {
           content: buildToolInferencePrompt(userMessage)
         }
       ];
-      const failures: string[] = [];
+      const { route, reply } = await executeProviderRequest({
+        mode: getLlmMode(params.settings),
+        providers,
+        invoke: async (provider) => parseToolDecision(await provider.generate(messages)),
+        failurePrefix: "No LLM provider could infer a tool decision."
+      });
 
-      for (const provider of orderedProviders) {
-        if (!provider.isAvailable()) {
-          failures.push(`${provider.name}: not configured`);
-          continue;
-        }
-
-        try {
-          const reply = await provider.generate(messages);
-          return { provider: provider.name, decision: parseToolDecision(reply) };
-        } catch (error) {
-          failures.push(`${provider.name}: ${formatError(error)}`);
-        }
-      }
-
-      throw new Error(`No chat provider could infer a tool decision. ${failures.join("; ")}`);
-    }
+      return { route, powerStatus: getPowerStatus(route), decision: reply };
+    },
+    getPowerStatus
   };
 }
 
-export function orderProviders(providers: ChatProvider[], preferredProvider: string): ChatProvider[] {
-  const preferred = providers.find((provider) => provider.name === preferredProvider);
-  const remaining = providers.filter((provider) => provider.name !== preferredProvider);
-  return preferred ? [preferred, ...remaining] : providers;
+export const createChatService = createLlmService;
+
+export function appendPowerIndicator(content: string, powerStatus: LlmPowerStatus): string {
+  return `${content}\n\n${formatPowerIndicator(powerStatus)}`;
+}
+
+export function formatPowerIndicator(powerStatus: LlmPowerStatus): string {
+  return `[power: ${powerStatus}]`;
+}
+
+export function getLlmMode(settings: SettingsStore): LlmMode {
+  const configuredMode = settings.get("llm.mode");
+  return configuredMode === "lite" || configuredMode === "power" ? configuredMode : "normal";
+}
+
+export function orderProvidersForMode(providers: ChatProvider[], mode: LlmMode): ChatProvider[] {
+  const localProviders = providers.filter((provider) => provider.route === "local");
+  const hostedProviders = providers.filter((provider) => provider.route === "hosted");
+
+  switch (mode) {
+    case "lite":
+      return localProviders;
+    case "power":
+      return [...hostedProviders, ...localProviders];
+    case "normal":
+    default:
+      return [...localProviders, ...hostedProviders];
+  }
+}
+
+async function executeProviderRequest<T>(params: {
+  mode: LlmMode;
+  providers: ChatProvider[];
+  invoke: (provider: ChatProvider) => Promise<T>;
+  failurePrefix: string;
+}): Promise<{ route: LlmRoute; reply: T }> {
+  const orderedProviders = orderProvidersForMode(params.providers, params.mode);
+  const failures: string[] = [];
+
+  for (const provider of orderedProviders) {
+    if (!provider.isAvailable()) {
+      failures.push(`${provider.route}: not configured`);
+      continue;
+    }
+
+    try {
+      const reply = await params.invoke(provider);
+      return { route: provider.route, reply };
+    } catch (error) {
+      failures.push(`${provider.route}: ${formatError(error)}`);
+    }
+  }
+
+  throw new Error(`${params.failurePrefix} ${failures.join("; ")}`);
 }
 
 function buildMessages(params: {
