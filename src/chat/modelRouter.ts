@@ -105,11 +105,18 @@ export function createLlmService(params: {
 export const createChatService = createLlmService;
 
 export function appendPowerIndicator(content: string, powerStatus: LlmPowerStatus): string {
-  return `${content}\n\n${formatPowerIndicator(powerStatus)}`;
+  const indicator = formatPowerIndicator(powerStatus);
+  const trimmed = content.trimEnd();
+  return trimmed.endsWith(indicator) ? trimmed : `${trimmed}\n\n${indicator}`;
 }
 
 export function formatPowerIndicator(powerStatus: LlmPowerStatus): string {
-  return `[power: ${powerStatus}]`;
+  return `[mode: ${formatModeLabel(powerStatus)}]`;
+}
+
+export function buildCurrentDateTimeInstruction(now = new Date()): string {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  return `Current date and time: ${now.toISOString()} (${timezone}). Use this as the authoritative current time reference unless newer explicit context is provided.`;
 }
 
 export function getLlmMode(settings: SettingsStore): LlmMode {
@@ -168,11 +175,11 @@ function buildMessages(params: {
   return [
     {
       role: "system",
-      content: buildSystemPrompt({
+      content: `${buildSystemPrompt({
         mode: params.mode,
         balance: params.balance,
         settings: params.settings
-      })
+      })} ${buildCurrentDateTimeInstruction()}`
     },
     ...(params.recentConversation ?? []).map((turn) => ({
       role: turn.role,
@@ -187,4 +194,16 @@ function buildMessages(params: {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
+}
+
+function formatModeLabel(powerStatus: LlmPowerStatus): LlmMode {
+  switch (powerStatus) {
+    case "off":
+      return "lite";
+    case "engaged":
+      return "power";
+    case "standby":
+    default:
+      return "normal";
+  }
 }

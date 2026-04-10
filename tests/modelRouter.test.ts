@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import type { AppConfig } from "../src/config.js";
 import {
   appendPowerIndicator,
+  buildCurrentDateTimeInstruction,
   createLlmService,
   formatPowerIndicator,
   getLlmMode,
@@ -119,6 +120,7 @@ test("llm service keeps chat local-only in lite mode", async () => {
     providers: [
       new FakeProvider("ollama", "local", true, async (messages) => {
         assert.equal(messages[0]?.role, "system");
+        assert.match(messages[0]?.content ?? "", /Current date and time: .*Z \([^)]+\)\./);
         return "local reply";
       }),
       new FakeProvider("1minai", "hosted", true, async () => "hosted reply")
@@ -203,6 +205,7 @@ test("llm service includes recent local conversation turns before the current us
       id: 1,
       conversationId: "channel-1",
       role: "user",
+      participantActorId: "owner-1",
       content: "earlier question",
       sourceMessageId: "m1",
       createdAt: "2026-04-09T10:00:00.000Z"
@@ -211,6 +214,7 @@ test("llm service includes recent local conversation turns before the current us
       id: 2,
       conversationId: "channel-1",
       role: "assistant",
+      participantActorId: "owner-1",
       content: "earlier answer",
       sourceMessageId: "m2",
       createdAt: "2026-04-09T10:00:05.000Z"
@@ -300,8 +304,14 @@ test("getLlmMode defaults to normal when unset", () => {
 });
 
 test("power indicator formatting is stable", () => {
-  assert.equal(formatPowerIndicator("engaged"), "[power: engaged]");
-  assert.equal(appendPowerIndicator("hello", "standby"), "hello\n\n[power: standby]");
+  assert.equal(formatPowerIndicator("engaged"), "[mode: power]");
+  assert.equal(appendPowerIndicator("hello", "standby"), "hello\n\n[mode: normal]");
+  assert.equal(appendPowerIndicator("hello\n\n[mode: normal]", "standby"), "hello\n\n[mode: normal]");
+});
+
+test("current date time instruction includes an ISO timestamp and timezone", () => {
+  const instruction = buildCurrentDateTimeInstruction(new Date("2026-04-10T18:42:00.000Z"));
+  assert.match(instruction, /^Current date and time: 2026-04-10T18:42:00.000Z \([^)]+\)\. Use this as the authoritative current time reference unless newer explicit context is provided\.$/);
 });
 
 test("llm service reports standby power for non-hosted paths outside lite mode", () => {

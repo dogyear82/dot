@@ -18,12 +18,11 @@ test("evaluateAccess allows owner messages through privileged workflows", () => 
 
   assert.deepEqual(decision, {
     actorRole: "owner",
-    canUsePrivilegedFeatures: true,
-    shouldReply: false
+    canUsePrivilegedFeatures: true
   });
 });
 
-test("evaluateAccess routes non-owner mentions into a limited contact flow", () => {
+test("evaluateAccess keeps non-owner users out of privileged workflows", () => {
   const decision = evaluateAccess({
     authorId: "user-2",
     ownerUserId: "owner-1",
@@ -31,11 +30,8 @@ test("evaluateAccess routes non-owner mentions into a limited contact flow", () 
     mentionedBot: true
   });
 
-  assert.equal(decision.actorRole, "non-owner");
-  assert.equal(decision.canUsePrivilegedFeatures, false);
-  assert.equal(decision.shouldReply, true);
-  assert.match(
-    decision.responseMessage ?? "",
-    /only help non-owner users get in touch with the owner/i
-  );
+  assert.deepEqual(decision, {
+    actorRole: "non-owner",
+    canUsePrivilegedFeatures: false
+  });
 });

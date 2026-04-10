@@ -24,6 +24,7 @@ function turn(overrides: Partial<ConversationTurnRecord> = {}): ConversationTurn
     id: 1,
     conversationId: "chan-1",
     role: "assistant",
+    participantActorId: "owner-1",
     content: "hello",
     sourceMessageId: "source-1",
     createdAt: "2026-04-09T00:00:00.000Z",
@@ -53,7 +54,7 @@ test("addressedness is true for direct messages and explicit mentions", () => {
   );
 });
 
-test("addressedness stays false in shared channels when policy is dm-only", () => {
+test("addressedness still responds to clear shared-channel direct address even when policy is dm-only", () => {
   assert.equal(
     shouldTreatOwnerMessageAsAddressed({
       message: message({ content: "dot what about tomorrow?" }),
@@ -61,7 +62,7 @@ test("addressedness stays false in shared channels when policy is dm-only", () =
       recentConversation: [],
       recentMessages: []
     }),
-    false
+    true
   );
 });
 
@@ -69,6 +70,18 @@ test("addressedness is true for plain-text direct address", () => {
   assert.equal(
     shouldTreatOwnerMessageAsAddressed({
       message: message({ content: "Dot, what about tomorrow?" }),
+      defaultChannelPolicy: "mention-only",
+      recentConversation: [],
+      recentMessages: []
+    }),
+    true
+  );
+});
+
+test("addressedness is true for explicit commands in shared channels", () => {
+  assert.equal(
+    shouldTreatOwnerMessageAsAddressed({
+      message: message({ content: "!settings set llm.mode power" }),
       defaultChannelPolicy: "mention-only",
       recentConversation: [],
       recentMessages: []
@@ -104,7 +117,7 @@ test("addressedness stays false when recent assistant context is stale or absent
     shouldTreatOwnerMessageAsAddressed({
       message: message({ content: "and tomorrow?" }),
       defaultChannelPolicy: "mention-only",
-      recentConversation: [turn({ role: "user", content: "previous owner message" })],
+      recentConversation: [turn({ role: "user", participantActorId: "owner-1", content: "previous owner message" })],
       recentMessages: []
     }),
     false
@@ -118,9 +131,21 @@ test("addressedness uses the most recent turn in the bounded conversation window
       defaultChannelPolicy: "mention-only",
       recentConversation: [
         turn({ id: 1, createdAt: "2026-04-09T00:02:00.000Z" }),
-        turn({ id: 2, role: "user", createdAt: "2026-04-09T00:02:30.000Z", content: "thanks" })
+        turn({ id: 2, role: "user", participantActorId: "owner-1", createdAt: "2026-04-09T00:02:30.000Z", content: "thanks" })
       ],
       recentMessages: []
+    }),
+    false
+  );
+});
+
+test("addressedness stays false when the recent assistant reply was for a different participant", () => {
+  assert.equal(
+    shouldTreatOwnerMessageAsAddressed({
+      message: message({ authorId: "user-2", authorUsername: "friend", createdAt: "2026-04-09T00:04:00.000Z", content: "and tomorrow?" }),
+      defaultChannelPolicy: "mention-only",
+      recentConversation: [turn({ createdAt: "2026-04-09T00:03:00.000Z", participantActorId: "owner-1" })],
+      recentMessages: [message({ id: "msg-previous", createdAt: "2026-04-09T00:02:30.000Z", content: "@Dot hello", mentionedBot: true })]
     }),
     false
   );

@@ -8,14 +8,14 @@ export function shouldTreatOwnerMessageAsAddressed(params: {
   recentConversation: ConversationTurnRecord[];
   recentMessages: IncomingMessage[];
 }): boolean {
-  const { message, defaultChannelPolicy, recentConversation, recentMessages } = params;
+  const { message, recentConversation, recentMessages } = params;
 
   if (message.isDirectMessage || message.mentionedBot) {
     return true;
   }
 
-  if (defaultChannelPolicy === "dm-only") {
-    return false;
+  if (looksLikeExplicitCommand(message.content)) {
+    return true;
   }
 
   if (looksLikePlainTextDirectAddress(normalizeContent(message.content))) {
@@ -24,6 +24,10 @@ export function shouldTreatOwnerMessageAsAddressed(params: {
 
   const mostRecentTurn = recentConversation.at(-1);
   if (!mostRecentTurn || mostRecentTurn.role !== "assistant") {
+    return false;
+  }
+
+  if (mostRecentTurn.participantActorId == null || mostRecentTurn.participantActorId !== message.authorId) {
     return false;
   }
 
@@ -46,6 +50,10 @@ export function shouldTreatOwnerMessageAsAddressed(params: {
 
 function looksLikePlainTextDirectAddress(content: string): boolean {
   return /^(?:dot|hey dot|hi dot|hello dot|ok dot|okay dot|so dot|well dot)\b/.test(content);
+}
+
+function looksLikeExplicitCommand(content: string): boolean {
+  return content.trimStart().startsWith("!");
 }
 
 function normalizeContent(content: string): string {

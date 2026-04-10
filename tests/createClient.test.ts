@@ -169,13 +169,14 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
 
       const turnsAfterCommand = persistence.listRecentConversationTurns("chan-1", 10);
       assert.deepEqual(
-        turnsAfterCommand.map((turn) => ({ role: turn.role, content: turn.content })),
+        turnsAfterCommand.map((turn) => ({ role: turn.role, participantActorId: turn.participantActorId, content: turn.content })),
         [
-          { role: "user", content: "!settings" },
+          { role: "user", participantActorId: "owner-1", content: "!settings" },
           {
             role: "assistant",
+            participantActorId: "owner-1",
             content:
-              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[power: standby]"
+              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[mode: normal]"
           }
         ]
       );
@@ -198,7 +199,7 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
           {
             role: "assistant",
             content:
-              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[power: standby]"
+              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[mode: normal]"
           }
         ]);
 

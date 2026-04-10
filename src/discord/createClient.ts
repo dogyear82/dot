@@ -82,6 +82,7 @@ export function createDiscordClient(params: {
         persistence.saveConversationTurn({
           conversationId: event.conversationId,
           role: "assistant",
+          participantActorId: event.participantActorId,
           content: event.content,
           sourceMessageId: sent.id,
           createdAt: sent.createdAt.toISOString()
@@ -104,6 +105,7 @@ export function createDiscordClient(params: {
         persistence.saveConversationTurn({
           conversationId: event.conversationId,
           role: "assistant",
+          participantActorId: event.participantActorId,
           content: event.content,
           sourceMessageId: sent.id,
           createdAt: sent.createdAt.toISOString()

@@ -3,8 +3,6 @@ export type ActorRole = "owner" | "non-owner";
 export interface AccessDecision {
   actorRole: ActorRole;
   canUsePrivilegedFeatures: boolean;
-  shouldReply: boolean;
-  responseMessage?: string;
 }
 
 export function resolveActorRole(authorId: string, ownerUserId: string): ActorRole {
@@ -22,19 +20,12 @@ export function evaluateAccess(params: {
   if (actorRole === "owner") {
     return {
       actorRole,
-      canUsePrivilegedFeatures: true,
-      shouldReply: false
+      canUsePrivilegedFeatures: true
     };
   }
 
-  const shouldReply = params.isDirectMessage || params.mentionedBot;
-
   return {
     actorRole,
-    canUsePrivilegedFeatures: false,
-    shouldReply,
-    responseMessage: shouldReply
-      ? "I can only help non-owner users get in touch with the owner. I can't run commands or privileged actions for you."
-      : undefined
+    canUsePrivilegedFeatures: false
   };
 }
