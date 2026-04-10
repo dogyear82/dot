@@ -12,11 +12,22 @@ export interface IncomingMessage {
   createdAt: string;
 }
 
+export interface ConversationTurnRecord {
+  id: number;
+  conversationId: string;
+  role: "user" | "assistant";
+  content: string;
+  sourceMessageId: string | null;
+  createdAt: string;
+}
+
 export interface AccessAuditRecord {
   messageId: string;
   actorRole: "owner" | "non-owner";
   canUsePrivilegedFeatures: boolean;
   decision: "owner-allowed" | "non-owner-routed";
+  transport: string;
+  conversationId: string;
 }
 
 export interface ReminderRecord {
@@ -45,6 +56,26 @@ export interface OutlookCalendarEvent {
   startAt: string;
   endAt: string;
   webLink: string | null;
+}
+
+export interface OAuthTokenRecord {
+  provider: string;
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: string;
+  scope: string | null;
+  tokenType: string;
+}
+
+export interface OAuthDeviceFlowRecord {
+  provider: string;
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string | null;
+  expiresAt: string;
+  intervalSeconds: number;
+  message: string;
 }
 
 export interface ToolExecutionAuditRecord {

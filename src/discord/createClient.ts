@@ -6,6 +6,7 @@ import { evaluateAccess } from "../auth.js";
 import type { ChatService } from "../chat/modelRouter.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "../onboarding.js";
 import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "../outlookCalendar.js";
+import type { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
 import { handlePersonalityCommand, isPersonalityCommand } from "../personality.js";
 import { handleReminderCommand, isReminderCommand } from "../reminders.js";
 import { executeToolDecision } from "../toolInvocation.js";
@@ -13,14 +14,17 @@ import { shouldTreatOwnerMessageAsAddressed } from "./addressing.js";
 import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 
+const RECENT_CHAT_HISTORY_LIMIT = 10;
+
 export function createDiscordClient(params: {
   calendarClient: OutlookCalendarClient;
   chatService: ChatService;
   logger: Logger;
+  outlookOAuthClient: MicrosoftOutlookOAuthClient;
   ownerUserId: string;
   persistence: Persistence;
 }) {
-  const { calendarClient, chatService, logger, ownerUserId, persistence } = params;
+  const { calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence } = params;
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -59,7 +63,9 @@ export function createDiscordClient(params: {
       messageId: normalized.id,
       actorRole: accessDecision.actorRole,
       canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
-      decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed"
+      decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
+      transport: "discord",
+      conversationId: normalized.channelId
     });
 
     logger.info(
@@ -139,6 +145,7 @@ export function createDiscordClient(params: {
           const reply = await handleCalendarCommand({
             calendarClient,
             content,
+            oauthClient: outlookOAuthClient,
             persistence
           });
           persistence.saveToolExecutionAudit({
@@ -217,9 +224,27 @@ export function createDiscordClient(params: {
             logger.warn({ err: error, messageId: normalized.id }, "Tool inference failed; falling back to chat");
           }
 
-          const response = await chatService.generateOwnerReply(content);
+          persistence.saveConversationTurn({
+            conversationId: normalized.channelId,
+            role: "user",
+            content,
+            sourceMessageId: normalized.id,
+            createdAt: normalized.createdAt
+          });
+          const recentConversation = persistence.listRecentConversationTurns(normalized.channelId, RECENT_CHAT_HISTORY_LIMIT);
+          const response = await chatService.generateOwnerReply({
+            userMessage: content,
+            recentConversation: recentConversation.slice(0, -1)
+          });
           logger.info({ provider: response.provider, messageId: normalized.id }, "Generated owner chat response");
-          await replyAndRecord(message, response.reply, botUserId, persistence);
+          const replyMessage = await replyAndRecord(message, response.reply, botUserId, persistence);
+          persistence.saveConversationTurn({
+            conversationId: normalized.channelId,
+            role: "assistant",
+            content: response.reply,
+            sourceMessageId: replyMessage.id,
+            createdAt: replyMessage.createdAt.toISOString()
+          });
         } catch (error) {
           logger.error({ err: error, messageId: normalized.id }, "Failed to generate owner chat response");
           await replyAndRecord(
@@ -258,6 +283,7 @@ async function replyAndRecord(
     replyToMessageId: message.id,
     replyToAuthorId: message.author.id
   });
+  return sent;
 }
 
 function normalizeExplicitToolName(content: string): string {
@@ -277,7 +303,14 @@ function normalizeExplicitToolName(content: string): string {
     return "calendar.remind";
   }
 
-  if (content.startsWith("!calendar show") || content === "!calendar") {
+  if (content.startsWith("!calendar auth")) {
+    return "calendar.auth";
+  }
+
+  if (
+    content.startsWith("!calendar show") ||
+    content === "!calendar"
+  ) {
     return "calendar.show";
   }
 

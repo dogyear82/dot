@@ -54,7 +54,7 @@ export class OllamaChatProvider implements ChatProvider {
   }
 }
 
-export class OpenAiCompatibleChatProvider implements ChatProvider {
+export class OneMinAiChatProvider implements ChatProvider {
   readonly name = "1minai";
 
   constructor(
@@ -71,37 +71,49 @@ export class OpenAiCompatibleChatProvider implements ChatProvider {
 
   async generate(messages: ChatMessage[]): Promise<string> {
     const response = await withTimeout(
-      this.fetchFn(`${this.baseUrl.replace(/\/$/, "")}/v1/chat/completions`, {
+      this.fetchFn(`${this.baseUrl.replace(/\/$/, "")}/api/chat-with-ai`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`
+          "API-KEY": this.apiKey
         },
         body: JSON.stringify({
+          type: "UNIFY_CHAT_WITH_AI",
           model: this.model,
-          messages
+          promptObject: {
+            prompt: formatOneMinAiPrompt(messages)
+          }
         })
       }),
       this.timeoutMs
     );
 
     if (!response.ok) {
-      throw new Error(`Hosted chat request failed with status ${response.status}`);
+      throw new Error(`1minAI request failed with status ${response.status}`);
     }
 
     const payload = (await response.json()) as {
-      choices?: Array<{
-        message?: { content?: string };
-      }>;
+      aiRecord?: {
+        aiRecordDetail?: {
+          resultObject?: string[];
+        };
+      };
     };
-    const content = payload.choices?.[0]?.message?.content?.trim();
+    const content = payload.aiRecord?.aiRecordDetail?.resultObject?.join("\n").trim();
 
     if (!content) {
-      throw new Error("Hosted provider returned an empty response");
+      throw new Error("1minAI returned an empty response");
     }
 
     return content;
   }
+}
+
+function formatOneMinAiPrompt(messages: ChatMessage[]): string {
+  return messages
+    .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
+    .join("\n\n")
+    .trim();
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

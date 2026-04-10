@@ -46,8 +46,21 @@ This bootstrap includes:
 ## Model routing
 
 - default local runtime: Ollama
-- hosted fallback: OpenAI-compatible endpoint when `ONEMINAI_*` settings are configured
+- hosted fallback: 1minAI chat API when `ONEMINAI_*` settings are configured
 - active persona is driven by persisted settings
+
+Current 1minAI expectations before `DOT-22`:
+
+- `ONEMINAI_BASE_URL=https://api.1min.ai`
+- Dot calls `/api/chat-with-ai`
+- Dot sends the API key in the `API-KEY` header
+- `models.primary=1minai` makes the hosted provider the preferred backend in the current routing model
+
+## Conversation memory
+
+- Dot now keeps recent free-form chat turns in local SQLite storage.
+- Chat context is assembled from local history before each reply instead of relying on provider-managed conversation IDs.
+- This preserves continuity when switching between Ollama and 1minAI, or between different 1minAI accounts.
 
 ## Podman Notes
 
@@ -100,6 +113,9 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 
 ## Outlook Calendar Notes
 
-- Set `OUTLOOK_ACCESS_TOKEN` to a valid Microsoft Graph bearer token before using calendar commands.
+- Preferred setup is Microsoft device-code OAuth with `OUTLOOK_CLIENT_ID` and optional `OUTLOOK_TENANT_ID`.
+- Legacy `OUTLOOK_ACCESS_TOKEN` still works as a fallback, but durable OAuth is now the intended path.
+- After starting Dot, run `!calendar auth start`, complete the Microsoft sign-in in a browser, then run `!calendar auth complete`.
+- `!calendar auth status` reports whether Outlook is connected, pending, or needs to be reauthorized.
 - `!calendar show` lists upcoming Outlook events from the configured default or named calendar.
 - `!calendar remind <index> [lead-time]` creates a Dot reminder from the indexed event returned by `!calendar show`.
