@@ -10,6 +10,15 @@ export interface IncomingMessage {
   createdAt: string;
 }
 
+export interface ConversationTurnRecord {
+  id: number;
+  conversationId: string;
+  role: "user" | "assistant";
+  content: string;
+  sourceMessageId: string | null;
+  createdAt: string;
+}
+
 export interface AccessAuditRecord {
   messageId: string;
   actorRole: "owner" | "non-owner";
