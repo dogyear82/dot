@@ -6,7 +6,9 @@ import path from "node:path";
 
 import { Events } from "discord.js";
 
+import { createInMemoryEventBus } from "../src/eventBus.js";
 import { createDiscordClient } from "../src/discord/createClient.js";
+import { registerMessagePipeline } from "../src/messagePipeline.js";
 import { initializePersistence } from "../src/persistence.js";
 
 function createPersistence() {
@@ -67,7 +69,22 @@ function createFakeMessage(params: {
       replyLog.push(reply);
       return {
         id: `${id}-reply-${replyLog.length}`,
-        createdAt: new Date(createdAt)
+        channelId: "chan-1",
+        guildId: isDirectMessage ? null : "guild-1",
+        author: {
+          id: "bot-1",
+          username: "Dot",
+          bot: true
+        },
+        content: reply,
+        createdAt: new Date(createdAt),
+        mentions: {
+          users: {
+            has() {
+              return false;
+            }
+          }
+        }
       };
     }
   };
@@ -81,13 +98,15 @@ function createLogger() {
   };
 }
 
-test("explicit command replies are persisted so a recent follow-up can be inferred in the same channel", async () => {
+test("Discord ingress publishes through the bus and preserves command-seeded follow-up context", async () => {
   const { persistence, cleanup } = createPersistence();
   const replies: string[] = [];
   const generatedMessages: Array<{ userMessage: string; recentConversation: Array<{ role: string; content: string }> }> = [];
+  const bus = createInMemoryEventBus();
 
   try {
-    const client = createDiscordClient({
+    const unsubscribe = registerMessagePipeline({
+      bus,
       calendarClient: {
         listUpcomingEvents: async () => []
       } as never,
@@ -117,85 +136,97 @@ test("explicit command replies are persisted so a recent follow-up can be inferr
       persistence
     });
 
-    Object.defineProperty(client, "user", {
-      configurable: true,
-      value: {
-        id: "bot-1",
-        username: "Dot"
-      }
+    const client = createDiscordClient({
+      bus,
+      logger: createLogger() as never,
+      ownerUserId: "owner-1",
+      persistence
     });
 
-    (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
-      Events.MessageCreate,
-      createFakeMessage({
-        id: "msg-1",
-        content: "<@bot-1> !settings",
-        mentionedBot: true,
-        createdAt: "2026-04-09T00:00:00.000Z",
-        replyLog: replies
-      })
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      Object.defineProperty(client, "user", {
+        configurable: true,
+        value: {
+          id: "bot-1",
+          username: "Dot"
+        }
+      });
 
-    const turnsAfterCommand = persistence.listRecentConversationTurns("chan-1", 10);
-    assert.deepEqual(
-      turnsAfterCommand.map((turn) => ({ role: turn.role, content: turn.content })),
-      [
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-1",
+          content: "<@bot-1> !settings",
+          mentionedBot: true,
+          createdAt: "2026-04-09T00:00:00.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const turnsAfterCommand = persistence.listRecentConversationTurns("chan-1", 10);
+      assert.deepEqual(
+        turnsAfterCommand.map((turn) => ({ role: turn.role, content: turn.content })),
+        [
+          { role: "user", content: "!settings" },
+          {
+            role: "assistant",
+            content:
+              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `models.primary`"
+          }
+        ]
+      );
+
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-2",
+          content: "and what about tomorrow?",
+          createdAt: "2026-04-09T00:02:00.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(generatedMessages.length, 1);
+      assert.equal(generatedMessages[0]?.userMessage, "and what about tomorrow?");
+      assert.deepEqual(generatedMessages[0]?.recentConversation, [
         { role: "user", content: "!settings" },
         {
           role: "assistant",
           content:
             "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `models.primary`"
         }
-      ]
-    );
+      ]);
 
-    (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
-      Events.MessageCreate,
-      createFakeMessage({
-        id: "msg-2",
-        content: "and what about tomorrow?",
-        createdAt: "2026-04-09T00:02:00.000Z",
-        replyLog: replies
-      })
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-3",
+          authorId: "user-2",
+          content: "wait, what happened?",
+          createdAt: "2026-04-09T00:02:30.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
-    assert.equal(generatedMessages.length, 1);
-    assert.equal(generatedMessages[0]?.userMessage, "and what about tomorrow?");
-    assert.deepEqual(generatedMessages[0]?.recentConversation, [
-      { role: "user", content: "!settings" },
-      {
-        role: "assistant",
-        content:
-          "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `models.primary`"
-      }
-    ]);
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-4",
+          content: "and next week?",
+          createdAt: "2026-04-09T00:03:00.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
-    (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
-      Events.MessageCreate,
-      createFakeMessage({
-        id: "msg-3",
-        authorId: "user-2",
-        content: "wait, what happened?",
-        createdAt: "2026-04-09T00:02:30.000Z",
-        replyLog: replies
-      })
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
-      Events.MessageCreate,
-      createFakeMessage({
-        id: "msg-4",
-        content: "and next week?",
-        createdAt: "2026-04-09T00:03:00.000Z",
-        replyLog: replies
-      })
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    assert.equal(generatedMessages.length, 1);
+      assert.equal(generatedMessages.length, 1);
+    } finally {
+      unsubscribe();
+      await client.destroy();
+    }
   } finally {
     cleanup();
   }

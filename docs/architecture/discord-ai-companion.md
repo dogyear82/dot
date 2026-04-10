@@ -147,6 +147,18 @@ Examples:
 - `ToolExecutionCompleted`
 - `DeliveryFailed`
 
+Current minimum contract in code:
+
+- inbound event: `inbound.message.received`
+- outbound delivery request: `outbound.message.requested`
+- current transport: `discord`
+- current conversation key: Discord `channelId`
+- current reply route: `transport`, `channelId`, `guildId`, `replyToMessageId`
+
+Important non-goal for this phase:
+
+- keep the system single-process and in-memory for dispatch; this seam exists to stabilize contracts and adapter boundaries first, not to introduce a broker or worker fleet yet
+
 ### 4. Conversation Orchestrator
 
 Responsibilities:

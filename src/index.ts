@@ -3,7 +3,9 @@ import process from "node:process";
 import { createChatService } from "./chat/modelRouter.js";
 import { loadConfig } from "./config.js";
 import { createDiscordClient } from "./discord/createClient.js";
+import { createInMemoryEventBus } from "./eventBus.js";
 import { createLogger } from "./logger.js";
+import { registerMessagePipeline } from "./messagePipeline.js";
 import { MicrosoftGraphOutlookCalendarClient } from "./outlookCalendar.js";
 import { MicrosoftOutlookOAuthClient } from "./outlookOAuth.js";
 import { initializePersistence } from "./persistence.js";
@@ -15,11 +17,19 @@ async function main() {
   const persistence = initializePersistence(config.DATA_DIR, config.SQLITE_PATH);
   const outlookOAuthClient = new MicrosoftOutlookOAuthClient(config, persistence);
   const calendarClient = new MicrosoftGraphOutlookCalendarClient(config, outlookOAuthClient);
+  const bus = createInMemoryEventBus();
   const chatService = createChatService({
     config,
     settings: persistence.settings
   });
   const client = createDiscordClient({
+    bus,
+    logger,
+    ownerUserId: config.DISCORD_OWNER_USER_ID,
+    persistence
+  });
+  const unregisterMessagePipeline = registerMessagePipeline({
+    bus,
     calendarClient,
     chatService,
     logger,
@@ -32,6 +42,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down");
     reminderScheduler?.stop();
+    unregisterMessagePipeline();
     await client.destroy();
     persistence.close();
     process.exit(0);
