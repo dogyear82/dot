@@ -237,6 +237,15 @@ Important constraint:
 - risk approval decisions must not be delegated to the model router
 - the model router may help choose whether to use a tool, but it must not directly perform the side effect or free-form the final execution payload
 
+### Outlook Mail Worker
+
+Current minimum direction:
+
+- keep the Outlook mail sync worker inside the single bot process for now
+- use a bounded mail adapter around Microsoft Graph mail delta and move-folder APIs
+- persist the approved-folder identifier and delta cursor as durable worker state
+- leave classification and move/no-move decisions to a later story once the substrate is stable
+
 ### 7. Policy Engine
 
 Responsibilities:

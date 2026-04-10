@@ -84,11 +84,19 @@ For Outlook OAuth:
 
 - set `OUTLOOK_CLIENT_ID`
 - optionally set `OUTLOOK_TENANT_ID` and `OUTLOOK_OAUTH_SCOPES`
+- if you want the background Outlook mail worker, keep `Mail.ReadWrite` in `OUTLOOK_OAUTH_SCOPES`
+- optionally set `OUTLOOK_MAIL_SYNC_INTERVAL_MS` and `OUTLOOK_MAIL_APPROVED_FOLDER`
 - start the bot
 - run `!calendar auth start`
 - complete the Microsoft device-code sign-in in a browser
 - run `!calendar auth complete`
 - verify with `!calendar auth status`
+
+For the Outlook mail sync worker:
+
+- the first pass stays single-process inside the bot runtime
+- it uses Microsoft Graph delta sync rather than rescanning the whole mailbox each cycle
+- it ensures the approved folder exists before future triage stories move mail into it
 
 ### 3. Create the Discord application
 

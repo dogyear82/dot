@@ -21,6 +21,8 @@ export interface Persistence {
   settings: SettingsStore;
   saveNormalizedMessage(message: IncomingMessage): void;
   listRecentNormalizedMessages(channelId: string, limit: number): IncomingMessage[];
+  getWorkerState(key: string): string | null;
+  setWorkerState(key: string, value: string): void;
   saveConversationTurn(record: {
     conversationId: string;
     role: "user" | "assistant";
@@ -58,6 +60,12 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     CREATE TABLE IF NOT EXISTS app_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS worker_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS normalized_messages (
@@ -206,6 +214,23 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     WHERE channel_id = ?
     ORDER BY created_at DESC, id DESC
     LIMIT ?
+  `);
+
+  const getWorkerStateStatement = db.prepare<[string], { value: string }>(`
+    SELECT value
+    FROM worker_state
+    WHERE key = ?
+  `);
+
+  const upsertWorkerStateStatement = db.prepare(`
+    INSERT INTO worker_state (
+      key,
+      value,
+      updated_at
+    ) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = CURRENT_TIMESTAMP
   `);
 
   const accessAuditStatement = db.prepare(`
@@ -547,6 +572,12 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         isDirectMessage: Boolean(message.isDirectMessage),
         mentionedBot: Boolean(message.mentionedBot)
       }));
+    },
+    getWorkerState(key) {
+      return getWorkerStateStatement.get(key)?.value ?? null;
+    },
+    setWorkerState(key, value) {
+      upsertWorkerStateStatement.run(key, value);
     },
     saveConversationTurn(record) {
       saveConversationTurnStatement.run({

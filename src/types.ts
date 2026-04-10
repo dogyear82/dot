@@ -56,6 +56,21 @@ export interface OutlookCalendarEvent {
   webLink: string | null;
 }
 
+export interface OutlookMailMessage {
+  id: string;
+  subject: string;
+  from: string | null;
+  receivedAt: string;
+  bodyPreview: string;
+  parentFolderId: string | null;
+  webLink: string | null;
+}
+
+export interface OutlookMailFolder {
+  id: string;
+  displayName: string;
+}
+
 export interface OAuthTokenRecord {
   provider: string;
   accessToken: string;

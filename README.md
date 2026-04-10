@@ -111,11 +111,13 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 - `nag-only` enables repeated Discord follow-ups.
 - `discord-then-sms` is stored as a setting now, but SMS escalation is deferred until the later SMS story is implemented.
 
-## Outlook Calendar Notes
+## Outlook Notes
 
 - Preferred setup is Microsoft device-code OAuth with `OUTLOOK_CLIENT_ID` and optional `OUTLOOK_TENANT_ID`.
 - Legacy `OUTLOOK_ACCESS_TOKEN` still works as a fallback, but durable OAuth is now the intended path.
+- Default OAuth scopes now include both calendar and mail access because the mail sync worker uses Microsoft Graph mail delta APIs.
 - After starting Dot, run `!calendar auth start`, complete the Microsoft sign-in in a browser, then run `!calendar auth complete`.
 - `!calendar auth status` reports whether Outlook is connected, pending, or needs to be reauthorized.
 - `!calendar show` lists upcoming Outlook events from the configured default or named calendar.
 - `!calendar remind <index> [lead-time]` creates a Dot reminder from the indexed event returned by `!calendar show`.
+- The single-process Outlook mail sync worker polls on `OUTLOOK_MAIL_SYNC_INTERVAL_MS` and ensures the approved-mail folder named by `OUTLOOK_MAIL_APPROVED_FOLDER` exists.
