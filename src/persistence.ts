@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { createSettingsStore, type SettingsStore } from "./settings.js";
 import type {
   AccessAuditRecord,
+  ConversationTurnRecord,
   IncomingMessage,
   PersonalityPresetRecord,
   ReminderEvent,
@@ -17,6 +18,14 @@ export interface Persistence {
   db: Database.Database;
   settings: SettingsStore;
   saveNormalizedMessage(message: IncomingMessage): void;
+  saveConversationTurn(record: {
+    conversationId: string;
+    role: "user" | "assistant";
+    content: string;
+    sourceMessageId?: string | null;
+    createdAt?: string;
+  }): void;
+  listRecentConversationTurns(conversationId: string, limit: number): ConversationTurnRecord[];
   saveAccessAudit(record: AccessAuditRecord): void;
   saveToolExecutionAudit(record: ToolExecutionAuditRecord): void;
   getPersonalityPreset(name: string): PersonalityPresetRecord | null;
@@ -55,12 +64,23 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS conversation_turns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_message_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS access_audit (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       message_id TEXT NOT NULL,
       actor_role TEXT NOT NULL,
       can_use_privileged_features INTEGER NOT NULL,
       decision TEXT NOT NULL,
+      transport TEXT NOT NULL DEFAULT 'discord',
+      conversation_id TEXT NOT NULL DEFAULT '',
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -110,6 +130,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       FOREIGN KEY(reminder_id) REFERENCES reminders(id)
     );
   `);
+  ensureColumn(db, "access_audit", "transport", "TEXT NOT NULL DEFAULT 'discord'");
+  ensureColumn(db, "access_audit", "conversation_id", "TEXT NOT NULL DEFAULT ''");
 
   const saveStatement = db.prepare(`
     INSERT OR REPLACE INTO normalized_messages (
@@ -140,12 +162,16 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       message_id,
       actor_role,
       can_use_privileged_features,
-      decision
+      decision,
+      transport,
+      conversation_id
     ) VALUES (
       @messageId,
       @actorRole,
       @canUsePrivilegedFeatures,
-      @decision
+      @decision,
+      @transport,
+      @conversationId
     )
   `);
 
@@ -165,6 +191,46 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @provider,
       @detail
     )
+  `);
+
+  const saveConversationTurnStatement = db.prepare(`
+    INSERT INTO conversation_turns (
+      conversation_id,
+      role,
+      content,
+      source_message_id,
+      created_at
+    ) VALUES (
+      @conversationId,
+      @role,
+      @content,
+      @sourceMessageId,
+      COALESCE(@createdAt, CURRENT_TIMESTAMP)
+    )
+  `);
+
+  const listRecentConversationTurnsStatement = db.prepare<[string, number], ConversationTurnRecord>(`
+    SELECT
+      id,
+      conversation_id AS conversationId,
+      role,
+      content,
+      source_message_id AS sourceMessageId,
+      created_at AS createdAt
+    FROM (
+      SELECT
+        id,
+        conversation_id,
+        role,
+        content,
+        source_message_id,
+        created_at
+      FROM conversation_turns
+      WHERE conversation_id = ?
+      ORDER BY datetime(created_at) DESC, id DESC
+      LIMIT ?
+    )
+    ORDER BY datetime(created_at) ASC, id ASC
   `);
 
   const createReminderStatement = db.prepare(`
@@ -330,6 +396,18 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         mentionedBot: message.mentionedBot ? 1 : 0
       });
     },
+    saveConversationTurn(record) {
+      saveConversationTurnStatement.run({
+        conversationId: record.conversationId,
+        role: record.role,
+        content: record.content,
+        sourceMessageId: record.sourceMessageId ?? null,
+        createdAt: record.createdAt ?? null
+      });
+    },
+    listRecentConversationTurns(conversationId, limit) {
+      return listRecentConversationTurnsStatement.all(conversationId, limit);
+    },
     saveAccessAudit(record) {
       accessAuditStatement.run({
         ...record,
@@ -419,4 +497,13 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       db.close();
     }
   };
+}
+
+function ensureColumn(db: Database.Database, tableName: string, columnName: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }

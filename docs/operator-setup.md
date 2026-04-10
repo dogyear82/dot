@@ -57,11 +57,24 @@ Recommended additional values:
 - `OLLAMA_BASE_URL`
 - `OLLAMA_MODEL`
 - `ONEMINAI_API_KEY`
+- `ONEMINAI_BASE_URL`
+- `ONEMINAI_MODEL`
 
 For local Ollama testing with existing models:
 
 - `OLLAMA_BASE_URL=http://ollama:11434`
 - `OLLAMA_MODEL=<an installed local model such as openhermes>`
+
+For 1minAI chat:
+
+- `ONEMINAI_BASE_URL=https://api.1min.ai`
+- `ONEMINAI_API_KEY=<your 1minAI API key>`
+- `ONEMINAI_MODEL=<a valid 1minAI chat model>`
+
+Current implementation note:
+
+- Dot currently posts to `https://api.1min.ai/api/chat-with-ai` and sends credentials with the `API-KEY` header.
+- Until `DOT-22` lands, hosted routing is still controlled by the existing `models.primary` setting rather than `llm.mode`.
 
 The compose stack bind-mounts `${HOME}/ollama` into the Ollama container so downloaded models are reused directly.
 
