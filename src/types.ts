@@ -28,6 +28,20 @@ export interface AccessAuditRecord {
   conversationId: string;
 }
 
+export interface InboxItemRecord {
+  id: number;
+  sourceMessageId: string;
+  channelId: string;
+  guildId: string | null;
+  authorId: string;
+  authorUsername: string;
+  content: string;
+  status: "pending" | "handled";
+  ownerNotifiedAt: string | null;
+  handledAt: string | null;
+  createdAt: string;
+}
+
 export interface ReminderRecord {
   id: number;
   message: string;

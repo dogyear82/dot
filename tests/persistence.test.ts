@@ -114,3 +114,45 @@ test("initializePersistence migrates legacy access_audit tables with transport m
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("inbox items are stored durably, surfaced once, and can be marked handled", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const item = persistence.createInboxItem({
+      id: "msg-1",
+      channelId: "chan-1",
+      guildId: "guild-1",
+      authorId: "user-1",
+      authorUsername: "alice",
+      content: "need the owner to call me back",
+      isDirectMessage: false,
+      mentionedBot: true,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+
+    assert.equal(item.status, "pending");
+    assert.equal(persistence.listPendingInboxItems().length, 1);
+    assert.equal(persistence.listUnnotifiedInboxItems().length, 1);
+
+    const duplicate = persistence.createInboxItem({
+      id: "msg-1",
+      channelId: "chan-1",
+      guildId: "guild-1",
+      authorId: "user-1",
+      authorUsername: "alice",
+      content: "need the owner to call me back",
+      isDirectMessage: false,
+      mentionedBot: true,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+
+    assert.equal(duplicate.id, item.id);
+    persistence.markInboxItemsNotified([item.id]);
+    assert.equal(persistence.listUnnotifiedInboxItems().length, 0);
+    assert.equal(persistence.markInboxItemHandled(item.id), true);
+    assert.equal(persistence.listPendingInboxItems().length, 0);
+  } finally {
+    cleanup();
+  }
+});

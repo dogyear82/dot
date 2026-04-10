@@ -96,6 +96,8 @@ podman-compose up -d --force-recreate ollama
 - first DM message starts onboarding if setup is incomplete
 - `!settings show`
 - `!settings set <key> <value>`
+- `!inbox show`
+- `!inbox done <id>`
 - `!personality show`
 - `!personality set <trait> <1-100>`
 - `!personality preset list`

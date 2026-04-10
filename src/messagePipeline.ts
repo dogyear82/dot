@@ -4,6 +4,7 @@ import { evaluateAccess } from "./auth.js";
 import { appendPowerIndicator, type ChatService, type LlmRoute } from "./chat/modelRouter.js";
 import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
+import { buildContactRelayReply, formatPendingInboxSummary, getNonOwnerPrompt, handleInboxCommand, isInboxCommand } from "./inbox.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "./onboarding.js";
 import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
 import type { MicrosoftOutlookOAuthClient } from "./outlookOAuth.js";
@@ -108,6 +109,25 @@ export function registerMessagePipeline(params: {
           ? handleOnboardingReply(persistence.settings, content)
           : { reply: getOnboardingPrompt(persistence.settings), onboardingComplete: false };
         await publishReply(response.reply);
+        return;
+      }
+
+      if (!isInboxCommand(content)) {
+        const pendingInboxItems = persistence.listUnnotifiedInboxItems();
+        if (pendingInboxItems.length > 0) {
+          persistence.markInboxItemsNotified(pendingInboxItems.map((item) => item.id));
+          await bus.publishOutboundMessage(
+            createOutboundMessageRequestedEvent({
+              inboundEvent: event,
+              content: appendPowerIndicator(formatPendingInboxSummary(pendingInboxItems), chatService.getPowerStatus("none")),
+              recordConversationTurn: false
+            })
+          );
+        }
+      }
+
+      if (isInboxCommand(content)) {
+        await publishReply(handleInboxCommand(persistence, content));
         return;
       }
 
@@ -245,10 +265,36 @@ export function registerMessagePipeline(params: {
     }
 
     if (accessDecision.shouldReply && accessDecision.responseMessage) {
+      const content = event.payload.addressedContent.trim();
+
+      if (!content) {
+        await bus.publishOutboundMessage(
+          createOutboundMessageRequestedEvent({
+            inboundEvent: event,
+            content: appendPowerIndicator(getNonOwnerPrompt(), chatService.getPowerStatus("none")),
+            recordConversationTurn: false
+          })
+        );
+        return;
+      }
+
       await bus.publishOutboundMessage(
         createOutboundMessageRequestedEvent({
           inboundEvent: event,
-          content: appendPowerIndicator(accessDecision.responseMessage, chatService.getPowerStatus("none")),
+          content: appendPowerIndicator(
+            buildContactRelayReply(persistence, {
+              id: event.sourceMessageId,
+              channelId: event.conversationId,
+              guildId: event.replyRoute.guildId,
+              authorId: event.sender.actorId,
+              authorUsername: event.sender.displayName,
+              content,
+              isDirectMessage: event.payload.isDirectMessage,
+              mentionedBot: event.payload.mentionedBot,
+              createdAt: event.occurredAt
+            }),
+            chatService.getPowerStatus("none")
+          ),
           recordConversationTurn: false
         })
       );

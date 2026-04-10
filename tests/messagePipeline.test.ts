@@ -221,3 +221,216 @@ test("message pipeline appends an engaged power indicator when chat uses the hos
     cleanup();
   }
 });
+
+test("message pipeline relays non-owner messages into the inbox and keeps privileged features blocked", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("non-owner relay should not invoke chat");
+    },
+    async inferToolDecision() {
+      throw new Error("non-owner relay should not invoke tool inference");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        sourceMessageId: "msg-non-owner",
+        sender: {
+          actorId: "user-2",
+          displayName: "alice",
+          actorRole: "non-owner"
+        },
+        payload: {
+          content: "<@bot> can you tell the owner I need a callback?",
+          addressedContent: "can you tell the owner I need a callback?",
+          isDirectMessage: false,
+          mentionedBot: true
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.content ?? "", /saved your message for the owner as inbox item/i);
+    assert.equal(persistence.listPendingInboxItems().length, 1);
+    assert.equal(persistence.listPendingInboxItems()[0]?.authorUsername, "alice");
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline prompts non-owner users to supply a message when they only ping Dot", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("non-owner prompt should not invoke chat");
+    },
+    async inferToolDecision() {
+      throw new Error("non-owner prompt should not invoke tool inference");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        sourceMessageId: "msg-empty-non-owner",
+        sender: {
+          actorId: "user-2",
+          displayName: "alice",
+          actorRole: "non-owner"
+        },
+        payload: {
+          content: "<@bot>",
+          addressedContent: "",
+          isDirectMessage: false,
+          mentionedBot: true
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.content ?? "", /pass a message to the owner/i);
+    assert.equal(persistence.listPendingInboxItems().length, 0);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline surfaces pending inbox items to the owner and supports inbox commands", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      return { route: "local", powerStatus: "standby", reply: "owner chat reply" };
+    },
+    async inferToolDecision() {
+      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  persistence.createInboxItem({
+    id: "msg-contact-1",
+    channelId: "chan-2",
+    guildId: "guild-1",
+    authorId: "user-2",
+    authorUsername: "alice",
+    content: "please call me back",
+    isDirectMessage: false,
+    mentionedBot: true,
+    createdAt: "2026-04-10T00:00:00.000Z"
+  });
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        sourceMessageId: "msg-owner-1",
+        payload: {
+          content: "hello dot",
+          addressedContent: "hello dot",
+          isDirectMessage: true,
+          mentionedBot: false
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 2);
+    assert.match(outbound[0]?.content ?? "", /pending inbox item/);
+    assert.match(outbound[1]?.content ?? "", /owner chat reply/);
+    assert.equal(persistence.listUnnotifiedInboxItems().length, 0);
+
+    outbound.length = 0;
+    await bus.publishInboundMessage(
+      inboundEvent({
+        sourceMessageId: "msg-owner-2",
+        payload: {
+          content: "!inbox done 1",
+          addressedContent: "!inbox done 1",
+          isDirectMessage: true,
+          mentionedBot: false
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.content ?? "", /Marked inbox item #1 as handled/);
+    assert.equal(persistence.listPendingInboxItems().length, 0);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});

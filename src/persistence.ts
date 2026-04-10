@@ -7,6 +7,7 @@ import { createSettingsStore, type SettingsStore } from "./settings.js";
 import type {
   AccessAuditRecord,
   ConversationTurnRecord,
+  InboxItemRecord,
   IncomingMessage,
   OAuthDeviceFlowRecord,
   OAuthTokenRecord,
@@ -29,6 +30,11 @@ export interface Persistence {
     createdAt?: string;
   }): void;
   listRecentConversationTurns(conversationId: string, limit: number): ConversationTurnRecord[];
+  createInboxItem(message: IncomingMessage): InboxItemRecord;
+  listPendingInboxItems(): InboxItemRecord[];
+  listUnnotifiedInboxItems(): InboxItemRecord[];
+  markInboxItemsNotified(ids: number[]): void;
+  markInboxItemHandled(id: number): boolean;
   saveAccessAudit(record: AccessAuditRecord): void;
   saveToolExecutionAudit(record: ToolExecutionAuditRecord): void;
   getPersonalityPreset(name: string): PersonalityPresetRecord | null;
@@ -80,6 +86,20 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       content TEXT NOT NULL,
       source_message_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS inbox_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_message_id TEXT NOT NULL UNIQUE,
+      channel_id TEXT NOT NULL,
+      guild_id TEXT,
+      author_id TEXT NOT NULL,
+      author_username TEXT NOT NULL,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      owner_notified_at TEXT,
+      handled_at TEXT,
+      created_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS access_audit (
@@ -282,6 +302,96 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       LIMIT ?
     )
     ORDER BY datetime(created_at) ASC, id ASC
+  `);
+
+  const createInboxItemStatement = db.prepare(`
+    INSERT INTO inbox_items (
+      source_message_id,
+      channel_id,
+      guild_id,
+      author_id,
+      author_username,
+      content,
+      status,
+      created_at
+    ) VALUES (
+      @sourceMessageId,
+      @channelId,
+      @guildId,
+      @authorId,
+      @authorUsername,
+      @content,
+      'pending',
+      @createdAt
+    )
+    ON CONFLICT(source_message_id) DO NOTHING
+  `);
+
+  const getInboxItemBySourceMessageIdStatement = db.prepare<[string], InboxItemRecord>(`
+    SELECT
+      id,
+      source_message_id AS sourceMessageId,
+      channel_id AS channelId,
+      guild_id AS guildId,
+      author_id AS authorId,
+      author_username AS authorUsername,
+      content,
+      status,
+      owner_notified_at AS ownerNotifiedAt,
+      handled_at AS handledAt,
+      created_at AS createdAt
+    FROM inbox_items
+    WHERE source_message_id = ?
+  `);
+
+  const listPendingInboxItemsStatement = db.prepare<[], InboxItemRecord>(`
+    SELECT
+      id,
+      source_message_id AS sourceMessageId,
+      channel_id AS channelId,
+      guild_id AS guildId,
+      author_id AS authorId,
+      author_username AS authorUsername,
+      content,
+      status,
+      owner_notified_at AS ownerNotifiedAt,
+      handled_at AS handledAt,
+      created_at AS createdAt
+    FROM inbox_items
+    WHERE status = 'pending'
+    ORDER BY datetime(created_at) ASC, id ASC
+  `);
+
+  const listUnnotifiedInboxItemsStatement = db.prepare<[], InboxItemRecord>(`
+    SELECT
+      id,
+      source_message_id AS sourceMessageId,
+      channel_id AS channelId,
+      guild_id AS guildId,
+      author_id AS authorId,
+      author_username AS authorUsername,
+      content,
+      status,
+      owner_notified_at AS ownerNotifiedAt,
+      handled_at AS handledAt,
+      created_at AS createdAt
+    FROM inbox_items
+    WHERE status = 'pending'
+      AND owner_notified_at IS NULL
+    ORDER BY datetime(created_at) ASC, id ASC
+  `);
+
+  const markInboxItemsNotifiedStatement = db.prepare(`
+    UPDATE inbox_items
+    SET owner_notified_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'pending'
+  `);
+
+  const markInboxItemHandledStatement = db.prepare(`
+    UPDATE inbox_items
+    SET status = 'handled',
+        handled_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'pending'
   `);
 
   const createReminderStatement = db.prepare(`
@@ -559,6 +669,37 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     },
     listRecentConversationTurns(conversationId, limit) {
       return listRecentConversationTurnsStatement.all(conversationId, limit);
+    },
+    createInboxItem(message) {
+      createInboxItemStatement.run({
+        sourceMessageId: message.id,
+        channelId: message.channelId,
+        guildId: message.guildId,
+        authorId: message.authorId,
+        authorUsername: message.authorUsername,
+        content: message.content,
+        createdAt: message.createdAt
+      });
+
+      return getInboxItemBySourceMessageIdStatement.get(message.id) as InboxItemRecord;
+    },
+    listPendingInboxItems() {
+      return listPendingInboxItemsStatement.all();
+    },
+    listUnnotifiedInboxItems() {
+      return listUnnotifiedInboxItemsStatement.all();
+    },
+    markInboxItemsNotified(ids) {
+      const transaction = db.transaction((pendingIds: number[]) => {
+        for (const id of pendingIds) {
+          markInboxItemsNotifiedStatement.run(id);
+        }
+      });
+
+      transaction(ids);
+    },
+    markInboxItemHandled(id) {
+      return markInboxItemHandledStatement.run(id).changes > 0;
     },
     saveAccessAudit(record) {
       accessAuditStatement.run({
