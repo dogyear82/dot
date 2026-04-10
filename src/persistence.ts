@@ -20,6 +20,7 @@ export interface Persistence {
   db: Database.Database;
   settings: SettingsStore;
   saveNormalizedMessage(message: IncomingMessage): void;
+  listRecentNormalizedMessages(channelId: string, limit: number): IncomingMessage[];
   saveConversationTurn(record: {
     conversationId: string;
     role: "user" | "assistant";
@@ -185,6 +186,26 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @mentionedBot,
       @createdAt
     )
+  `);
+
+  const listRecentNormalizedMessagesStatement = db.prepare<
+    [string, number],
+    Omit<IncomingMessage, "isDirectMessage" | "mentionedBot"> & { isDirectMessage: number; mentionedBot: number }
+  >(`
+    SELECT
+      id,
+      channel_id AS channelId,
+      guild_id AS guildId,
+      author_id AS authorId,
+      author_username AS authorUsername,
+      content,
+      is_direct_message AS isDirectMessage,
+      mentioned_bot AS mentionedBot,
+      created_at AS createdAt
+    FROM normalized_messages
+    WHERE channel_id = ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT ?
   `);
 
   const accessAuditStatement = db.prepare(`
@@ -519,6 +540,13 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         isDirectMessage: message.isDirectMessage ? 1 : 0,
         mentionedBot: message.mentionedBot ? 1 : 0
       });
+    },
+    listRecentNormalizedMessages(channelId, limit) {
+      return listRecentNormalizedMessagesStatement.all(channelId, limit).map((message) => ({
+        ...message,
+        isDirectMessage: Boolean(message.isDirectMessage),
+        mentionedBot: Boolean(message.mentionedBot)
+      }));
     },
     saveConversationTurn(record) {
       saveConversationTurnStatement.run({
