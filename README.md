@@ -46,15 +46,25 @@ This bootstrap includes:
 ## Model routing
 
 - default local runtime: Ollama
-- hosted fallback: 1minAI chat API when `ONEMINAI_*` settings are configured
+- hosted runtime: 1minAI chat API when `ONEMINAI_*` settings are configured
 - active persona is driven by persisted settings
+- `llm.mode` now controls cost/routing policy:
+  `lite` = local only
+  `normal` = local first, hosted fallback on hard failure
+  `power` = hosted first-class, local fallback if needed
 
-Current 1minAI expectations before `DOT-22`:
+Current 1minAI expectations:
 
 - `ONEMINAI_BASE_URL=https://api.1min.ai`
 - Dot calls `/api/chat-with-ai`
 - Dot sends the API key in the `API-KEY` header
-- `models.primary=1minai` makes the hosted provider the preferred backend in the current routing model
+- hosted use depends on `llm.mode`, not provider-specific app settings
+
+Every user-visible reply now includes a v1 power indicator:
+
+- `[power: off]` means hosted use was not allowed for that reply
+- `[power: standby]` means hosted use was allowed but not used
+- `[power: engaged]` means the reply used the hosted path
 
 ## Conversation memory
 

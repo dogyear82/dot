@@ -5,12 +5,14 @@ export interface ChatMessage {
 
 export interface ChatProvider {
   name: string;
+  route: "local" | "hosted";
   isAvailable(): boolean;
   generate(messages: ChatMessage[]): Promise<string>;
 }
 
 export class OllamaChatProvider implements ChatProvider {
   readonly name = "ollama";
+  readonly route = "local";
 
   constructor(
     private readonly baseUrl: string,
@@ -56,6 +58,7 @@ export class OllamaChatProvider implements ChatProvider {
 
 export class OneMinAiChatProvider implements ChatProvider {
   readonly name = "1minai";
+  readonly route = "hosted";
 
   constructor(
     private readonly baseUrl: string,

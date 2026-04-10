@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import { createChatService } from "./chat/modelRouter.js";
+import { createLlmService } from "./chat/modelRouter.js";
 import { loadConfig } from "./config.js";
 import { createDiscordClient } from "./discord/createClient.js";
 import { createInMemoryEventBus } from "./eventBus.js";
@@ -18,7 +18,7 @@ async function main() {
   const outlookOAuthClient = new MicrosoftOutlookOAuthClient(config, persistence);
   const calendarClient = new MicrosoftGraphOutlookCalendarClient(config, outlookOAuthClient);
   const bus = createInMemoryEventBus();
-  const chatService = createChatService({
+  const chatService = createLlmService({
     config,
     settings: persistence.settings
   });

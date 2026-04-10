@@ -17,7 +17,7 @@ export type SettingKey =
   | "personality.emotionalTransparency"
   | "channels.defaultPolicy"
   | "reminders.escalationPolicy"
-  | "models.primary"
+  | "llm.mode"
   | "onboarding.completed";
 
 export interface SettingDefinition {
@@ -178,11 +178,11 @@ const settingDefinitions: SettingDefinition[] = [
     userEditable: true
   },
   {
-    key: "models.primary",
-    label: "Primary model provider",
-    description: "Default provider routing preference",
-    allowedValues: ["ollama", "1minai"],
-    defaultValue: "ollama",
+    key: "llm.mode",
+    label: "LLM mode",
+    description: "Cost and routing policy for local vs hosted model use",
+    allowedValues: ["lite", "normal", "power"],
+    defaultValue: "normal",
     userEditable: true
   },
   {

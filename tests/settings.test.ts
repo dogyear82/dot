@@ -37,7 +37,7 @@ test("onboarding collects settings and marks completion", () => {
   result = handleOnboardingReply(store, "assistant");
   result = handleOnboardingReply(store, "mention-only");
   result = handleOnboardingReply(store, "discord-only");
-  result = handleOnboardingReply(store, "ollama");
+  result = handleOnboardingReply(store, "normal");
 
   assert.equal(result.onboardingComplete, true);
   assert.equal(store.hasCompletedOnboarding(), true);

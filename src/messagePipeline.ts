@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 
 import { evaluateAccess } from "./auth.js";
-import type { ChatService } from "./chat/modelRouter.js";
+import { appendPowerIndicator, type ChatService, type LlmRoute } from "./chat/modelRouter.js";
 import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "./onboarding.js";
@@ -92,12 +92,12 @@ export function registerMessagePipeline(params: {
         hasSavedUserTurn = true;
       };
 
-      const publishReply = async (reply: string) => {
+      const publishReply = async (reply: string, route: LlmRoute = "none") => {
         saveUserConversationTurn();
         await bus.publishOutboundMessage(
           createOutboundMessageRequestedEvent({
             inboundEvent: event,
-            content: reply,
+            content: appendPowerIndicator(reply, chatService.getPowerStatus(route)),
             recordConversationTurn: true
           })
         );
@@ -167,10 +167,10 @@ export function registerMessagePipeline(params: {
               toolName: inferred.decision.toolName,
               invocationSource: "inferred",
               status: "clarify",
-              provider: inferred.provider,
+              provider: inferred.route,
               detail: inferred.decision.reason
             });
-            await publishReply(inferred.decision.question);
+            await publishReply(inferred.decision.question, inferred.route);
             return;
           }
 
@@ -185,14 +185,14 @@ export function registerMessagePipeline(params: {
               toolName: inferred.decision.toolName,
               invocationSource: "inferred",
               status: "executed",
-              provider: inferred.provider,
+              provider: inferred.route,
               detail: inferred.decision.reason
             });
             logger.info(
-              { provider: inferred.provider, messageId: event.sourceMessageId, toolName: inferred.decision.toolName },
+              { route: inferred.route, messageId: event.sourceMessageId, toolName: inferred.decision.toolName },
               "Executed inferred tool decision"
             );
-            await publishReply(reply);
+            await publishReply(reply, inferred.route);
             return;
           }
 
@@ -201,7 +201,7 @@ export function registerMessagePipeline(params: {
             toolName: "none",
             invocationSource: "inferred",
             status: "skipped",
-            provider: inferred.provider,
+            provider: inferred.route,
             detail: inferred.decision.reason
           });
         } catch (error) {
@@ -222,14 +222,20 @@ export function registerMessagePipeline(params: {
           userMessage: content,
           recentConversation: updatedConversation.slice(0, -1)
         });
-        logger.info({ provider: response.provider, messageId: event.sourceMessageId }, "Generated owner chat response");
-        await publishReply(response.reply);
+        logger.info(
+          { route: response.route, powerStatus: response.powerStatus, messageId: event.sourceMessageId },
+          "Generated owner chat response"
+        );
+        await publishReply(response.reply, response.route);
       } catch (error) {
         logger.error({ err: error, messageId: event.sourceMessageId }, "Failed to generate owner chat response");
         await bus.publishOutboundMessage(
           createOutboundMessageRequestedEvent({
             inboundEvent: event,
-            content: "I couldn't generate a response from the configured model provider. Check the model settings or provider configuration.",
+            content: appendPowerIndicator(
+              "I couldn't generate a response from the configured model provider. Check the model settings or provider configuration.",
+              chatService.getPowerStatus("none")
+            ),
             recordConversationTurn: false
           })
         );
@@ -242,7 +248,7 @@ export function registerMessagePipeline(params: {
       await bus.publishOutboundMessage(
         createOutboundMessageRequestedEvent({
           inboundEvent: event,
-          content: accessDecision.responseMessage,
+          content: appendPowerIndicator(accessDecision.responseMessage, chatService.getPowerStatus("none")),
           recordConversationTurn: false
         })
       );

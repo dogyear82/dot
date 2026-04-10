@@ -4,7 +4,14 @@ import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 
 import type { AppConfig } from "../src/config.js";
-import { createChatService, orderProviders } from "../src/chat/modelRouter.js";
+import {
+  appendPowerIndicator,
+  createLlmService,
+  formatPowerIndicator,
+  getLlmMode,
+  orderProvidersForMode,
+  type LlmMode
+} from "../src/chat/modelRouter.js";
 import type { ChatMessage, ChatProvider } from "../src/chat/providers.js";
 import { createSettingsStore } from "../src/settings.js";
 import type { ConversationTurnRecord } from "../src/types.js";
@@ -52,6 +59,7 @@ function createStore() {
 class FakeProvider implements ChatProvider {
   constructor(
     public readonly name: string,
+    public readonly route: "local" | "hosted",
     private readonly available: boolean,
     private readonly responseFactory: (messages: ChatMessage[]) => Promise<string>
   ) {}
@@ -65,60 +73,129 @@ class FakeProvider implements ChatProvider {
   }
 }
 
-test("orderProviders puts the preferred provider first", () => {
-  const ordered = orderProviders(
+test("orderProvidersForMode routes local-only in lite mode", () => {
+  const ordered = orderProvidersForMode(
     [
-      new FakeProvider("1minai", true, async () => "hosted"),
-      new FakeProvider("ollama", true, async () => "local")
+      new FakeProvider("1minai", "hosted", true, async () => "hosted"),
+      new FakeProvider("ollama", "local", true, async () => "local")
     ],
-    "ollama"
+    "lite"
   );
 
-  assert.equal(ordered[0]?.name, "ollama");
+  assert.deepEqual(ordered.map((provider) => provider.route), ["local"]);
 });
 
-test("chat service prefers the configured primary provider", async () => {
-  const store = createStore();
-  store.set("models.primary", "ollama");
+test("orderProvidersForMode uses local-first routing in normal mode", () => {
+  const ordered = orderProvidersForMode(
+    [
+      new FakeProvider("1minai", "hosted", true, async () => "hosted"),
+      new FakeProvider("ollama", "local", true, async () => "local")
+    ],
+    "normal"
+  );
 
-  const service = createChatService({
+  assert.deepEqual(ordered.map((provider) => provider.route), ["local", "hosted"]);
+});
+
+test("orderProvidersForMode uses hosted-first routing in power mode", () => {
+  const ordered = orderProvidersForMode(
+    [
+      new FakeProvider("ollama", "local", true, async () => "local"),
+      new FakeProvider("1minai", "hosted", true, async () => "hosted")
+    ],
+    "power"
+  );
+
+  assert.deepEqual(ordered.map((provider) => provider.route), ["hosted", "local"]);
+});
+
+test("llm service keeps chat local-only in lite mode", async () => {
+  const store = createStore();
+  store.set("llm.mode", "lite");
+
+  const service = createLlmService({
     config: createConfig(),
     settings: store,
     providers: [
-      new FakeProvider("ollama", true, async (messages) => {
+      new FakeProvider("ollama", "local", true, async (messages) => {
         assert.equal(messages[0]?.role, "system");
         return "local reply";
       }),
-      new FakeProvider("1minai", true, async () => "hosted reply")
+      new FakeProvider("1minai", "hosted", true, async () => "hosted reply")
     ]
   });
 
   const result = await service.generateOwnerReply({ userMessage: "hello" });
-  assert.equal(result.provider, "ollama");
+  assert.equal(result.route, "local");
   assert.equal(result.reply, "local reply");
+  assert.equal(result.powerStatus, "off");
 });
 
-test("chat service falls back when the preferred provider fails", async () => {
+test("llm service uses hosted fallback in normal mode only after local hard failure", async () => {
   const store = createStore();
-  store.set("models.primary", "ollama");
+  store.set("llm.mode", "normal");
 
-  const service = createChatService({
+  const service = createLlmService({
     config: createConfig(),
     settings: store,
     providers: [
-      new FakeProvider("ollama", true, async () => {
+      new FakeProvider("ollama", "local", true, async () => {
         throw new Error("local unavailable");
       }),
-      new FakeProvider("1minai", true, async () => "hosted reply")
+      new FakeProvider("1minai", "hosted", true, async () => "hosted reply")
     ]
   });
 
   const result = await service.generateOwnerReply({ userMessage: "hello" });
-  assert.equal(result.provider, "1minai");
+  assert.equal(result.route, "hosted");
   assert.equal(result.reply, "hosted reply");
+  assert.equal(result.powerStatus, "engaged");
 });
 
-test("chat service includes recent local conversation turns before the current user message", async () => {
+test("llm service treats invalid inference output as a hard failure in normal mode", async () => {
+  const store = createStore();
+  store.set("llm.mode", "normal");
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", "local", true, async () => "not json"),
+      new FakeProvider(
+        "1minai",
+        "hosted",
+        true,
+        async () => '{"decision":"none","reason":"not enough confidence for a tool"}'
+      )
+    ]
+  });
+
+  const result = await service.inferToolDecision("hello there");
+  assert.equal(result.route, "hosted");
+  assert.equal(result.powerStatus, "engaged");
+  assert.deepEqual(result.decision, { decision: "none", reason: "not enough confidence for a tool" });
+});
+
+test("llm service uses hosted as a first-class route in power mode", async () => {
+  const store = createStore();
+  store.set("llm.mode", "power");
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", "local", true, async () => "local reply"),
+      new FakeProvider("1minai", "hosted", true, async () => "hosted reply")
+    ]
+  });
+
+  const result = await service.generateOwnerReply({ userMessage: "hello" });
+  assert.equal(result.route, "hosted");
+  assert.equal(result.reply, "hosted reply");
+  assert.equal(result.powerStatus, "engaged");
+});
+
+test("llm service includes recent local conversation turns before the current user message", async () => {
   const store = createStore();
   const capturedMessages: ChatMessage[][] = [];
   const recentConversation: ConversationTurnRecord[] = [
@@ -140,11 +217,11 @@ test("chat service includes recent local conversation turns before the current u
     }
   ];
 
-  const service = createChatService({
+  const service = createLlmService({
     config: createConfig(),
     settings: store,
     providers: [
-      new FakeProvider("ollama", true, async (messages) => {
+      new FakeProvider("ollama", "local", true, async (messages) => {
         capturedMessages.push(messages);
         return "local reply";
       })
@@ -163,16 +240,17 @@ test("chat service includes recent local conversation turns before the current u
   ]);
 });
 
-test("chat service can infer a structured tool decision", async () => {
+test("llm service can infer a structured tool decision", async () => {
   const store = createStore();
-  store.set("models.primary", "ollama");
+  store.set("llm.mode", "normal");
 
-  const service = createChatService({
+  const service = createLlmService({
     config: createConfig(),
     settings: store,
     providers: [
       new FakeProvider(
         "ollama",
+        "local",
         true,
         async () =>
           '{"decision":"execute","toolName":"reminder.add","reason":"clear reminder intent","args":{"duration":"10m","message":"stretch"}}'
@@ -181,7 +259,8 @@ test("chat service can infer a structured tool decision", async () => {
   });
 
   const result = await service.inferToolDecision("remind me in ten minutes to stretch");
-  assert.equal(result.provider, "ollama");
+  assert.equal(result.route, "local");
+  assert.equal(result.powerStatus, "standby");
   assert.equal(result.decision.decision, "execute");
   if (result.decision.decision !== "execute") {
     throw new Error("expected execute tool decision");
@@ -190,48 +269,51 @@ test("chat service can infer a structured tool decision", async () => {
   assert.deepEqual(result.decision.args, { duration: "10m", message: "stretch" });
 });
 
-test("chat service falls back to the next provider for invalid inference output", async () => {
+test("llm service uses deterministic calendar inference for obvious schedule questions", async () => {
   const store = createStore();
-  store.set("models.primary", "ollama");
+  store.set("llm.mode", "normal");
 
-  const service = createChatService({
+  const service = createLlmService({
     config: createConfig(),
     settings: store,
     providers: [
-      new FakeProvider("ollama", true, async () => "not json"),
-      new FakeProvider(
-        "1minai",
-        true,
-        async () => '{"decision":"none","reason":"not enough confidence for a tool"}'
-      )
-    ]
-  });
-
-  const result = await service.inferToolDecision("hello there");
-  assert.equal(result.provider, "1minai");
-  assert.deepEqual(result.decision, { decision: "none", reason: "not enough confidence for a tool" });
-});
-
-test("chat service uses deterministic calendar inference for obvious schedule questions", async () => {
-  const store = createStore();
-  store.set("models.primary", "ollama");
-
-  const service = createChatService({
-    config: createConfig(),
-    settings: store,
-    providers: [
-      new FakeProvider("ollama", true, async () => {
+      new FakeProvider("ollama", "local", true, async () => {
         throw new Error("model should not be called for deterministic calendar intent");
       })
     ]
   });
 
   const result = await service.inferToolDecision("what's my calendar looking like this week?");
-  assert.equal(result.provider, "deterministic");
+  assert.equal(result.route, "deterministic");
+  assert.equal(result.powerStatus, "standby");
   assert.deepEqual(result.decision, {
     decision: "execute",
     toolName: "calendar.show",
     reason: "clear calendar-view intent from deterministic phrase matching",
     args: {}
   });
+});
+
+test("getLlmMode defaults to normal when unset", () => {
+  const store = createStore();
+  assert.equal(getLlmMode(store), "normal");
+});
+
+test("power indicator formatting is stable", () => {
+  assert.equal(formatPowerIndicator("engaged"), "[power: engaged]");
+  assert.equal(appendPowerIndicator("hello", "standby"), "hello\n\n[power: standby]");
+});
+
+test("llm service reports standby power for non-hosted paths outside lite mode", () => {
+  const store = createStore();
+  store.set("llm.mode", "power");
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: []
+  });
+
+  assert.equal(service.getPowerStatus("none"), "standby");
+  assert.equal(service.getPowerStatus("local"), "standby");
+  assert.equal(service.getPowerStatus("hosted"), "engaged");
 });

@@ -74,10 +74,13 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
   };
   const chatService: ChatService = {
     async generateOwnerReply() {
-      return { provider: "ollama", reply: "chat reply" };
+      return { route: "local", powerStatus: "standby", reply: "chat reply" };
     },
     async inferToolDecision() {
-      return { provider: "ollama", decision: { decision: "none", reason: "not needed" } };
+      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+    },
+    getPowerStatus() {
+      return "standby";
     }
   };
 
@@ -103,6 +106,7 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
     assert.equal(outbound[0]?.replyRoute.replyToMessageId, "msg-1");
     assert.equal(outbound[0]?.recordConversationTurn, true);
     assert.match(outbound[0]?.content ?? "", /Current settings:/);
+    assert.match(outbound[0]?.content ?? "", /\[power: standby\]/);
   } finally {
     unsubscribe();
     cleanup();
@@ -119,10 +123,13 @@ test("message pipeline preserves transport and conversation metadata in access a
   };
   const chatService: ChatService = {
     async generateOwnerReply() {
-      return { provider: "ollama", reply: "chat reply" };
+      return { route: "local", powerStatus: "standby", reply: "chat reply" };
     },
     async inferToolDecision() {
-      return { provider: "ollama", decision: { decision: "none", reason: "not needed" } };
+      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+    },
+    getPowerStatus() {
+      return "standby";
     }
   };
 
