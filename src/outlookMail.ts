@@ -155,7 +155,7 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
     if (this.oauthClient) {
       try {
         const token = await this.oauthClient.getValidAccessToken();
-        if (!this.oauthClient.hasStoredScopes(["Mail.ReadWrite"])) {
+        if (this.oauthClient.hasStoredToken() && !this.oauthClient.hasStoredScopes(["Mail.ReadWrite"])) {
           throw new OutlookMailConfigurationError(
             "Outlook mail access requires reauthorization with `Mail.ReadWrite`. Run `!calendar auth start` and `!calendar auth complete` again."
           );

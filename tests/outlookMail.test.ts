@@ -219,6 +219,9 @@ test("Outlook mail requires reauthorization when stored OAuth scopes do not incl
       async getValidAccessToken() {
         return "token";
       },
+      hasStoredToken() {
+        return true;
+      },
       hasStoredScopes(requiredScopes: string[]) {
         return requiredScopes.includes("Calendars.Read");
       }
@@ -229,6 +232,47 @@ test("Outlook mail requires reauthorization when stored OAuth scopes do not incl
     () => client.syncInboxDelta(),
     /Mail\.ReadWrite/
   );
+});
+
+test("Outlook mail still works with legacy OUTLOOK_ACCESS_TOKEN fallback when no OAuth token is stored", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        value: [],
+        "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=xyz"
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    )) as typeof fetch;
+
+  try {
+    const client = new MicrosoftGraphOutlookMailClient(
+      {
+        OUTLOOK_ACCESS_TOKEN: "",
+        OUTLOOK_CLIENT_ID: "client-id",
+        OUTLOOK_TENANT_ID: "common",
+        OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite",
+        OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
+      },
+      {
+        async getValidAccessToken() {
+          return "legacy-token";
+        },
+        hasStoredScopes() {
+          return false;
+        },
+        hasStoredToken() {
+          return false;
+        }
+      } as never
+    );
+
+    const result = await client.syncInboxDelta();
+    assert.equal(result.deltaCursor, "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=xyz");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Outlook mail move sends the Graph move request", async () => {

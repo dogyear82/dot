@@ -118,9 +118,17 @@ export class MicrosoftOutlookOAuthClient {
   getAuthorizationStatus(now = new Date()): string {
     const token = this.persistence.getOAuthToken(MICROSOFT_GRAPH_PROVIDER);
     if (token) {
+      if (this.isMailScopeConfigured() && !this.hasStoredScopes(["Mail.ReadWrite"])) {
+        return "Outlook authorization is active for calendar use but missing `Mail.ReadWrite` for mail sync. Run `!calendar auth start` and `!calendar auth complete` again.";
+      }
+
       return Date.parse(token.expiresAt) > now.getTime()
         ? `Outlook authorization is active until ${token.expiresAt}.`
         : "Outlook authorization is stored but the current access token is expired and will be refreshed on next use.";
+    }
+
+    if (this.config.OUTLOOK_ACCESS_TOKEN) {
+      return "Outlook authorization is active through legacy `OUTLOOK_ACCESS_TOKEN` configuration.";
     }
 
     const flow = this.persistence.getOAuthDeviceFlow(MICROSOFT_GRAPH_PROVIDER);
@@ -139,6 +147,10 @@ export class MicrosoftOutlookOAuthClient {
 
     const grantedScopes = new Set(token.scope.split(/\s+/).filter(Boolean));
     return requiredScopes.every((scope) => grantedScopes.has(scope));
+  }
+
+  hasStoredToken(): boolean {
+    return this.persistence.getOAuthToken(MICROSOFT_GRAPH_PROVIDER) != null;
   }
 
   async getValidAccessToken(now = new Date()): Promise<string> {
@@ -202,6 +214,10 @@ export class MicrosoftOutlookOAuthClient {
 
   private tokenUrl(): string {
     return `https://login.microsoftonline.com/${this.config.OUTLOOK_TENANT_ID}/oauth2/v2.0/token`;
+  }
+
+  private isMailScopeConfigured(): boolean {
+    return this.config.OUTLOOK_OAUTH_SCOPES.split(/\s+/).includes("Mail.ReadWrite");
   }
 }
 

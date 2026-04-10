@@ -170,3 +170,49 @@ test("getValidAccessToken reports a clear recovery path when OAuth is unconfigur
     cleanup();
   }
 });
+
+test("getAuthorizationStatus reports legacy access-token setups as active", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const client = new MicrosoftOutlookOAuthClient(
+      loadConfig({
+        DISCORD_BOT_TOKEN: "token",
+        DISCORD_OWNER_USER_ID: "owner",
+        OUTLOOK_ACCESS_TOKEN: "legacy-token"
+      }),
+      persistence
+    );
+
+    assert.match(client.getAuthorizationStatus(), /legacy `OUTLOOK_ACCESS_TOKEN`/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("getAuthorizationStatus flags stored tokens that are missing mail scope", () => {
+  const { persistence, cleanup } = createPersistence();
+  persistence.saveOAuthToken({
+    provider: "microsoft_graph",
+    accessToken: "access-123",
+    refreshToken: "refresh-123",
+    expiresAt: "2026-04-09T10:00:00.000Z",
+    scope: "offline_access openid profile User.Read Calendars.Read",
+    tokenType: "Bearer"
+  });
+
+  try {
+    const client = new MicrosoftOutlookOAuthClient(
+      loadConfig({
+        DISCORD_BOT_TOKEN: "token",
+        DISCORD_OWNER_USER_ID: "owner",
+        OUTLOOK_CLIENT_ID: "client-123"
+      }),
+      persistence
+    );
+
+    assert.match(client.getAuthorizationStatus(new Date("2026-04-09T00:00:00.000Z")), /Mail\.ReadWrite/);
+  } finally {
+    cleanup();
+  }
+});
