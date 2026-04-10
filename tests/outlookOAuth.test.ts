@@ -170,3 +170,22 @@ test("getValidAccessToken reports a clear recovery path when OAuth is unconfigur
     cleanup();
   }
 });
+
+test("getAuthorizationStatus reports legacy access-token setups as configured", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const client = new MicrosoftOutlookOAuthClient(
+      loadConfig({
+        DISCORD_BOT_TOKEN: "token",
+        DISCORD_OWNER_USER_ID: "owner",
+        OUTLOOK_ACCESS_TOKEN: "legacy-token"
+      }),
+      persistence
+    );
+
+    assert.match(client.getAuthorizationStatus(), /legacy access token/i);
+  } finally {
+    cleanup();
+  }
+});

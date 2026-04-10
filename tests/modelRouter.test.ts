@@ -7,6 +7,7 @@ import type { AppConfig } from "../src/config.js";
 import { createChatService, orderProviders } from "../src/chat/modelRouter.js";
 import type { ChatMessage, ChatProvider } from "../src/chat/providers.js";
 import { createSettingsStore } from "../src/settings.js";
+import type { ConversationTurnRecord } from "../src/types.js";
 
 function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -92,7 +93,7 @@ test("chat service prefers the configured primary provider", async () => {
     ]
   });
 
-  const result = await service.generateOwnerReply("hello");
+  const result = await service.generateOwnerReply({ userMessage: "hello" });
   assert.equal(result.provider, "ollama");
   assert.equal(result.reply, "local reply");
 });
@@ -112,9 +113,54 @@ test("chat service falls back when the preferred provider fails", async () => {
     ]
   });
 
-  const result = await service.generateOwnerReply("hello");
+  const result = await service.generateOwnerReply({ userMessage: "hello" });
   assert.equal(result.provider, "1minai");
   assert.equal(result.reply, "hosted reply");
+});
+
+test("chat service includes recent local conversation turns before the current user message", async () => {
+  const store = createStore();
+  const capturedMessages: ChatMessage[][] = [];
+  const recentConversation: ConversationTurnRecord[] = [
+    {
+      id: 1,
+      conversationId: "channel-1",
+      role: "user",
+      content: "earlier question",
+      sourceMessageId: "m1",
+      createdAt: "2026-04-09T10:00:00.000Z"
+    },
+    {
+      id: 2,
+      conversationId: "channel-1",
+      role: "assistant",
+      content: "earlier answer",
+      sourceMessageId: "m2",
+      createdAt: "2026-04-09T10:00:05.000Z"
+    }
+  ];
+
+  const service = createChatService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", true, async (messages) => {
+        capturedMessages.push(messages);
+        return "local reply";
+      })
+    ]
+  });
+
+  await service.generateOwnerReply({
+    userMessage: "current question",
+    recentConversation
+  });
+
+  assert.deepEqual(capturedMessages[0]?.slice(1), [
+    { role: "user", content: "earlier question" },
+    { role: "assistant", content: "earlier answer" },
+    { role: "user", content: "current question" }
+  ]);
 });
 
 test("chat service can infer a structured tool decision", async () => {

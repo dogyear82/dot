@@ -123,6 +123,10 @@ export class MicrosoftOutlookOAuthClient {
         : "Outlook authorization is stored but the current access token is expired and will be refreshed on next use.";
     }
 
+    if (this.config.OUTLOOK_ACCESS_TOKEN) {
+      return "Outlook authorization is using the configured legacy access token.";
+    }
+
     const flow = this.persistence.getOAuthDeviceFlow(MICROSOFT_GRAPH_PROVIDER);
     if (flow) {
       return `Outlook authorization is pending. Visit ${flow.verificationUri} and enter code ${flow.userCode}, then run \`!calendar auth complete\`.`;

@@ -1,11 +1,15 @@
 import type { AppConfig } from "../config.js";
 import type { SettingsStore } from "../settings.js";
+import type { ConversationTurnRecord } from "../types.js";
 import { buildToolInferencePrompt, inferDeterministicToolDecision, parseToolDecision, type ToolDecision } from "../toolInvocation.js";
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
-import { OllamaChatProvider, OpenAiCompatibleChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
+import { OllamaChatProvider, OneMinAiChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
 
 export interface ChatService {
-  generateOwnerReply(userMessage: string): Promise<{ provider: string; reply: string }>;
+  generateOwnerReply(params: {
+    userMessage: string;
+    recentConversation?: ConversationTurnRecord[];
+  }): Promise<{ provider: string; reply: string }>;
   inferToolDecision(userMessage: string): Promise<{ provider: string; decision: ToolDecision }>;
 }
 
@@ -22,7 +26,7 @@ export function createChatService(params: {
         params.config.OLLAMA_MODEL,
         params.config.MODEL_REQUEST_TIMEOUT_MS
       ),
-      new OpenAiCompatibleChatProvider(
+      new OneMinAiChatProvider(
         params.config.ONEMINAI_BASE_URL,
         params.config.ONEMINAI_API_KEY,
         params.config.ONEMINAI_MODEL,
@@ -31,10 +35,11 @@ export function createChatService(params: {
     ];
 
   return {
-    async generateOwnerReply(userMessage) {
+    async generateOwnerReply({ userMessage, recentConversation }) {
       const orderedProviders = orderProviders(providers, params.settings.get("models.primary") ?? "ollama");
       const messages = buildMessages({
         userMessage,
+        recentConversation,
         mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
         balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
         settings: params.settings
@@ -104,6 +109,7 @@ export function orderProviders(providers: ChatProvider[], preferredProvider: str
 
 function buildMessages(params: {
   userMessage: string;
+  recentConversation?: ConversationTurnRecord[];
   mode: PersonaMode;
   balance: PersonaBalance;
   settings: SettingsStore;
@@ -117,6 +123,10 @@ function buildMessages(params: {
         settings: params.settings
       })
     },
+    ...(params.recentConversation ?? []).map((turn) => ({
+      role: turn.role,
+      content: turn.content
+    })),
     {
       role: "user",
       content: params.userMessage
