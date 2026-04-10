@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import type { OutlookMailClient } from "./outlookMail.js";
+import { OutlookMailDeltaCursorError, type OutlookMailClient } from "./outlookMail.js";
 import type { Persistence } from "./persistence.js";
 
 const DELTA_CURSOR_KEY = "outlookMail.deltaCursor";
@@ -22,7 +22,18 @@ export async function syncOutlookMailOnce(params: {
   }
 
   const deltaCursor = persistence.getWorkerState(DELTA_CURSOR_KEY);
-  const result = await mailClient.syncInboxDelta(deltaCursor);
+  let result;
+  try {
+    result = await mailClient.syncInboxDelta(deltaCursor);
+  } catch (error) {
+    if (!(error instanceof OutlookMailDeltaCursorError) || !deltaCursor) {
+      throw error;
+    }
+
+    persistence.clearWorkerState(DELTA_CURSOR_KEY);
+    logger.warn({ err: error }, "Resetting invalid Outlook mail delta cursor and resyncing from a fresh baseline");
+    result = await mailClient.syncInboxDelta(null);
+  }
   if (result.deltaCursor) {
     persistence.setWorkerState(DELTA_CURSOR_KEY, result.deltaCursor);
   }

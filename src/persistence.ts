@@ -23,6 +23,7 @@ export interface Persistence {
   listRecentNormalizedMessages(channelId: string, limit: number): IncomingMessage[];
   getWorkerState(key: string): string | null;
   setWorkerState(key: string, value: string): void;
+  clearWorkerState(key: string): void;
   saveConversationTurn(record: {
     conversationId: string;
     role: "user" | "assistant";
@@ -231,6 +232,11 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = CURRENT_TIMESTAMP
+  `);
+
+  const clearWorkerStateStatement = db.prepare(`
+    DELETE FROM worker_state
+    WHERE key = ?
   `);
 
   const accessAuditStatement = db.prepare(`
@@ -578,6 +584,9 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     },
     setWorkerState(key, value) {
       upsertWorkerStateStatement.run(key, value);
+    },
+    clearWorkerState(key) {
+      clearWorkerStateStatement.run(key);
     },
     saveConversationTurn(record) {
       saveConversationTurnStatement.run({

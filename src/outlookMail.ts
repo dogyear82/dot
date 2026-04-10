@@ -46,6 +46,7 @@ export interface OutlookMailClient {
 }
 
 export class OutlookMailConfigurationError extends Error {}
+export class OutlookMailDeltaCursorError extends Error {}
 
 export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
   constructor(
@@ -67,7 +68,9 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
     let deltaLink: string | null = null;
 
     while (true) {
-      const payload = await this.fetchJson<GraphListResponse<GraphMessage>>(url, accessToken);
+      const payload = await this.fetchJson<GraphListResponse<GraphMessage>>(url, accessToken, {
+        deltaCursorRequest: Boolean(deltaCursor)
+      });
       for (const message of payload.value ?? []) {
         const mapped = mapGraphMessage(message);
         if (mapped) {
@@ -93,14 +96,22 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
   async ensureFolder(displayName: string): Promise<OutlookMailFolder> {
     const accessToken = await this.resolveAccessToken();
     const encodedName = displayName.replace(/'/g, "''");
-    const lookupUrl = new URL(`${this.config.OUTLOOK_GRAPH_BASE_URL}/me/mailFolders`);
+    let lookupUrl = new URL(`${this.config.OUTLOOK_GRAPH_BASE_URL}/me/mailFolders`);
     lookupUrl.searchParams.set("$filter", `displayName eq '${encodedName}'`);
     lookupUrl.searchParams.set("$select", "id,displayName");
 
-    const lookup = await this.fetchJson<GraphListResponse<GraphMailFolder>>(lookupUrl, accessToken);
-    const existing = lookup.value?.map(mapGraphMailFolder).find((folder): folder is OutlookMailFolder => folder != null);
-    if (existing) {
-      return existing;
+    while (true) {
+      const lookup = await this.fetchJson<GraphListResponse<GraphMailFolder>>(lookupUrl, accessToken);
+      const existing = lookup.value?.map(mapGraphMailFolder).find((folder): folder is OutlookMailFolder => folder != null);
+      if (existing) {
+        return existing;
+      }
+
+      if (!lookup["@odata.nextLink"]) {
+        break;
+      }
+
+      lookupUrl = new URL(lookup["@odata.nextLink"]);
     }
 
     const response = await fetch(`${this.config.OUTLOOK_GRAPH_BASE_URL}/me/mailFolders`, {
@@ -143,7 +154,13 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
   private async resolveAccessToken(): Promise<string> {
     if (this.oauthClient) {
       try {
-        return await this.oauthClient.getValidAccessToken();
+        const token = await this.oauthClient.getValidAccessToken();
+        if (!this.oauthClient.hasStoredScopes(["Mail.ReadWrite"])) {
+          throw new OutlookMailConfigurationError(
+            "Outlook mail access requires reauthorization with `Mail.ReadWrite`. Run `!calendar auth start` and `!calendar auth complete` again."
+          );
+        }
+        return token;
       } catch (error) {
         if (!(error instanceof OutlookOAuthConfigurationError)) {
           throw error;
@@ -164,7 +181,11 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
     );
   }
 
-  private async fetchJson<TPayload>(url: URL, accessToken: string): Promise<TPayload> {
+  private async fetchJson<TPayload>(
+    url: URL,
+    accessToken: string,
+    options: { deltaCursorRequest?: boolean } = {}
+  ): Promise<TPayload> {
     const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${accessToken}`
@@ -172,7 +193,12 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
     });
 
     if (!response.ok) {
-      throw new Error(`Outlook mail request failed: ${response.status} ${await response.text()}`.trim());
+      const detail = await response.text();
+      if (options.deltaCursorRequest && [400, 404, 410].includes(response.status)) {
+        throw new OutlookMailDeltaCursorError(`Outlook mail delta cursor is no longer valid: ${response.status} ${detail}`.trim());
+      }
+
+      throw new Error(`Outlook mail request failed: ${response.status} ${detail}`.trim());
     }
 
     return (await response.json()) as TPayload;

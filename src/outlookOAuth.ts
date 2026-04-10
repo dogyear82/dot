@@ -131,6 +131,16 @@ export class MicrosoftOutlookOAuthClient {
     return "Outlook authorization is not configured. Run `!calendar auth start` after setting `OUTLOOK_CLIENT_ID`.";
   }
 
+  hasStoredScopes(requiredScopes: string[]): boolean {
+    const token = this.persistence.getOAuthToken(MICROSOFT_GRAPH_PROVIDER);
+    if (!token?.scope) {
+      return false;
+    }
+
+    const grantedScopes = new Set(token.scope.split(/\s+/).filter(Boolean));
+    return requiredScopes.every((scope) => grantedScopes.has(scope));
+  }
+
   async getValidAccessToken(now = new Date()): Promise<string> {
     ensureClientId(this.config.OUTLOOK_CLIENT_ID);
     const token = this.persistence.getOAuthToken(MICROSOFT_GRAPH_PROVIDER);

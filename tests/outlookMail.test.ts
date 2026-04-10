@@ -157,6 +157,80 @@ test("Outlook mail ensureFolder creates the folder when missing", async () => {
   }
 });
 
+test("Outlook mail ensureFolder follows pagination before creating a folder", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; method: string }> = [];
+
+  globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = String(input);
+    requests.push({ url, method: init?.method ?? "GET" });
+
+    if (url.includes("page=2")) {
+      return new Response(
+        JSON.stringify({
+          value: [{ id: "folder-9", displayName: "Dot Approved" }]
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        value: [],
+        "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders?page=2"
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }) as typeof fetch;
+
+  try {
+    const client = new MicrosoftGraphOutlookMailClient(
+      {
+        OUTLOOK_ACCESS_TOKEN: "token",
+        OUTLOOK_CLIENT_ID: "",
+        OUTLOOK_TENANT_ID: "common",
+        OUTLOOK_OAUTH_SCOPES: "scope",
+        OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
+      },
+      undefined
+    );
+
+    const folder = await client.ensureFolder("Dot Approved");
+    assert.deepEqual(folder, { id: "folder-9", displayName: "Dot Approved" });
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      ["GET", "GET"]
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Outlook mail requires reauthorization when stored OAuth scopes do not include mail access", async () => {
+  const client = new MicrosoftGraphOutlookMailClient(
+    {
+      OUTLOOK_ACCESS_TOKEN: "",
+      OUTLOOK_CLIENT_ID: "client-id",
+      OUTLOOK_TENANT_ID: "common",
+      OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite",
+      OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
+    },
+    {
+      async getValidAccessToken() {
+        return "token";
+      },
+      hasStoredScopes(requiredScopes: string[]) {
+        return requiredScopes.includes("Calendars.Read");
+      }
+    } as never
+  );
+
+  await assert.rejects(
+    () => client.syncInboxDelta(),
+    /Mail\.ReadWrite/
+  );
+});
+
 test("Outlook mail move sends the Graph move request", async () => {
   const originalFetch = globalThis.fetch;
   let request: { url: string; method: string; body: string | null } | null = null;
