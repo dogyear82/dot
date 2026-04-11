@@ -9,13 +9,22 @@ services:
       EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
       NATS_URL: ${NATS_URL:-nats://nats:4222}
       OLLAMA_BASE_URL: http://ollama:11434
+      LOG_FILE_PATH: /app/data/logs/dot.log
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-dot}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318/v1/traces}
+      METRICS_HOST: 0.0.0.0
+      METRICS_PORT: ${METRICS_PORT:-9464}
     depends_on:
       ollama:
         condition: service_started
       nats:
         condition: service_healthy
+      tempo:
+        condition: service_started
     volumes:
       - dot_data:/app/data
+    ports:
+      - "9464:9464"
     restart: unless-stopped
 
   ollama:
@@ -42,5 +51,84 @@ services:
       timeout: 3s
       retries: 10
 
+  prometheus:
+    image: docker.io/prom/prometheus:v3.4.1
+    container_name: dot-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./ops/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+      - prometheus_data:/prometheus
+
+  loki:
+    image: docker.io/grafana/loki:3.5.3
+    container_name: dot-loki
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/loki/config.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./ops/observability/loki/config.yml:/etc/loki/config.yml:ro,Z
+      - loki_data:/loki
+
+  promtail:
+    image: docker.io/grafana/promtail:3.5.3
+    container_name: dot-promtail
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/promtail/config.yml
+    depends_on:
+      loki:
+        condition: service_started
+    volumes:
+      - ./ops/observability/promtail/config.yml:/etc/promtail/config.yml:ro,Z
+      - dot_data:/var/lib/dot-data:ro
+      - promtail_data:/tmp/promtail
+
+  tempo:
+    image: docker.io/grafana/tempo:2.8.2
+    container_name: dot-tempo
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/tempo/config.yml
+    ports:
+      - "3200:3200"
+      - "4318:4318"
+    volumes:
+      - ./ops/observability/tempo/config.yml:/etc/tempo/config.yml:ro,Z
+      - tempo_data:/var/tempo
+
+  grafana:
+    image: docker.io/grafana/grafana-oss:12.1.1
+    container_name: dot-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_started
+    volumes:
+      - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro,Z
+      - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro,Z
+      - grafana_data:/var/lib/grafana
+
 volumes:
   dot_data:
+  grafana_data:
+  loki_data:
+  prometheus_data:
+  promtail_data:
+  tempo_data:

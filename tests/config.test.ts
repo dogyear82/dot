@@ -11,6 +11,7 @@ test("loadConfig applies defaults for optional values", () => {
 
   assert.equal(config.NODE_ENV, "development");
   assert.equal(config.EVENT_BUS_ADAPTER, "in-memory");
+  assert.equal(config.LOG_FILE_PATH, "");
   assert.equal(config.NATS_URL, "nats://localhost:4222");
   assert.equal(config.OLLAMA_BASE_URL, "http://ollama:11434");
   assert.equal(config.OLLAMA_MODEL, "llama3.1:8b");
