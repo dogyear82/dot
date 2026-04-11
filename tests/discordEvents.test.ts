@@ -26,10 +26,13 @@ test("createDiscordInboundMessageEvent produces a canonical transport-neutral en
   });
 
   assert.equal(event.eventId, "discord:msg-1");
-  assert.equal(event.transport, "discord");
-  assert.equal(event.conversationId, "channel-1");
-  assert.equal(event.sender.actorRole, "owner");
-  assert.equal(event.replyRoute.replyToMessageId, "msg-1");
+  assert.equal(event.eventVersion, "1.0.0");
+  assert.equal(event.producer.service, "discord-ingress");
+  assert.equal(event.routing.transport, "discord");
+  assert.equal(event.correlation.conversationId, "channel-1");
+  assert.equal(event.payload.sender.actorRole, "owner");
+  assert.equal(event.payload.replyRoute.replyTo, "msg-1");
+  assert.equal(event.payload.messageId, "msg-1");
   assert.equal(event.payload.content, "<@bot-1> hello there");
   assert.equal(event.payload.addressedContent, "hello there");
 });

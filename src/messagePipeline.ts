@@ -29,27 +29,27 @@ export function registerMessagePipeline(params: {
 
   return bus.subscribeInboundMessage(async (event) => {
     const accessDecision = evaluateAccess({
-      authorId: event.sender.actorId,
+      authorId: event.payload.sender.actorId,
       ownerUserId,
       isDirectMessage: event.payload.isDirectMessage,
       mentionedBot: event.payload.mentionedBot
     });
 
     persistence.saveAccessAudit({
-      messageId: event.sourceMessageId,
+      messageId: event.payload.messageId,
       actorRole: accessDecision.actorRole,
       canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
       decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
-      transport: event.transport,
-      conversationId: event.conversationId
+      transport: event.routing.transport ?? "unknown",
+      conversationId: event.correlation.conversationId ?? "unknown"
     });
 
     logger.info(
       {
         eventId: event.eventId,
-        messageId: event.sourceMessageId,
-        conversationId: event.conversationId,
-        authorId: event.sender.actorId,
+        messageId: event.payload.messageId,
+        conversationId: event.correlation.conversationId,
+        authorId: event.payload.sender.actorId,
         actorRole: accessDecision.actorRole,
         canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
         isDirectMessage: event.payload.isDirectMessage,
@@ -63,8 +63,8 @@ export function registerMessagePipeline(params: {
 
     if (!isExplicitCommand) {
       const message = mapInboundEventToIncomingMessage(event);
-      const recentConversation = persistence.listRecentConversationTurns(event.conversationId, RECENT_CHAT_HISTORY_LIMIT);
-      const recentMessages = persistence.listRecentNormalizedMessages(event.conversationId, RECENT_CHAT_HISTORY_LIMIT);
+      const recentConversation = persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
+      const recentMessages = persistence.listRecentNormalizedMessages(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
       const defaultChannelPolicy = persistence.settings.get("channels.defaultPolicy");
       const isAddressed = shouldTreatOwnerMessageAsAddressed({
         message,
@@ -85,13 +85,13 @@ export function registerMessagePipeline(params: {
         return;
       }
 
-        persistence.saveConversationTurn({
-          conversationId: event.conversationId,
-          role: "user",
-          participantActorId: event.sender.actorId,
-          content,
-          sourceMessageId: event.sourceMessageId,
-          createdAt: event.occurredAt
+      persistence.saveConversationTurn({
+        conversationId: event.correlation.conversationId ?? "",
+        role: "user",
+        participantActorId: event.payload.sender.actorId,
+        content,
+        sourceMessageId: event.payload.messageId,
+        createdAt: event.occurredAt
       });
       hasSavedUserTurn = true;
     };
@@ -110,7 +110,6 @@ export function registerMessagePipeline(params: {
     };
 
     if (accessDecision.canUsePrivilegedFeatures) {
-
       if (!persistence.settings.hasCompletedOnboarding()) {
         const response = content
           ? handleOnboardingReply(persistence.settings, content)
@@ -132,7 +131,7 @@ export function registerMessagePipeline(params: {
       if (isReminderCommand(content)) {
         const reply = handleReminderCommand(persistence, content);
         persistence.saveToolExecutionAudit({
-          messageId: event.sourceMessageId,
+          messageId: event.payload.messageId,
           toolName: normalizeExplicitToolName(content),
           invocationSource: "explicit",
           status: "executed",
@@ -151,7 +150,7 @@ export function registerMessagePipeline(params: {
           persistence
         });
         persistence.saveToolExecutionAudit({
-          messageId: event.sourceMessageId,
+          messageId: event.payload.messageId,
           toolName: normalizeExplicitToolName(content),
           invocationSource: "explicit",
           status: "executed",
@@ -171,7 +170,7 @@ export function registerMessagePipeline(params: {
           const inferred = await chatService.inferToolDecision(content);
           if (inferred.decision.decision === "clarify") {
             persistence.saveToolExecutionAudit({
-              messageId: event.sourceMessageId,
+              messageId: event.payload.messageId,
               toolName: inferred.decision.toolName,
               invocationSource: "inferred",
               status: "clarify",
@@ -189,7 +188,7 @@ export function registerMessagePipeline(params: {
               persistence
             });
             persistence.saveToolExecutionAudit({
-              messageId: event.sourceMessageId,
+              messageId: event.payload.messageId,
               toolName: inferred.decision.toolName,
               invocationSource: "inferred",
               status: "executed",
@@ -197,7 +196,7 @@ export function registerMessagePipeline(params: {
               detail: inferred.decision.reason
             });
             logger.info(
-              { route: inferred.route, messageId: event.sourceMessageId, toolName: inferred.decision.toolName },
+              { route: inferred.route, messageId: event.payload.messageId, toolName: inferred.decision.toolName },
               "Executed inferred tool decision"
             );
             await publishReply(reply, inferred.route);
@@ -205,7 +204,7 @@ export function registerMessagePipeline(params: {
           }
 
           persistence.saveToolExecutionAudit({
-            messageId: event.sourceMessageId,
+            messageId: event.payload.messageId,
             toolName: "none",
             invocationSource: "inferred",
             status: "skipped",
@@ -214,29 +213,29 @@ export function registerMessagePipeline(params: {
           });
         } catch (error) {
           persistence.saveToolExecutionAudit({
-            messageId: event.sourceMessageId,
+            messageId: event.payload.messageId,
             toolName: "inference-error",
             invocationSource: "inferred",
             status: "failed",
             provider: null,
             detail: error instanceof Error ? error.message : "unknown inference failure"
           });
-          logger.warn({ err: error, messageId: event.sourceMessageId }, "Tool inference failed; falling back to chat");
+          logger.warn({ err: error, messageId: event.payload.messageId }, "Tool inference failed; falling back to chat");
         }
 
         saveUserConversationTurn();
-        const updatedConversation = persistence.listRecentConversationTurns(event.conversationId, RECENT_CHAT_HISTORY_LIMIT);
+        const updatedConversation = persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
         const response = await chatService.generateOwnerReply({
           userMessage: content,
           recentConversation: updatedConversation.slice(0, -1)
         });
         logger.info(
-          { route: response.route, powerStatus: response.powerStatus, messageId: event.sourceMessageId },
+          { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
           "Generated owner chat response"
         );
         await publishReply(response.reply, response.route);
       } catch (error) {
-        logger.error({ err: error, messageId: event.sourceMessageId }, "Failed to generate owner chat response");
+        logger.error({ err: error, messageId: event.payload.messageId }, "Failed to generate owner chat response");
         await bus.publishOutboundMessage(
           createOutboundMessageRequestedEvent({
             inboundEvent: event,
@@ -263,18 +262,18 @@ export function registerMessagePipeline(params: {
 
     try {
       saveUserConversationTurn();
-      const updatedConversation = persistence.listRecentConversationTurns(event.conversationId, RECENT_CHAT_HISTORY_LIMIT);
+      const updatedConversation = persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
       const response = await chatService.generateOwnerReply({
         userMessage: content,
         recentConversation: updatedConversation.slice(0, -1)
       });
       logger.info(
-        { route: response.route, powerStatus: response.powerStatus, messageId: event.sourceMessageId },
+        { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
         "Generated non-owner chat response"
       );
       await publishReply(response.reply, response.route);
     } catch (error) {
-      logger.error({ err: error, messageId: event.sourceMessageId }, "Failed to generate non-owner chat response");
+      logger.error({ err: error, messageId: event.payload.messageId }, "Failed to generate non-owner chat response");
       await publishReply("I couldn't generate a response right now.", "none", false);
     }
   });
@@ -282,11 +281,11 @@ export function registerMessagePipeline(params: {
 
 function mapInboundEventToIncomingMessage(event: InboundMessageReceivedEvent): IncomingMessage {
   return {
-    id: event.sourceMessageId,
-    channelId: event.conversationId,
-    guildId: event.replyRoute.guildId,
-    authorId: event.sender.actorId,
-    authorUsername: event.sender.displayName,
+    id: event.payload.messageId,
+    channelId: event.correlation.conversationId ?? "",
+    guildId: event.payload.replyRoute.guildId,
+    authorId: event.payload.sender.actorId,
+    authorUsername: event.payload.sender.displayName,
     content: event.payload.content,
     isDirectMessage: event.payload.isDirectMessage,
     mentionedBot: event.payload.mentionedBot,

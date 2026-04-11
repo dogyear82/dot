@@ -59,7 +59,7 @@ export function createDiscordClient(params: {
         messageId: normalized.id,
         channelId: normalized.channelId,
         authorId: normalized.authorId,
-        actorRole: inboundEvent.sender.actorRole,
+        actorRole: inboundEvent.payload.sender.actorRole,
         isDirectMessage: normalized.isDirectMessage,
         mentionedBot: normalized.mentionedBot
       },
@@ -72,25 +72,25 @@ export function createDiscordClient(params: {
   });
 
   bus.subscribeOutboundMessage(async (event) => {
-    if (event.transport !== "discord" || !client.user) {
+    if (event.routing.transport !== "discord" || !client.user) {
       return;
     }
 
-    const replyTo = replyRegistry.get(event.replyRoute.replyToMessageId);
+    const replyTo = replyRegistry.get(event.payload.replyRoute.replyTo);
     if (replyTo) {
-      const sent = await replyTo.reply(event.content);
+      const sent = await replyTo.reply(event.payload.content);
       const normalizedSent = normalizeMessage(sent, {
         botUserId: client.user.id,
         botUsername: client.user.username,
         botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
       });
       persistence.saveNormalizedMessage(normalizedSent);
-      if (event.recordConversationTurn) {
+      if (event.payload.recordConversationTurn) {
         persistence.saveConversationTurn({
-          conversationId: event.conversationId,
+          conversationId: event.correlation.conversationId ?? "",
           role: "assistant",
-          participantActorId: event.participantActorId,
-          content: event.content,
+          participantActorId: event.payload.participantActorId,
+          content: event.payload.content,
           sourceMessageId: sent.id,
           createdAt: sent.createdAt.toISOString()
         });
@@ -98,13 +98,13 @@ export function createDiscordClient(params: {
       return;
     }
 
-    const channel = await client.channels.fetch(event.replyRoute.channelId);
+    const channel = await client.channels.fetch(event.payload.replyRoute.channelId);
     if (!channel || !channel.isSendable()) {
-      logger.error({ eventId: event.eventId, channelId: event.replyRoute.channelId }, "Unable to route outbound Discord message");
+      logger.error({ eventId: event.eventId, channelId: event.payload.replyRoute.channelId }, "Unable to route outbound Discord message");
       return;
     }
 
-    const sent = await channel.send(event.content);
+    const sent = await channel.send(event.payload.content);
     if ("author" in sent) {
       const normalizedSent = normalizeMessage(sent, {
         botUserId: client.user.id,
@@ -112,12 +112,12 @@ export function createDiscordClient(params: {
         botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
       });
       persistence.saveNormalizedMessage(normalizedSent);
-      if (event.recordConversationTurn) {
+      if (event.payload.recordConversationTurn) {
         persistence.saveConversationTurn({
-          conversationId: event.conversationId,
+          conversationId: event.correlation.conversationId ?? "",
           role: "assistant",
-          participantActorId: event.participantActorId,
-          content: event.content,
+          participantActorId: event.payload.participantActorId,
+          content: event.payload.content,
           sourceMessageId: sent.id,
           createdAt: sent.createdAt.toISOString()
         });

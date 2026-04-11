@@ -1,51 +1,103 @@
 import type { ActorRole } from "./auth.js";
 
+export const DOT_EVENT_VERSION = "1.0.0";
+
+export const DOT_EVENT_TOPICS = [
+  "inbound.message.received",
+  "outbound.message.requested",
+  "diagnostics.health.reported",
+  "discord.message.received",
+  "discord.message.delivery.requested",
+  "llm.reply.generated",
+  "outlook.calendar.query.completed",
+  "outlook.mail.delta.synced",
+  "reminder.due"
+] as const;
+
+export type DotEventTopic = (typeof DOT_EVENT_TOPICS)[number];
+
+export interface DotEventProducer {
+  service: string;
+  instanceId?: string;
+}
+
+export interface DotEventCorrelation {
+  correlationId: string;
+  causationId: string | null;
+  conversationId: string | null;
+  actorId: string | null;
+}
+
+export interface DotEventRouting {
+  transport: string | null;
+  channelId: string | null;
+  guildId: string | null;
+  replyTo: string | null;
+}
+
+export interface DotEventDiagnostics {
+  severity: "debug" | "info" | "warn" | "error";
+  category: string | null;
+}
+
+export interface DotEvent<
+  TTopic extends string = string,
+  TPayload = unknown,
+  TRouting extends DotEventRouting = DotEventRouting
+> {
+  eventId: string;
+  eventType: TTopic;
+  eventVersion: string;
+  occurredAt: string;
+  producer: DotEventProducer;
+  correlation: DotEventCorrelation;
+  routing: TRouting;
+  diagnostics: DotEventDiagnostics;
+  payload: TPayload;
+}
+
 export interface CanonicalSender {
   actorId: string;
   displayName: string;
   actorRole: ActorRole;
 }
 
-export interface InboundReplyRoute {
+export interface InboundReplyRoute extends DotEventRouting {
   transport: "discord";
   channelId: string;
   guildId: string | null;
-  replyToMessageId: string;
+  replyTo: string;
 }
 
 export interface InboundMessagePayload {
+  messageId: string;
+  sender: CanonicalSender;
   content: string;
   addressedContent: string;
   isDirectMessage: boolean;
   mentionedBot: boolean;
-}
-
-export interface InboundMessageReceivedEvent {
-  eventId: string;
-  eventType: "inbound.message.received";
-  occurredAt: string;
-  transport: "discord";
-  conversationId: string;
-  sourceMessageId: string;
-  correlationId: string;
-  sender: CanonicalSender;
   replyRoute: InboundReplyRoute;
-  payload: InboundMessagePayload;
 }
 
-export interface OutboundMessageRequestedEvent {
-  eventId: string;
-  eventType: "outbound.message.requested";
-  occurredAt: string;
-  transport: "discord";
-  conversationId: string;
-  correlationId: string;
+export type InboundMessageReceivedEvent = DotEvent<
+  "inbound.message.received",
+  InboundMessagePayload,
+  InboundReplyRoute
+>;
+
+export interface OutboundMessageRequestedPayload {
   inResponseToEventId: string;
   participantActorId: string;
-  replyRoute: InboundReplyRoute;
   content: string;
   recordConversationTurn: boolean;
+  replyRoute: InboundReplyRoute;
 }
+
+export type OutboundMessageRequestedEvent = DotEvent<
+  "outbound.message.requested",
+  OutboundMessageRequestedPayload,
+  InboundReplyRoute
+>;
 
 export function createOutboundMessageRequestedEvent(params: {
   inboundEvent: InboundMessageReceivedEvent;
@@ -57,14 +109,26 @@ export function createOutboundMessageRequestedEvent(params: {
   return {
     eventId: `${inboundEvent.eventId}:outbound:${Date.now()}`,
     eventType: "outbound.message.requested",
+    eventVersion: DOT_EVENT_VERSION,
     occurredAt: new Date().toISOString(),
-    transport: inboundEvent.transport,
-    conversationId: inboundEvent.conversationId,
-    correlationId: inboundEvent.correlationId,
-    inResponseToEventId: inboundEvent.eventId,
-    participantActorId: inboundEvent.sender.actorId,
-    replyRoute: inboundEvent.replyRoute,
-    content,
-    recordConversationTurn
+    producer: { service: "message-pipeline" },
+    correlation: {
+      correlationId: inboundEvent.correlation.correlationId,
+      causationId: inboundEvent.eventId,
+      conversationId: inboundEvent.correlation.conversationId,
+      actorId: inboundEvent.correlation.actorId
+    },
+    routing: inboundEvent.routing,
+    diagnostics: {
+      severity: "info",
+      category: "outbound.delivery"
+    },
+    payload: {
+      inResponseToEventId: inboundEvent.eventId,
+      participantActorId: inboundEvent.payload.sender.actorId,
+      replyRoute: inboundEvent.payload.replyRoute,
+      content,
+      recordConversationTurn
+    }
   };
 }

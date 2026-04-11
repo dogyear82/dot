@@ -1,5 +1,5 @@
 import { resolveActorRole } from "../auth.js";
-import type { InboundMessageReceivedEvent } from "../events.js";
+import { DOT_EVENT_VERSION, type InboundMessageReceivedEvent } from "../events.js";
 import type { IncomingMessage } from "../types.js";
 import { stripLeadingBotAddress } from "./normalize.js";
 
@@ -18,27 +18,44 @@ export function createDiscordInboundMessageEvent(params: {
   return {
     eventId: `discord:${message.id}`,
     eventType: "inbound.message.received",
+    eventVersion: DOT_EVENT_VERSION,
     occurredAt: message.createdAt,
-    transport: "discord",
-    conversationId: message.channelId,
-    sourceMessageId: message.id,
-    correlationId: message.id,
-    sender: {
-      actorId: message.authorId,
-      displayName: message.authorUsername,
-      actorRole: resolveActorRole(message.authorId, ownerUserId)
+    producer: {
+      service: "discord-ingress"
     },
-    replyRoute: {
+    correlation: {
+      correlationId: message.id,
+      causationId: null,
+      conversationId: message.channelId,
+      actorId: message.authorId
+    },
+    routing: {
       transport: "discord",
       channelId: message.channelId,
       guildId: message.guildId,
-      replyToMessageId: message.id
+      replyTo: message.id
+    },
+    diagnostics: {
+      severity: "info",
+      category: "discord.inbound"
     },
     payload: {
+      messageId: message.id,
+      sender: {
+        actorId: message.authorId,
+        displayName: message.authorUsername,
+        actorRole: resolveActorRole(message.authorId, ownerUserId)
+      },
       content: message.content,
       addressedContent,
       isDirectMessage: message.isDirectMessage,
-      mentionedBot: message.mentionedBot
+      mentionedBot: message.mentionedBot,
+      replyRoute: {
+        transport: "discord",
+        channelId: message.channelId,
+        guildId: message.guildId,
+        replyTo: message.id
+      }
     }
   };
 }

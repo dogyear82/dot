@@ -1,8 +1,11 @@
-import type { InboundMessageReceivedEvent, OutboundMessageRequestedEvent } from "./events.js";
+import type { DotEvent, InboundMessageReceivedEvent, OutboundMessageRequestedEvent } from "./events.js";
 
-type EventHandler<TEvent> = (event: TEvent) => void | Promise<void>;
+type EventHandler<TEvent extends DotEvent = DotEvent> = (event: TEvent) => void | Promise<void>;
 
 export interface EventBus {
+  publish<TEvent extends DotEvent>(event: TEvent): Promise<void>;
+  subscribe<TEvent extends DotEvent>(eventType: TEvent["eventType"], handler: EventHandler<TEvent>): () => void;
+  subscribeAll(handler: EventHandler<DotEvent>): () => void;
   publishInboundMessage(event: InboundMessageReceivedEvent): Promise<void>;
   publishOutboundMessage(event: OutboundMessageRequestedEvent): Promise<void>;
   subscribeInboundMessage(handler: EventHandler<InboundMessageReceivedEvent>): () => void;
@@ -10,27 +13,54 @@ export interface EventBus {
 }
 
 export function createInMemoryEventBus(): EventBus {
-  const inboundHandlers = new Set<EventHandler<InboundMessageReceivedEvent>>();
-  const outboundHandlers = new Set<EventHandler<OutboundMessageRequestedEvent>>();
+  const handlersByTopic = new Map<string, Set<EventHandler>>();
+  const allHandlers = new Set<EventHandler>();
+
+  const subscribe = <TEvent extends DotEvent>(eventType: TEvent["eventType"], handler: EventHandler<TEvent>) => {
+    const typedHandler = handler as EventHandler;
+    const handlers = handlersByTopic.get(eventType) ?? new Set<EventHandler>();
+    handlers.add(typedHandler);
+    handlersByTopic.set(eventType, handlers);
+    return () => {
+      handlers.delete(typedHandler);
+      if (handlers.size === 0) {
+        handlersByTopic.delete(eventType);
+      }
+    };
+  };
+
+  const publish = async <TEvent extends DotEvent>(event: TEvent) => {
+    const handlers = handlersByTopic.get(event.eventType);
+
+    if (handlers) {
+      for (const handler of handlers) {
+        await handler(event);
+      }
+    }
+
+    for (const handler of allHandlers) {
+      await handler(event);
+    }
+  };
 
   return {
-    async publishInboundMessage(event) {
-      for (const handler of inboundHandlers) {
-        await handler(event);
-      }
+    publish,
+    subscribe,
+    subscribeAll(handler) {
+      allHandlers.add(handler);
+      return () => allHandlers.delete(handler);
     },
-    async publishOutboundMessage(event) {
-      for (const handler of outboundHandlers) {
-        await handler(event);
-      }
+    publishInboundMessage(event) {
+      return publish(event);
+    },
+    publishOutboundMessage(event) {
+      return publish(event);
     },
     subscribeInboundMessage(handler) {
-      inboundHandlers.add(handler);
-      return () => inboundHandlers.delete(handler);
+      return subscribe("inbound.message.received", handler);
     },
     subscribeOutboundMessage(handler) {
-      outboundHandlers.add(handler);
-      return () => outboundHandlers.delete(handler);
+      return subscribe("outbound.message.requested", handler);
     }
   };
 }
