@@ -83,7 +83,6 @@ Default local Grafana credentials:
 
 - username: `admin`
 - password: `admin`
-
 ## Current Scope
 
 This bootstrap includes:

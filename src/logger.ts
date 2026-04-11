@@ -14,7 +14,6 @@ export function createLogger(level: string, filePath?: string) {
       })
     });
   }
-
   return pino({
     level,
     base: undefined,
