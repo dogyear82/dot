@@ -71,6 +71,39 @@ Notes:
 - Only split services further if a real operational constraint appears.
 - The recommended migration path is internal event-driven architecture first, process separation later if and when the boundaries prove valuable operationally.
 
+## Single-Process Service Hosts
+
+Current runtime shape:
+
+- keep one Node.js process for operational simplicity
+- decompose bootstrap into named service hosts with explicit lifecycle boundaries
+- start and stop hosts through a coordinator instead of wiring everything directly in `index.ts`
+- preserve bus-based seams so each host can later become its own container-backed service
+
+Current host topology:
+
+- `event-bus`
+- `outlook`
+- `llm`
+- `message-router`
+- `discord-transport`
+- `reminders`
+- `diagnostics`
+
+Rules:
+
+- each host owns one bounded responsibility
+- hosts expose explicit startup and shutdown behavior
+- startup order is deterministic and shutdown runs in reverse order
+- startup failures must roll back previously started hosts
+- this layer is a migration seam toward future containerized services, not a second orchestration framework
+
+Near-term implication:
+
+- the system still runs as a single process today
+- future service extraction should preserve the same host names, event topics, and ownership boundaries wherever practical
+- new infrastructure like mail sync or diagnostics should prefer landing as their own host boundary before they become separate containers
+
 ## Proposed Components
 
 ### 1. Discord Gateway Adapter
