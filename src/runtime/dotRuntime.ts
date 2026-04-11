@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 
 import { createLlmService } from "../chat/modelRouter.js";
 import type { AppConfig } from "../config.js";
+import { createDiagnosticsObserver, createHostHealthEvent } from "../diagnostics.js";
 import { createDiscordClient } from "../discord/createClient.js";
 import { createConfiguredEventBus } from "../eventBus.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
@@ -38,24 +39,64 @@ export async function createDotRuntime(params: {
   let discordClient: Client | undefined;
   let unregisterMessagePipeline: (() => void) | undefined;
   let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
+  let diagnosticsObserver: ReturnType<typeof createDiagnosticsObserver> | undefined;
+
+  const emitHostHealth = async (status: ServiceStatus) => {
+    try {
+      await bus.publish(createHostHealthEvent(status));
+    } catch (error) {
+      logger.warn(
+        {
+          err: error,
+          service: status.name,
+          readiness: status.readiness
+        },
+        "Unable to publish service health event"
+      );
+    }
+  };
 
   const hosts: ServiceHost[] = [
     createServiceHost({
       name: "event-bus",
+      onStatusChange: emitHostHealth,
       async stop() {
         await bus.close();
       }
     }),
     createServiceHost({
+      name: "diagnostics",
+      onStatusChange: emitHostHealth,
+      async start() {
+        diagnosticsObserver = createDiagnosticsObserver({
+          bus,
+          logger,
+          persistence
+        });
+        await emitHostHealth({
+          name: "event-bus",
+          readiness: "ready",
+          detail: null
+        });
+      },
+      stop() {
+        diagnosticsObserver?.stop();
+        diagnosticsObserver = undefined;
+      }
+    }),
+    createServiceHost({
       name: "outlook",
+      onStatusChange: emitHostHealth,
       start() {}
     }),
     createServiceHost({
       name: "llm",
+      onStatusChange: emitHostHealth,
       start() {}
     }),
     createServiceHost({
       name: "message-router",
+      onStatusChange: emitHostHealth,
       start() {
         unregisterMessagePipeline = registerMessagePipeline({
           bus,
@@ -74,6 +115,7 @@ export async function createDotRuntime(params: {
     }),
     createServiceHost({
       name: "discord-transport",
+      onStatusChange: emitHostHealth,
       async start() {
         discordClient = createDiscordClient({
           bus,
@@ -92,6 +134,7 @@ export async function createDotRuntime(params: {
     }),
     createServiceHost({
       name: "reminders",
+      onStatusChange: emitHostHealth,
       start() {
         if (!discordClient) {
           throw new Error("Discord transport must be started before the reminder host.");
@@ -107,17 +150,6 @@ export async function createDotRuntime(params: {
       stop() {
         reminderScheduler?.stop();
         reminderScheduler = undefined;
-      }
-    }),
-    createServiceHost({
-      name: "diagnostics",
-      start() {
-        logger.info(
-          {
-            services: ["event-bus", "outlook", "llm", "message-router", "discord-transport", "reminders", "diagnostics"]
-          },
-          "Initialized Dot service host topology"
-        );
       }
     })
   ];
@@ -136,6 +168,13 @@ export async function createDotRuntime(params: {
           ollamaModel: config.OLLAMA_MODEL
         },
         "Starting Dot bootstrap service"
+      );
+
+      logger.info(
+        {
+          services: ["event-bus", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders"]
+        },
+        "Initialized Dot service host topology"
       );
 
       await coordinator.startAll();

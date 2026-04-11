@@ -17,9 +17,18 @@ export function createServiceHost(params: {
   name: string;
   start?: () => Promise<void> | void;
   stop?: () => Promise<void> | void;
+  onStatusChange?: (status: ServiceStatus) => Promise<void> | void;
 }): ServiceHost {
   let readiness: ServiceReadiness = "idle";
   let detail: string | null = null;
+
+  const notifyStatusChange = async () => {
+    await params.onStatusChange?.({
+      name: params.name,
+      readiness,
+      detail
+    });
+  };
 
   return {
     name: params.name,
@@ -30,30 +39,40 @@ export function createServiceHost(params: {
 
       readiness = "starting";
       detail = null;
+      await notifyStatusChange();
 
       try {
         await params.start?.();
         readiness = "ready";
+        detail = null;
+        await notifyStatusChange();
       } catch (error) {
         readiness = "error";
         detail = formatError(error);
+        await notifyStatusChange();
         throw error;
       }
     },
     async stop() {
       if (readiness === "stopped" || readiness === "idle") {
         readiness = "stopped";
+        detail = null;
+        await notifyStatusChange();
         return;
       }
 
       readiness = "stopping";
+      await notifyStatusChange();
 
       try {
         await params.stop?.();
         readiness = "stopped";
+        detail = null;
+        await notifyStatusChange();
       } catch (error) {
         readiness = "error";
         detail = formatError(error);
+        await notifyStatusChange();
         throw error;
       }
     },

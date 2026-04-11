@@ -4,8 +4,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 import { createSettingsStore, type SettingsStore } from "./settings.js";
+import type { DotEvent } from "./events.js";
 import type {
   AccessAuditRecord,
+  DiagnosticEventRecord,
   ConversationTurnRecord,
   IncomingMessage,
   OAuthDeviceFlowRecord,
@@ -13,6 +15,7 @@ import type {
   PersonalityPresetRecord,
   ReminderEvent,
   ReminderRecord,
+  ServiceHealthSnapshotRecord,
   ToolExecutionAuditRecord
 } from "./types.js";
 
@@ -32,6 +35,10 @@ export interface Persistence {
   listRecentConversationTurns(conversationId: string, limit: number): ConversationTurnRecord[];
   saveAccessAudit(record: AccessAuditRecord): void;
   saveToolExecutionAudit(record: ToolExecutionAuditRecord): void;
+  saveDiagnosticEvent(event: DotEvent): void;
+  listRecentDiagnosticEvents(limit: number): DiagnosticEventRecord[];
+  upsertServiceHealthSnapshot(record: ServiceHealthSnapshotRecord): void;
+  listServiceHealthSnapshots(): ServiceHealthSnapshotRecord[];
   getPersonalityPreset(name: string): PersonalityPresetRecord | null;
   listPersonalityPresets(): PersonalityPresetRecord[];
   getOAuthToken(provider: string): OAuthTokenRecord | null;
@@ -104,6 +111,32 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       provider TEXT,
       detail TEXT,
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS diagnostic_events (
+      event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      producer_service TEXT NOT NULL,
+      correlation_id TEXT,
+      causation_id TEXT,
+      conversation_id TEXT,
+      actor_id TEXT,
+      severity TEXT NOT NULL,
+      category TEXT,
+      occurred_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS service_health_snapshots (
+      service TEXT NOT NULL,
+      check_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      state TEXT,
+      detail TEXT,
+      observed_latency_ms REAL,
+      source_event_id TEXT,
+      last_event_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (service, check_name)
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -245,6 +278,96 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @provider,
       @detail
     )
+  `);
+
+  const saveDiagnosticEventStatement = db.prepare(`
+    INSERT OR REPLACE INTO diagnostic_events (
+      event_id,
+      event_type,
+      producer_service,
+      correlation_id,
+      causation_id,
+      conversation_id,
+      actor_id,
+      severity,
+      category,
+      occurred_at
+    ) VALUES (
+      @eventId,
+      @eventType,
+      @producerService,
+      @correlationId,
+      @causationId,
+      @conversationId,
+      @actorId,
+      @severity,
+      @category,
+      @occurredAt
+    )
+  `);
+
+  const listRecentDiagnosticEventsStatement = db.prepare<[{ limit: number }], DiagnosticEventRecord>(`
+    SELECT
+      event_id AS eventId,
+      event_type AS eventType,
+      producer_service AS producerService,
+      correlation_id AS correlationId,
+      causation_id AS causationId,
+      conversation_id AS conversationId,
+      actor_id AS actorId,
+      severity,
+      category,
+      occurred_at AS occurredAt
+    FROM diagnostic_events
+    ORDER BY datetime(occurred_at) DESC, event_id DESC
+    LIMIT @limit
+  `);
+
+  const upsertServiceHealthSnapshotStatement = db.prepare(`
+    INSERT INTO service_health_snapshots (
+      service,
+      check_name,
+      status,
+      state,
+      detail,
+      observed_latency_ms,
+      source_event_id,
+      last_event_id,
+      updated_at
+    ) VALUES (
+      @service,
+      @checkName,
+      @status,
+      @state,
+      @detail,
+      @observedLatencyMs,
+      @sourceEventId,
+      @lastEventId,
+      @updatedAt
+    )
+    ON CONFLICT(service, check_name) DO UPDATE SET
+      status = excluded.status,
+      state = excluded.state,
+      detail = excluded.detail,
+      observed_latency_ms = excluded.observed_latency_ms,
+      source_event_id = excluded.source_event_id,
+      last_event_id = excluded.last_event_id,
+      updated_at = excluded.updated_at
+  `);
+
+  const listServiceHealthSnapshotsStatement = db.prepare<[], ServiceHealthSnapshotRecord>(`
+    SELECT
+      service,
+      check_name AS checkName,
+      status,
+      state,
+      detail,
+      observed_latency_ms AS observedLatencyMs,
+      source_event_id AS sourceEventId,
+      last_event_id AS lastEventId,
+      updated_at AS updatedAt
+    FROM service_health_snapshots
+    ORDER BY service ASC, check_name ASC
   `);
 
   const saveConversationTurnStatement = db.prepare(`
@@ -576,6 +699,29 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     },
     saveToolExecutionAudit(record) {
       toolExecutionAuditStatement.run(record);
+    },
+    saveDiagnosticEvent(event) {
+      saveDiagnosticEventStatement.run({
+        eventId: event.eventId,
+        eventType: event.eventType,
+        producerService: event.producer.service,
+        correlationId: event.correlation.correlationId,
+        causationId: event.correlation.causationId,
+        conversationId: event.correlation.conversationId,
+        actorId: event.correlation.actorId,
+        severity: event.diagnostics.severity,
+        category: event.diagnostics.category,
+        occurredAt: event.occurredAt
+      });
+    },
+    listRecentDiagnosticEvents(limit) {
+      return listRecentDiagnosticEventsStatement.all({ limit });
+    },
+    upsertServiceHealthSnapshot(record) {
+      upsertServiceHealthSnapshotStatement.run(record);
+    },
+    listServiceHealthSnapshots() {
+      return listServiceHealthSnapshotsStatement.all();
     },
     getPersonalityPreset(name) {
       const row = getPersonalityPresetStatement.get(name);
