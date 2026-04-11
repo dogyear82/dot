@@ -54,6 +54,8 @@ Minimum required values for basic Discord chat:
 
 Recommended additional values:
 
+- `EVENT_BUS_ADAPTER`
+- `NATS_URL` if you want to run against a NATS broker instead of the in-memory bus
 - `OLLAMA_BASE_URL`
 - `OLLAMA_MODEL`
 - `ONEMINAI_API_KEY`
@@ -78,8 +80,13 @@ Current implementation note:
 - Dot currently posts to `https://api.1min.ai/api/chat-with-ai` and sends credentials with the `API-KEY` header.
 - Hosted routing is controlled by the persisted `llm.mode` setting:
   `lite` keeps Dot local-only, `normal` allows hosted fallback on hard failures, and `power` allows hosted usage as a first-class route.
-- Replies now include a simple power indicator:
-  `[power: off]`, `[power: standby]`, or `[power: engaged]`.
+- Replies now include a simple mode indicator such as `[mode: lite]`, `[mode: normal]`, or `[mode: power]`.
+
+For the event bus:
+
+- leave `EVENT_BUS_ADAPTER=in-memory` for local single-process runs
+- set `EVENT_BUS_ADAPTER=nats` and `NATS_URL=<broker-url>` when you want Dot to publish and subscribe through NATS
+- current transport semantics are intentionally simple: canonical Dot events are serialized as JSON, topics map directly to `eventType`, and v1 does not add replay or durable consumer management yet
 
 The compose stack bind-mounts `${HOME}/ollama` into the Ollama container so downloaded models are reused directly.
 

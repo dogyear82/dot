@@ -125,6 +125,8 @@ Recommended design:
 - start with an in-process event bus and typed event contracts
 - treat bus abstraction as mandatory even if the first implementation is just local process pub/sub
 - only graduate to an external broker if reliability or independent scaling actually demands it
+- use the canonical `eventType` as the bus topic name so transports can stay mechanically simple
+- keep the v1 delivery contract explicit: at-most-once delivery, no replay, no durable consumer offsets, and handler failures treated as service-level errors rather than broker-managed retries
 
 Recommended core event fields:
 

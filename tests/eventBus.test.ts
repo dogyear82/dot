@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createInMemoryEventBus } from "../src/eventBus.js";
+import { createConfiguredEventBus, createInMemoryEventBus } from "../src/eventBus.js";
 
 test("in-memory event bus publishes inbound and outbound events to subscribers", async () => {
   const bus = createInMemoryEventBus();
@@ -158,4 +158,61 @@ test("in-memory event bus supports generic topic subscription and all-event obse
     "topic:inbound.message.received:event-3",
     "all:inbound.message.received:event-3"
   ]);
+});
+
+test("configured event bus defaults to the in-memory adapter", async () => {
+  const bus = await createConfiguredEventBus({
+    EVENT_BUS_ADAPTER: "in-memory",
+    NATS_URL: "nats://localhost:4222"
+  });
+  const seen: string[] = [];
+
+  bus.subscribe("inbound.message.received", async (event) => {
+    seen.push(event.eventId);
+  });
+
+  await bus.publishInboundMessage({
+    eventId: "event-configured",
+    eventType: "inbound.message.received",
+    eventVersion: "1.0.0",
+    occurredAt: "2026-04-09T00:00:00.000Z",
+    producer: { service: "discord-ingress" },
+    correlation: {
+      correlationId: "msg-configured",
+      causationId: null,
+      conversationId: "channel-1",
+      actorId: "owner-1"
+    },
+    routing: {
+      transport: "discord",
+      channelId: "channel-1",
+      guildId: "guild-1",
+      replyTo: "msg-configured"
+    },
+    diagnostics: {
+      severity: "info",
+      category: "discord.inbound"
+    },
+    payload: {
+      messageId: "msg-configured",
+      sender: {
+        actorId: "owner-1",
+        displayName: "owner",
+        actorRole: "owner"
+      },
+      content: "hello",
+      addressedContent: "hello",
+      isDirectMessage: false,
+      mentionedBot: true,
+      replyRoute: {
+        transport: "discord",
+        channelId: "channel-1",
+        guildId: "guild-1",
+        replyTo: "msg-configured"
+      }
+    }
+  });
+
+  assert.deepEqual(seen, ["event-configured"]);
+  await bus.close();
 });

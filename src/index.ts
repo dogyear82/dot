@@ -3,7 +3,7 @@ import process from "node:process";
 import { createLlmService } from "./chat/modelRouter.js";
 import { loadConfig } from "./config.js";
 import { createDiscordClient } from "./discord/createClient.js";
-import { createInMemoryEventBus } from "./eventBus.js";
+import { createConfiguredEventBus } from "./eventBus.js";
 import { createLogger } from "./logger.js";
 import { registerMessagePipeline } from "./messagePipeline.js";
 import { MicrosoftGraphOutlookCalendarClient } from "./outlookCalendar.js";
@@ -17,7 +17,7 @@ async function main() {
   const persistence = initializePersistence(config.DATA_DIR, config.SQLITE_PATH);
   const outlookOAuthClient = new MicrosoftOutlookOAuthClient(config, persistence);
   const calendarClient = new MicrosoftGraphOutlookCalendarClient(config, outlookOAuthClient);
-  const bus = createInMemoryEventBus();
+  const bus = await createConfiguredEventBus(config);
   const chatService = createLlmService({
     config,
     settings: persistence.settings
@@ -43,6 +43,7 @@ async function main() {
     logger.info({ signal }, "Shutting down");
     reminderScheduler?.stop();
     unregisterMessagePipeline();
+    await bus.close();
     await client.destroy();
     persistence.close();
     process.exit(0);
@@ -60,6 +61,8 @@ async function main() {
     {
       dataDir: config.DATA_DIR,
       sqlitePath: config.SQLITE_PATH,
+      eventBusAdapter: config.EVENT_BUS_ADAPTER,
+      natsUrl: config.EVENT_BUS_ADAPTER === "nats" ? config.NATS_URL : null,
       ollamaBaseUrl: config.OLLAMA_BASE_URL,
       ollamaModel: config.OLLAMA_MODEL
     },
