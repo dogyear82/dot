@@ -1,7 +1,7 @@
 import { resolveActorRole } from "../auth.js";
 import type { InboundMessageReceivedEvent } from "../events.js";
 import type { IncomingMessage } from "../types.js";
-import { stripLeadingBotAddress } from "./normalize.js";
+import { stripLeadingBotAddress, stripLeadingBotMention } from "./normalize.js";
 
 export function createDiscordInboundMessageEvent(params: {
   message: IncomingMessage;
@@ -12,7 +12,9 @@ export function createDiscordInboundMessageEvent(params: {
   const { message, botUserId, botUsername, ownerUserId } = params;
   const addressedContent = message.isDirectMessage
     ? message.content
-    : stripLeadingBotAddress(message.content, { botUserId, botUsername });
+    : message.mentionedBot
+      ? stripLeadingBotMention(message.content, botUserId).replace(/^(?:<@&\d+>\s*)+/, "").trim()
+      : stripLeadingBotAddress(message.content, { botUserId, botUsername });
 
   return {
     eventId: `discord:${message.id}`,
