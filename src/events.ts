@@ -1,4 +1,5 @@
 import type { ActorRole } from "./auth.js";
+import type { ServiceHealthStatus } from "./types.js";
 
 export const DOT_EVENT_VERSION = "1.0.0";
 
@@ -99,6 +100,21 @@ export type OutboundMessageRequestedEvent = DotEvent<
   InboundReplyRoute
 >;
 
+export interface ServiceHealthReportedPayload {
+  service: string;
+  checkName: string;
+  status: ServiceHealthStatus;
+  state: string | null;
+  detail: string | null;
+  observedLatencyMs: number | null;
+  sourceEventId: string | null;
+}
+
+export type ServiceHealthReportedEvent = DotEvent<
+  "diagnostics.health.reported",
+  ServiceHealthReportedPayload
+>;
+
 export function createOutboundMessageRequestedEvent(params: {
   inboundEvent: InboundMessageReceivedEvent;
   content: string;
@@ -129,6 +145,52 @@ export function createOutboundMessageRequestedEvent(params: {
       replyRoute: inboundEvent.payload.replyRoute,
       content,
       recordConversationTurn
+    }
+  };
+}
+
+export function createServiceHealthReportedEvent(params: {
+  service: string;
+  checkName: string;
+  status: ServiceHealthStatus;
+  state?: string | null;
+  detail?: string | null;
+  observedLatencyMs?: number | null;
+  sourceEventId?: string | null;
+  producerService?: string;
+}): ServiceHealthReportedEvent {
+  return {
+    eventId: `diagnostics.health.reported:${params.service}:${params.checkName}:${Date.now()}`,
+    eventType: "diagnostics.health.reported",
+    eventVersion: DOT_EVENT_VERSION,
+    occurredAt: new Date().toISOString(),
+    producer: {
+      service: params.producerService ?? params.service
+    },
+    correlation: {
+      correlationId: `diagnostics:${params.service}`,
+      causationId: params.sourceEventId ?? null,
+      conversationId: null,
+      actorId: null
+    },
+    routing: {
+      transport: null,
+      channelId: null,
+      guildId: null,
+      replyTo: null
+    },
+    diagnostics: {
+      severity: params.status === "bad" ? "warn" : "info",
+      category: "service.health"
+    },
+    payload: {
+      service: params.service,
+      checkName: params.checkName,
+      status: params.status,
+      state: params.state ?? null,
+      detail: params.detail ?? null,
+      observedLatencyMs: params.observedLatencyMs ?? null,
+      sourceEventId: params.sourceEventId ?? null
     }
   };
 }

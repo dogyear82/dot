@@ -20,6 +20,33 @@ export interface ConversationTurnRecord {
   createdAt: string;
 }
 
+export type ServiceHealthStatus = "good" | "bad" | "offline";
+
+export interface ServiceHealthSnapshotRecord {
+  service: string;
+  checkName: string;
+  status: ServiceHealthStatus;
+  state: string | null;
+  detail: string | null;
+  observedLatencyMs: number | null;
+  sourceEventId: string | null;
+  lastEventId: string;
+  updatedAt: string;
+}
+
+export interface DiagnosticEventRecord {
+  eventId: string;
+  eventType: string;
+  producerService: string;
+  correlationId: string | null;
+  causationId: string | null;
+  conversationId: string | null;
+  actorId: string | null;
+  severity: "debug" | "info" | "warn" | "error";
+  category: string | null;
+  occurredAt: string;
+}
+
 export interface AccessAuditRecord {
   messageId: string;
   actorRole: "owner" | "non-owner";

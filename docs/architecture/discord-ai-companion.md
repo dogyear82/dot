@@ -218,6 +218,7 @@ Examples:
 
 - `InboundMessageReceived`
 - `OutboundMessageRequested`
+- `ServiceHealthReported`
 - `ReminderDue`
 - `ToolExecutionCompleted`
 - `DeliveryFailed`
@@ -226,6 +227,7 @@ Current minimum contract in code:
 
 - inbound event: `inbound.message.received`
 - outbound delivery request: `outbound.message.requested`
+- service health event: `diagnostics.health.reported`
 - current transport: `discord`
 - current conversation key: Discord `channelId`
 - current reply route: `transport`, `channelId`, `guildId`, `replyToMessageId`
@@ -233,6 +235,37 @@ Current minimum contract in code:
 Important non-goal for this phase:
 
 - keep the system single-process and in-memory for dispatch; this seam exists to stabilize contracts and adapter boundaries first, not to introduce a broker or worker fleet yet
+
+### Service Health Contract
+
+All service-health emission should use the canonical diagnostics event:
+
+```ts
+type ServiceHealthReportedPayload = {
+  service: string;
+  checkName: string;
+  status: "good" | "bad" | "offline";
+  state: string | null;
+  detail: string | null;
+  observedLatencyMs: number | null;
+  sourceEventId: string | null;
+};
+```
+
+Recommended mapping rules for host lifecycle:
+
+- `ready` => `good`
+- `idle` => `offline`
+- `stopped` => `offline`
+- `starting` => `bad`
+- `stopping` => `bad`
+- `error` => `bad`
+
+Notes:
+
+- `status` is the operator-facing summary for dashboards and alerts
+- `state` carries the more precise internal lifecycle state when needed
+- service-health events should be emitted consistently by every host or service boundary rather than inferred ad hoc in the UI
 
 ### 4. Conversation Orchestrator
 
