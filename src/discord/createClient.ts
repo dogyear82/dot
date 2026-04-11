@@ -41,13 +41,15 @@ export function createDiscordClient(params: {
     }
 
     const botUserId = client.user.id;
-    const normalized = normalizeMessage(message, { botUserId, botUsername: client.user.username });
+    const botRoleIds = message.guild?.members.me?.roles.cache.map((role) => role.id) ?? [];
+    const normalized = normalizeMessage(message, { botUserId, botUsername: client.user.username, botRoleIds });
     persistence.saveNormalizedMessage(normalized);
     replyRegistry.set(normalized.id, message);
     const inboundEvent = createDiscordInboundMessageEvent({
       message: normalized,
       botUserId,
       botUsername: client.user.username,
+      botRoleIds,
       ownerUserId
     });
 
@@ -77,7 +79,11 @@ export function createDiscordClient(params: {
     const replyTo = replyRegistry.get(event.replyRoute.replyToMessageId);
     if (replyTo) {
       const sent = await replyTo.reply(event.content);
-      const normalizedSent = normalizeMessage(sent, { botUserId: client.user.id, botUsername: client.user.username });
+      const normalizedSent = normalizeMessage(sent, {
+        botUserId: client.user.id,
+        botUsername: client.user.username,
+        botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
+      });
       persistence.saveNormalizedMessage(normalizedSent);
       if (event.recordConversationTurn) {
         persistence.saveConversationTurn({
@@ -100,7 +106,11 @@ export function createDiscordClient(params: {
 
     const sent = await channel.send(event.content);
     if ("author" in sent) {
-      const normalizedSent = normalizeMessage(sent, { botUserId: client.user.id, botUsername: client.user.username });
+      const normalizedSent = normalizeMessage(sent, {
+        botUserId: client.user.id,
+        botUsername: client.user.username,
+        botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
+      });
       persistence.saveNormalizedMessage(normalizedSent);
       if (event.recordConversationTurn) {
         persistence.saveConversationTurn({

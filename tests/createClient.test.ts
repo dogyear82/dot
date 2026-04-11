@@ -33,7 +33,8 @@ function createFakeMessage(params: {
   content: string;
   authorId?: string;
   mentionedBot?: boolean;
-  roleMentionName?: string | null;
+  mentionedRoleIds?: string[];
+  botRoleIds?: string[];
   isDirectMessage?: boolean;
   createdAt?: string;
   replyLog: string[];
@@ -43,7 +44,8 @@ function createFakeMessage(params: {
     content,
     authorId = "owner-1",
     mentionedBot = false,
-    roleMentionName = null,
+    mentionedRoleIds = [],
+    botRoleIds = [],
     isDirectMessage = false,
     createdAt = "2026-04-09T00:00:00.000Z",
     replyLog
@@ -53,6 +55,21 @@ function createFakeMessage(params: {
     id,
     channelId: "chan-1",
     guildId: isDirectMessage ? null : "guild-1",
+    guild: isDirectMessage
+      ? null
+      : {
+          members: {
+            me: {
+              roles: {
+                cache: {
+                  map<T>(callback: (role: { id: string }) => T) {
+                    return botRoleIds.map((roleId) => callback({ id: roleId }));
+                  }
+                }
+              }
+            }
+          }
+        },
     author: {
       id: authorId,
       username: authorId === "owner-1" ? "owner" : "user",
@@ -67,8 +84,8 @@ function createFakeMessage(params: {
         }
       },
       roles: {
-        some(predicate: (role: { name: string }) => boolean) {
-          return roleMentionName ? predicate({ name: roleMentionName }) : false;
+        some(predicate: (role: { id: string }) => boolean) {
+          return mentionedRoleIds.some((roleId) => predicate({ id: roleId }));
         }
       }
     },
@@ -78,6 +95,21 @@ function createFakeMessage(params: {
         id: `${id}-reply-${replyLog.length}`,
         channelId: "chan-1",
         guildId: isDirectMessage ? null : "guild-1",
+        guild: isDirectMessage
+          ? null
+          : {
+              members: {
+                me: {
+                  roles: {
+                    cache: {
+                      map<T>(callback: (role: { id: string }) => T) {
+                        return botRoleIds.map((roleId) => callback({ id: roleId }));
+                      }
+                    }
+                  }
+                }
+              }
+            },
         author: {
           id: "bot-1",
           username: "Dot",
@@ -381,7 +413,8 @@ test("Discord ingress normalizes a role mention command before pipeline routing"
           id: "msg-role-command",
           content: "<@&1492214618611908830> !settings show",
           mentionedBot: false,
-          roleMentionName: "Dot",
+          mentionedRoleIds: ["1492214618611908830"],
+          botRoleIds: ["1492214618611908830"],
           createdAt: "2026-04-09T00:00:00.000Z",
           replyLog: replies
         })
@@ -402,7 +435,7 @@ test("Discord ingress normalizes a role mention command before pipeline routing"
   }
 });
 
-test("Discord ingress treats a same-name role mention as addressed chat", async () => {
+test("Discord ingress treats the bot role mention as addressed chat", async () => {
   const { persistence, cleanup } = createPersistence();
   const replies: string[] = [];
   const generatedMessages: string[] = [];
@@ -461,7 +494,8 @@ test("Discord ingress treats a same-name role mention as addressed chat", async 
           id: "msg-role-chat",
           content: "<@&1492214618611908830> what do you think?",
           mentionedBot: false,
-          roleMentionName: "Dot",
+          mentionedRoleIds: ["1492214618611908830"],
+          botRoleIds: ["1492214618611908830"],
           createdAt: "2026-04-09T00:00:00.000Z",
           replyLog: replies
         })
@@ -470,6 +504,84 @@ test("Discord ingress treats a same-name role mention as addressed chat", async 
 
       assert.equal(generatedMessages[0], "what do you think?");
       assert.match(replies[0] ?? "", /role mention chat reply/);
+    } finally {
+      unsubscribe();
+      await client.destroy();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("Discord ingress does not treat an unrelated same-name role as Dot", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const replies: string[] = [];
+  const generatedMessages: string[] = [];
+  const bus = createInMemoryEventBus();
+
+  try {
+    const unsubscribe = registerMessagePipeline({
+      bus,
+      calendarClient: {
+        listUpcomingEvents: async () => []
+      } as never,
+      chatService: {
+        inferToolDecision: async () => ({
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "none",
+            reason: "not a tool request"
+          }
+        }),
+        generateOwnerReply: async ({ userMessage }) => {
+          generatedMessages.push(userMessage);
+          return {
+            route: "local",
+            powerStatus: "standby",
+            reply: "should not happen"
+          };
+        },
+        getPowerStatus: () => "standby"
+      },
+      logger: createLogger() as never,
+      outlookOAuthClient: {} as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    const client = createDiscordClient({
+      bus,
+      logger: createLogger() as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    try {
+      Object.defineProperty(client, "user", {
+        configurable: true,
+        value: {
+          id: "bot-1",
+          username: "Dot"
+        }
+      });
+
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-other-role-chat",
+          content: "<@&role-other> what do you think?",
+          mentionedBot: false,
+          mentionedRoleIds: ["role-other"],
+          botRoleIds: ["role-bot"],
+          createdAt: "2026-04-09T00:00:00.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(replies.length, 0);
+      assert.equal(generatedMessages.length, 0);
     } finally {
       unsubscribe();
       await client.destroy();

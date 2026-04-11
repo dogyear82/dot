@@ -19,14 +19,14 @@ test("normalizeMessage maps Discord message shape into IncomingMessage", () => {
       mentions: {
         users: {
           has: (id: string) => id === "bot-1"
+        },
+        roles: {
+          some: () => false
         }
-      },
-      roles: {
-        some: () => false
       },
       createdAt
     } as never,
-    { botUserId: "bot-1", botUsername: "Dot" }
+    { botUserId: "bot-1", botUsername: "Dot", botRoleIds: ["role-bot"] }
   );
 
   assert.deepEqual(normalized, {
@@ -66,17 +66,64 @@ test("normalizeMessage treats same-name role mentions as Dot mentions", () => {
           has: () => false
         },
         roles: {
-          some: (predicate: (role: { name: string }) => boolean) => predicate({ name: "Dot" })
+          some: (predicate: (role: { id: string }) => boolean) => predicate({ id: "role-bot" })
         }
       },
       createdAt
     } as never,
-    { botUserId: "bot-1", botUsername: "Dot" }
+    { botUserId: "bot-1", botUsername: "Dot", botRoleIds: ["role-bot"] }
   );
 
   assert.equal(normalized.mentionedBot, true);
 });
 
 test("stripLeadingBotAddress removes a same-name role mention prefix", () => {
-  assert.equal(stripLeadingBotAddress("<@&1492214618611908830> !settings show", { botUserId: "bot-1", botUsername: "Dot" }), "!settings show");
+  assert.equal(
+    stripLeadingBotAddress("<@&1492214618611908830> !settings show", {
+      botUserId: "bot-1",
+      botUsername: "Dot",
+      botRoleIds: ["1492214618611908830"]
+    }),
+    "!settings show"
+  );
+});
+
+test("normalizeMessage ignores unrelated same-name roles that are not the bot's role", () => {
+  const createdAt = new Date("2026-04-07T00:00:00.000Z");
+
+  const normalized = normalizeMessage(
+    {
+      id: "msg-3",
+      channelId: "channel-1",
+      guildId: "guild-1",
+      author: {
+        id: "user-1",
+        username: "tan"
+      },
+      content: "<@&role-other> hello dot",
+      mentions: {
+        users: {
+          has: () => false
+        },
+        roles: {
+          some: (predicate: (role: { id: string }) => boolean) => predicate({ id: "role-other" })
+        }
+      },
+      createdAt
+    } as never,
+    { botUserId: "bot-1", botUsername: "Dot", botRoleIds: ["role-bot"] }
+  );
+
+  assert.equal(normalized.mentionedBot, false);
+});
+
+test("stripLeadingBotAddress does not strip unrelated leading role mentions", () => {
+  assert.equal(
+    stripLeadingBotAddress("<@&role-other> <@&role-bot> !settings show", {
+      botUserId: "bot-1",
+      botUsername: "Dot",
+      botRoleIds: ["role-bot"]
+    }),
+    "<@&role-other> <@&role-bot> !settings show"
+  );
 });
