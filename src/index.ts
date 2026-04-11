@@ -6,14 +6,14 @@ import { createDotRuntime, registerRuntimeSignalHandlers } from "./runtime/dotRu
 
 async function main() {
   const config = loadConfig();
-  const logger = createLogger(config.LOG_LEVEL);
+  const logger = createLogger(config.LOG_LEVEL, config.LOG_FILE_PATH);
   const runtime = await createDotRuntime({ config, logger });
   registerRuntimeSignalHandlers(runtime);
   await runtime.start();
 }
 
 main().catch((error) => {
-  const logger = createLogger(process.env.LOG_LEVEL ?? "error");
+  const logger = createLogger(process.env.LOG_LEVEL ?? "error", process.env.LOG_FILE_PATH);
   logger.fatal({ err: error }, "Dot bootstrap service failed");
   process.exit(1);
 });

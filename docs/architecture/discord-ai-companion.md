@@ -112,6 +112,7 @@ Current direction:
 - OpenTelemetry spans for request and event-path tracing
 - Prometheus metrics for health, throughput, latency, and failure signals
 - structured JSON logs with correlation and trace identifiers for Loki ingestion
+- a compose-managed local stack of Grafana, Prometheus, Loki, Tempo, and Promtail to back operator diagnostics consistently across development and self-hosted deployment
 
 Current emitted boundaries:
 

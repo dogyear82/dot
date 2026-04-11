@@ -52,9 +52,12 @@ Current transport expectations:
   `dot.event.id`, `dot.event.type`, `dot.correlation.id`, `dot.causation.id`, `dot.conversation.id`, and `dot.actor.id`
 - Logs are now correlation-aware for Loki-style ingestion and include active `traceId`, `spanId`, and canonical event identifiers when available
 - Prometheus metrics are exposed from the bot process at `http://<host>:<METRICS_PORT>/metrics`
+- The compose stack now provisions Grafana, Prometheus, Loki, Tempo, and Promtail alongside Dot, Ollama, and NATS
+- Grafana datasources for Prometheus, Loki, and Tempo are provisioned automatically for a basic local run
 
 Relevant environment variables:
 
+- `LOG_FILE_PATH` can tee structured JSON logs to a file in addition to stdout
 - `OTEL_SERVICE_NAME` defaults to `dot`
 - `OTEL_EXPORTER_OTLP_ENDPOINT` should point to an OTLP HTTP traces endpoint such as `http://tempo:4318/v1/traces`
 - `METRICS_HOST` defaults to `0.0.0.0`
@@ -68,6 +71,18 @@ Current Prometheus signals include:
 - LLM request counts and latency
 - tool execution counts
 - current service health as one-hot gauges
+
+Local compose observability endpoints:
+
+- Grafana: `http://127.0.0.1:3000`
+- Prometheus: `http://127.0.0.1:9090`
+- Loki: `http://127.0.0.1:3100`
+- Tempo: `http://127.0.0.1:3200`
+
+Default local Grafana credentials:
+
+- username: `admin`
+- password: `admin`
 
 ## Current Scope
 
@@ -111,7 +126,7 @@ Every user-visible reply now includes a mode indicator such as `[mode: lite]`, `
 ## Podman Notes
 
 - The bot image is built from `Containerfile`.
-- The compose stack now starts `bot`, `ollama`, and `nats`.
+- The compose stack now starts `bot`, `ollama`, `nats`, `prometheus`, `loki`, `promtail`, `tempo`, and `grafana`.
 - The Ollama service bind-mounts `${HOME}/ollama` into the container so existing local models are reused.
 - Use `podman-compose`, not `podman compose`, on this machine. `podman compose` delegates to the external Docker Compose provider here and drops the NVIDIA CDI GPU device mapping, which leaves Ollama running on CPU.
 - To start just the local model runtime with GPU support:

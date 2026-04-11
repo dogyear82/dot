@@ -60,6 +60,7 @@ Recommended additional values:
 - `OTEL_EXPORTER_OTLP_ENDPOINT` if you want traces exported to Tempo or another OTLP endpoint
 - `METRICS_HOST`
 - `METRICS_PORT`
+- `LOG_FILE_PATH`
 - `OLLAMA_BASE_URL`
 - `OLLAMA_MODEL`
 - `ONEMINAI_API_KEY`
@@ -98,8 +99,11 @@ For observability:
 - `OTEL_SERVICE_NAME=dot` is the default logical service name
 - `OTEL_EXPORTER_OTLP_ENDPOINT` should be a full OTLP HTTP traces endpoint such as `http://tempo:4318/v1/traces`
 - `METRICS_HOST=0.0.0.0` and `METRICS_PORT=9464` expose Prometheus metrics from the bot process
+- `LOG_FILE_PATH=/app/data/logs/dot.log` lets Dot tee JSON logs to a shared file for Promtail ingestion under compose
 - logs now include active `traceId`, `spanId`, and canonical event correlation fields when a traced flow is active
 - Prometheus should scrape `http://<bot-host>:<METRICS_PORT>/metrics`
+- the compose stack provisions Prometheus, Loki, Tempo, Promtail, and Grafana for a basic local/self-hosted run
+- Grafana datasources are provisioned automatically; no manual datasource setup is required
 
 The compose stack bind-mounts `${HOME}/ollama` into the Ollama container so downloaded models are reused directly.
 
@@ -136,7 +140,7 @@ The intended deployment model is Podman Compose-based.
 Target operator flow:
 
 ```bash
-podman compose up -d
+podman-compose up -d --build
 ```
 
 Expected backend services:
@@ -144,6 +148,11 @@ Expected backend services:
 - `bot`
 - `ollama`
 - `nats`
+- `prometheus`
+- `loki`
+- `promtail`
+- `tempo`
+- `grafana`
 
 Additional services may be included later if specific integrations require them.
 
@@ -152,8 +161,8 @@ Additional services may be included later if specific integrations require them.
 Typical checks:
 
 ```bash
-podman compose ps
-podman compose logs -f bot
+podman-compose ps
+podman-compose logs -f bot
 ```
 
 You should confirm:
@@ -169,12 +178,22 @@ Optional observability checks:
 
 ```bash
 curl http://127.0.0.1:9464/metrics | head
+curl http://127.0.0.1:9090/-/ready
+curl http://127.0.0.1:3100/ready
+curl http://127.0.0.1:3200/ready
 ```
 
 If OTLP export is configured, you should also confirm:
 
 - traces are accepted by Tempo or the configured OTLP endpoint
 - logs include `traceId` and `spanId` fields for traced request paths
+
+Grafana local access:
+
+- URL: `http://127.0.0.1:3000`
+- default username: `admin`
+- default password: `admin`
+- override with `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` if needed
 
 ## Talking to the Bot
 
@@ -220,7 +239,7 @@ If the implementation is complete, the shortest path to talking to the bot is:
 1. clone the repo
 2. set `DISCORD_BOT_TOKEN` and `DISCORD_OWNER_USER_ID`
 3. invite the bot to Discord
-4. run `podman compose up -d`
+4. run `podman-compose up -d --build`
 5. DM the bot
 
 ## Operational Notes
@@ -229,6 +248,7 @@ If the implementation is complete, the shortest path to talking to the bot is:
 - 1minAI is the hosted fallback when configured.
 - NATS is included in the compose stack for the DOT-38 event-bus path.
 - OpenTelemetry traces, Prometheus metrics, and correlation-aware structured logs are now emitted by the bot process.
+- The compose stack now bundles the full local observability substrate: Prometheus, Loki, Promtail, Tempo, and Grafana.
 - Backend services are intended to be containerized so the stack can be started and stopped cleanly.
 - Persistent state should survive container restarts via mounted volumes.
 

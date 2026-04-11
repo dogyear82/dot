@@ -24,6 +24,7 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     DISCORD_OWNER_USER_ID: "owner",
     DISCORD_CLIENT_ID: "",
     LOG_LEVEL: "info",
+    LOG_FILE_PATH: "",
     OTEL_SERVICE_NAME: "dot-test",
     OTEL_EXPORTER_OTLP_ENDPOINT: "",
     METRICS_HOST: "127.0.0.1",

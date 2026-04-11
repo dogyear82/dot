@@ -9,6 +9,7 @@ const envSchema = z.object({
   DISCORD_OWNER_USER_ID: z.string().min(1, "DISCORD_OWNER_USER_ID is required"),
   DISCORD_CLIENT_ID: z.string().optional(),
   LOG_LEVEL: z.string().default("info"),
+  LOG_FILE_PATH: z.string().optional().default(""),
   OTEL_SERVICE_NAME: z.string().default("dot"),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional().default(""),
   METRICS_HOST: z.string().default("0.0.0.0"),
