@@ -83,6 +83,12 @@ Default local Grafana credentials:
 
 - username: `admin`
 - password: `admin`
+
+Provisioned Grafana dashboard:
+
+- `Dot Operator Overview`
+- includes service health, scrape health, event throughput, near-live event feed, recent failures, and trace drilldown instructions
+- click the `TraceID` derived field on Loki log lines to open the related Tempo trace
 ## Current Scope
 
 This bootstrap includes:

@@ -129,6 +129,7 @@ Rules:
 - logs should include `traceId`, `spanId`, and canonical correlation identifiers whenever a traced flow is active
 - Prometheus metrics should stay low-cardinality and avoid per-message labels
 - the dashboard should consume these emitted signals rather than inspect process internals directly
+- the v1 operator dashboard should stay Grafana-native and rely on logs-to-traces drilldown rather than a custom flowchart UI
 
 ## Proposed Components
 
