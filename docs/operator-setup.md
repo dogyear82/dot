@@ -195,6 +195,24 @@ Grafana local access:
 - default password: `admin`
 - override with `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` if needed
 
+Provisioned dashboard:
+
+- title: `Dot Operator Overview`
+- location: Grafana `Dashboards` -> `Dot`
+- purpose: service health, live event feed, recent failures, throughput, and trace drilldown
+
+Dashboard semantics:
+
+- `good` means the service reported `ready`
+- `bad` means the service reported `starting`, `stopping`, or `error`
+- `offline` means the service reported `idle` or `stopped`
+
+Trace drilldown:
+
+- use the Loki-backed event or failure panels on the dashboard
+- click the `TraceID` derived field on a log line
+- Grafana will open the related Tempo trace view
+
 ## Talking to the Bot
 
 ### Initial interaction
