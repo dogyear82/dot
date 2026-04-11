@@ -29,6 +29,21 @@ npm run dev
 - `npm run build`
 - `npm test`
 
+## Event Bus
+
+- `EVENT_BUS_ADAPTER=in-memory` keeps Dot single-process and uses the local in-memory bus
+- `EVENT_BUS_ADAPTER=nats` switches Dot to the NATS-backed adapter
+- `NATS_URL` controls the broker URL when the NATS adapter is selected and defaults to `nats://localhost:4222`
+- `compose.yaml` now includes a `nats` service and defaults the bot container to `EVENT_BUS_ADAPTER=nats`
+- override `EVENT_BUS_ADAPTER=in-memory` in `.env` only if you explicitly want the compose stack to ignore the bundled broker
+
+Current transport expectations:
+
+- topic names use the canonical event `eventType` directly
+- event payloads are published as the canonical Dot event envelope JSON
+- delivery is at-most-once for v1; Dot does not add replay, deduplication, or durable consumer semantics yet
+- handler failures are still process-local concerns and should be treated as operator-visible errors
+
 ## Current Scope
 
 This bootstrap includes:
@@ -60,11 +75,7 @@ Current 1minAI expectations:
 - Dot sends the API key in the `API-KEY` header
 - hosted use depends on `llm.mode`, not provider-specific app settings
 
-Every user-visible reply now includes a v1 power indicator:
-
-- `[power: off]` means hosted use was not allowed for that reply
-- `[power: standby]` means hosted use was allowed but not used
-- `[power: engaged]` means the reply used the hosted path
+Every user-visible reply now includes a mode indicator such as `[mode: lite]`, `[mode: normal]`, or `[mode: power]`.
 
 ## Conversation memory
 
@@ -75,6 +86,7 @@ Every user-visible reply now includes a v1 power indicator:
 ## Podman Notes
 
 - The bot image is built from `Containerfile`.
+- The compose stack now starts `bot`, `ollama`, and `nats`.
 - The Ollama service bind-mounts `${HOME}/ollama` into the container so existing local models are reused.
 - Use `podman-compose`, not `podman compose`, on this machine. `podman compose` delegates to the external Docker Compose provider here and drops the NVIDIA CDI GPU device mapping, which leaves Ollama running on CPU.
 - To start just the local model runtime with GPU support:

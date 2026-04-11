@@ -54,6 +54,8 @@ Minimum required values for basic Discord chat:
 
 Recommended additional values:
 
+- `EVENT_BUS_ADAPTER`
+- `NATS_URL` if you want to run against a NATS broker instead of the in-memory bus
 - `OLLAMA_BASE_URL`
 - `OLLAMA_MODEL`
 - `ONEMINAI_API_KEY`
@@ -78,8 +80,14 @@ Current implementation note:
 - Dot currently posts to `https://api.1min.ai/api/chat-with-ai` and sends credentials with the `API-KEY` header.
 - Hosted routing is controlled by the persisted `llm.mode` setting:
   `lite` keeps Dot local-only, `normal` allows hosted fallback on hard failures, and `power` allows hosted usage as a first-class route.
-- Replies now include a simple power indicator:
-  `[power: off]`, `[power: standby]`, or `[power: engaged]`.
+- Replies now include a simple mode indicator such as `[mode: lite]`, `[mode: normal]`, or `[mode: power]`.
+
+For the event bus:
+
+- leave `EVENT_BUS_ADAPTER=in-memory` for local single-process runs outside compose
+- set `EVENT_BUS_ADAPTER=nats` and `NATS_URL=<broker-url>` when you want Dot to publish and subscribe through NATS
+- the bundled `compose.yaml` now includes a `nats` service and defaults the bot container to `EVENT_BUS_ADAPTER=nats` with `NATS_URL=nats://nats:4222`
+- current transport semantics are intentionally simple: canonical Dot events are serialized as JSON, topics map directly to `eventType`, and v1 does not add replay or durable consumer management yet
 
 The compose stack bind-mounts `${HOME}/ollama` into the Ollama container so downloaded models are reused directly.
 
@@ -123,6 +131,7 @@ Expected backend services:
 
 - `bot`
 - `ollama`
+- `nats`
 
 Additional services may be included later if specific integrations require them.
 
@@ -140,6 +149,7 @@ You should confirm:
 - the bot container starts successfully
 - the bot connects to Discord
 - the bot can reach Ollama
+- the bot can reach NATS when the compose stack uses the bundled broker
 - the bot loads required configuration without fatal errors
 
 ## Talking to the Bot
@@ -193,6 +203,7 @@ If the implementation is complete, the shortest path to talking to the bot is:
 
 - Ollama is the default local model runtime.
 - 1minAI is the hosted fallback when configured.
+- NATS is included in the compose stack for the DOT-38 event-bus path.
 - Backend services are intended to be containerized so the stack can be started and stopped cleanly.
 - Persistent state should survive container restarts via mounted volumes.
 

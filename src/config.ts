@@ -9,6 +9,8 @@ const envSchema = z.object({
   DISCORD_OWNER_USER_ID: z.string().min(1, "DISCORD_OWNER_USER_ID is required"),
   DISCORD_CLIENT_ID: z.string().optional(),
   LOG_LEVEL: z.string().default("info"),
+  EVENT_BUS_ADAPTER: z.enum(["in-memory", "nats"]).default("in-memory"),
+  NATS_URL: z.string().url().default("nats://localhost:4222"),
   DATA_DIR: z.string().default("./data"),
   SQLITE_PATH: z.string().default("./data/dot.sqlite"),
   OLLAMA_BASE_URL: z.string().url().default("http://ollama:11434"),

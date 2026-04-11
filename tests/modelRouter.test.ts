@@ -24,6 +24,8 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     DISCORD_OWNER_USER_ID: "owner",
     DISCORD_CLIENT_ID: "",
     LOG_LEVEL: "info",
+    EVENT_BUS_ADAPTER: "in-memory",
+    NATS_URL: "nats://localhost:4222",
     DATA_DIR: "./data",
     SQLITE_PATH: "./data/test.sqlite",
     OLLAMA_BASE_URL: "http://ollama:11434",
