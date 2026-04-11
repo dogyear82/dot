@@ -83,6 +83,7 @@ Current runtime shape:
 Current host topology:
 
 - `event-bus`
+- `observability`
 - `outlook`
 - `llm`
 - `message-router`
@@ -103,6 +104,30 @@ Near-term implication:
 - the system still runs as a single process today
 - future service extraction should preserve the same host names, event topics, and ownership boundaries wherever practical
 - new infrastructure like mail sync or diagnostics should prefer landing as their own host boundary before they become separate containers
+
+## Observability Substrate
+
+Current direction:
+
+- OpenTelemetry spans for request and event-path tracing
+- Prometheus metrics for health, throughput, latency, and failure signals
+- structured JSON logs with correlation and trace identifiers for Loki ingestion
+
+Current emitted boundaries:
+
+- Discord ingress and delivery
+- canonical event-bus publish/consume
+- message routing
+- LLM requests
+- tool execution
+- Outlook calendar requests
+
+Rules:
+
+- canonical event identifiers and correlation fields should be attached to span attributes
+- logs should include `traceId`, `spanId`, and canonical correlation identifiers whenever a traced flow is active
+- Prometheus metrics should stay low-cardinality and avoid per-message labels
+- the dashboard should consume these emitted signals rather than inspect process internals directly
 
 ## Proposed Components
 

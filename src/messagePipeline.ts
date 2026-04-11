@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { SpanKind } from "@opentelemetry/api";
 
 import { evaluateAccess } from "./auth.js";
 import { appendPowerIndicator, type ChatService, type LlmRoute } from "./chat/modelRouter.js";
@@ -8,6 +9,7 @@ import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSe
 import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
 import type { MicrosoftOutlookOAuthClient } from "./outlookOAuth.js";
 import { handlePersonalityCommand, isPersonalityCommand } from "./personality.js";
+import { createSpanAttributesForEvent, recordToolExecution, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
 import { handleReminderCommand, isReminderCommand } from "./reminders.js";
 import { executeToolDecision } from "./toolInvocation.js";
@@ -28,254 +30,315 @@ export function registerMessagePipeline(params: {
   const { bus, calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence } = params;
 
   return bus.subscribeInboundMessage(async (event) => {
-    const accessDecision = evaluateAccess({
-      authorId: event.payload.sender.actorId,
-      ownerUserId,
-      isDirectMessage: event.payload.isDirectMessage,
-      mentionedBot: event.payload.mentionedBot
-    });
-
-    persistence.saveAccessAudit({
-      messageId: event.payload.messageId,
-      actorRole: accessDecision.actorRole,
-      canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
-      decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
-      transport: event.routing.transport ?? "unknown",
-      conversationId: event.correlation.conversationId ?? "unknown"
-    });
-
-    logger.info(
-      {
-        eventId: event.eventId,
-        messageId: event.payload.messageId,
-        conversationId: event.correlation.conversationId,
-        authorId: event.payload.sender.actorId,
-        actorRole: accessDecision.actorRole,
-        canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
-        isDirectMessage: event.payload.isDirectMessage,
-        mentionedBot: event.payload.mentionedBot
-      },
-      "Processing inbound message event"
-    );
-
-    const content = event.payload.addressedContent.trim();
-    const isExplicitCommand = content.startsWith("!");
-
-    if (!isExplicitCommand) {
-      const message = mapInboundEventToIncomingMessage(event);
-      const recentConversation = persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
-      const recentMessages = persistence.listRecentNormalizedMessages(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
-      const defaultChannelPolicy = persistence.settings.get("channels.defaultPolicy");
-      const isAddressed = shouldTreatOwnerMessageAsAddressed({
-        message,
-        defaultChannelPolicy,
-        recentConversation,
-        recentMessages
-      });
-
-      if (!isAddressed) {
-        return;
-      }
-    }
-
-    let hasSavedUserTurn = false;
-
-    const saveUserConversationTurn = () => {
-      if (hasSavedUserTurn || !content) {
-        return;
-      }
-
-      persistence.saveConversationTurn({
-        conversationId: event.correlation.conversationId ?? "",
-        role: "user",
-        participantActorId: event.payload.sender.actorId,
-        content,
-        sourceMessageId: event.payload.messageId,
-        createdAt: event.occurredAt
-      });
-      hasSavedUserTurn = true;
-    };
-
-    const publishReply = async (reply: string, route: LlmRoute = "none", recordConversationTurn = true) => {
-      if (recordConversationTurn) {
-        saveUserConversationTurn();
-      }
-      await bus.publishOutboundMessage(
-        createOutboundMessageRequestedEvent({
-          inboundEvent: event,
-          content: appendPowerIndicator(reply, chatService.getPowerStatus(route)),
-          recordConversationTurn
-        })
-      );
-    };
-
-    if (accessDecision.canUsePrivilegedFeatures) {
-      if (!persistence.settings.hasCompletedOnboarding()) {
-        const response = content
-          ? handleOnboardingReply(persistence.settings, content)
-          : { reply: getOnboardingPrompt(persistence.settings), onboardingComplete: false };
-        await publishReply(response.reply);
-        return;
-      }
-
-      if (isSettingsCommand(content)) {
-        await publishReply(handleSettingsCommand(persistence.settings, content));
-        return;
-      }
-
-      if (isPersonalityCommand(content)) {
-        await publishReply(handlePersonalityCommand(persistence, content));
-        return;
-      }
-
-      if (isReminderCommand(content)) {
-        const reply = handleReminderCommand(persistence, content);
-        persistence.saveToolExecutionAudit({
-          messageId: event.payload.messageId,
-          toolName: normalizeExplicitToolName(content),
-          invocationSource: "explicit",
-          status: "executed",
-          provider: null,
-          detail: content
-        });
-        await publishReply(reply);
-        return;
-      }
-
-      if (isCalendarCommand(content)) {
-        const reply = await handleCalendarCommand({
-          calendarClient,
-          content,
-          oauthClient: outlookOAuthClient,
-          persistence
-        });
-        persistence.saveToolExecutionAudit({
-          messageId: event.payload.messageId,
-          toolName: normalizeExplicitToolName(content),
-          invocationSource: "explicit",
-          status: "executed",
-          provider: null,
-          detail: content
-        });
-        await publishReply(reply);
-        return;
-      }
-
-      if (!content) {
-        return;
-      }
-
-      try {
-        try {
-          const inferred = await chatService.inferToolDecision(content);
-          if (inferred.decision.decision === "clarify") {
-            persistence.saveToolExecutionAudit({
-              messageId: event.payload.messageId,
-              toolName: inferred.decision.toolName,
-              invocationSource: "inferred",
-              status: "clarify",
-              provider: inferred.route,
-              detail: inferred.decision.reason
-            });
-            await publishReply(inferred.decision.question, inferred.route);
-            return;
+    await withEventContext(event, async () => {
+      await withSpan(
+        "message.pipeline.handle",
+        {
+          kind: SpanKind.INTERNAL,
+          attributes: {
+            ...createSpanAttributesForEvent(event),
+            "dot.actor.role": event.payload.sender.actorRole
           }
+        },
+        async (span) => {
+          const accessDecision = evaluateAccess({
+            authorId: event.payload.sender.actorId,
+            ownerUserId,
+            isDirectMessage: event.payload.isDirectMessage,
+            mentionedBot: event.payload.mentionedBot
+          });
+          let pipelineOutcome = "ignored";
+          const stopPipelineTimer = startPipelineTimer({
+            actorRole: accessDecision.actorRole,
+            outcome: () => pipelineOutcome
+          });
 
-          if (inferred.decision.decision === "execute") {
-            const reply = await executeToolDecision({
-              calendarClient,
-              decision: inferred.decision,
-              persistence
-            });
-            persistence.saveToolExecutionAudit({
+          try {
+            persistence.saveAccessAudit({
               messageId: event.payload.messageId,
-              toolName: inferred.decision.toolName,
-              invocationSource: "inferred",
-              status: "executed",
-              provider: inferred.route,
-              detail: inferred.decision.reason
+              actorRole: accessDecision.actorRole,
+              canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
+              decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
+              transport: event.routing.transport ?? "unknown",
+              conversationId: event.correlation.conversationId ?? "unknown"
             });
+
             logger.info(
-              { route: inferred.route, messageId: event.payload.messageId, toolName: inferred.decision.toolName },
-              "Executed inferred tool decision"
+              {
+                messageId: event.payload.messageId,
+                authorId: event.payload.sender.actorId,
+                actorRole: accessDecision.actorRole,
+                canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
+                isDirectMessage: event.payload.isDirectMessage,
+                mentionedBot: event.payload.mentionedBot
+              },
+              "Processing inbound message event"
             );
-            await publishReply(reply, inferred.route);
-            return;
+
+            const content = event.payload.addressedContent.trim();
+            const isExplicitCommand = content.startsWith("!");
+
+            span.setAttribute("dot.command.explicit", isExplicitCommand);
+
+            if (!isExplicitCommand) {
+              const message = mapInboundEventToIncomingMessage(event);
+              const recentConversation = persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
+              const recentMessages = persistence.listRecentNormalizedMessages(
+                event.correlation.conversationId ?? "",
+                RECENT_CHAT_HISTORY_LIMIT
+              );
+              const defaultChannelPolicy = persistence.settings.get("channels.defaultPolicy");
+              const isAddressed = shouldTreatOwnerMessageAsAddressed({
+                message,
+                defaultChannelPolicy,
+                recentConversation,
+                recentMessages
+              });
+
+              if (!isAddressed) {
+                pipelineOutcome = "ignored_unaddressed";
+                return;
+              }
+            }
+
+            let hasSavedUserTurn = false;
+
+            const saveUserConversationTurn = () => {
+              if (hasSavedUserTurn || !content) {
+                return;
+              }
+
+              persistence.saveConversationTurn({
+                conversationId: event.correlation.conversationId ?? "",
+                role: "user",
+                participantActorId: event.payload.sender.actorId,
+                content,
+                sourceMessageId: event.payload.messageId,
+                createdAt: event.occurredAt
+              });
+              hasSavedUserTurn = true;
+            };
+
+            const publishReply = async (reply: string, route: LlmRoute = "none", recordConversationTurn = true) => {
+              if (recordConversationTurn) {
+                saveUserConversationTurn();
+              }
+              await bus.publishOutboundMessage(
+                createOutboundMessageRequestedEvent({
+                  inboundEvent: event,
+                  content: appendPowerIndicator(reply, chatService.getPowerStatus(route)),
+                  recordConversationTurn
+                })
+              );
+            };
+
+            if (accessDecision.canUsePrivilegedFeatures) {
+              if (!persistence.settings.hasCompletedOnboarding()) {
+                const response = content
+                  ? handleOnboardingReply(persistence.settings, content)
+                  : { reply: getOnboardingPrompt(persistence.settings), onboardingComplete: false };
+                pipelineOutcome = "onboarding";
+                await publishReply(response.reply);
+                return;
+              }
+
+              if (isSettingsCommand(content)) {
+                pipelineOutcome = "settings_command";
+                await publishReply(handleSettingsCommand(persistence.settings, content));
+                return;
+              }
+
+              if (isPersonalityCommand(content)) {
+                pipelineOutcome = "personality_command";
+                await publishReply(handlePersonalityCommand(persistence, content));
+                return;
+              }
+
+              if (isReminderCommand(content)) {
+                const toolName = normalizeExplicitToolName(content);
+                const reply = handleReminderCommand(persistence, content);
+                persistence.saveToolExecutionAudit({
+                  messageId: event.payload.messageId,
+                  toolName,
+                  invocationSource: "explicit",
+                  status: "executed",
+                  provider: null,
+                  detail: content
+                });
+                recordToolExecution({ toolName, status: "executed" });
+                pipelineOutcome = "reminder_command";
+                await publishReply(reply);
+                return;
+              }
+
+              if (isCalendarCommand(content)) {
+                const toolName = normalizeExplicitToolName(content);
+                const reply = await handleCalendarCommand({
+                  calendarClient,
+                  content,
+                  oauthClient: outlookOAuthClient,
+                  persistence
+                });
+                persistence.saveToolExecutionAudit({
+                  messageId: event.payload.messageId,
+                  toolName,
+                  invocationSource: "explicit",
+                  status: "executed",
+                  provider: null,
+                  detail: content
+                });
+                recordToolExecution({ toolName, status: "executed" });
+                pipelineOutcome = "calendar_command";
+                await publishReply(reply);
+                return;
+              }
+
+              if (!content) {
+                pipelineOutcome = "ignored_empty";
+                return;
+              }
+
+              try {
+                try {
+                  const inferred = await chatService.inferToolDecision(content);
+                  if (inferred.decision.decision === "clarify") {
+                    persistence.saveToolExecutionAudit({
+                      messageId: event.payload.messageId,
+                      toolName: inferred.decision.toolName,
+                      invocationSource: "inferred",
+                      status: "clarify",
+                      provider: inferred.route,
+                      detail: inferred.decision.reason
+                    });
+                    recordToolExecution({ toolName: inferred.decision.toolName, status: "clarify" });
+                    pipelineOutcome = "tool_clarify";
+                    await publishReply(inferred.decision.question, inferred.route);
+                    return;
+                  }
+
+                  if (inferred.decision.decision === "execute") {
+                    const reply = await executeToolDecision({
+                      calendarClient,
+                      decision: inferred.decision,
+                      persistence
+                    });
+                    persistence.saveToolExecutionAudit({
+                      messageId: event.payload.messageId,
+                      toolName: inferred.decision.toolName,
+                      invocationSource: "inferred",
+                      status: "executed",
+                      provider: inferred.route,
+                      detail: inferred.decision.reason
+                    });
+                    recordToolExecution({ toolName: inferred.decision.toolName, status: "executed" });
+                    logger.info(
+                      { route: inferred.route, messageId: event.payload.messageId, toolName: inferred.decision.toolName },
+                      "Executed inferred tool decision"
+                    );
+                    pipelineOutcome = "tool_execute";
+                    await publishReply(reply, inferred.route);
+                    return;
+                  }
+
+                  persistence.saveToolExecutionAudit({
+                    messageId: event.payload.messageId,
+                    toolName: "none",
+                    invocationSource: "inferred",
+                    status: "skipped",
+                    provider: inferred.route,
+                    detail: inferred.decision.reason
+                  });
+                  recordToolExecution({ toolName: "none", status: "skipped" });
+                } catch (error) {
+                  persistence.saveToolExecutionAudit({
+                    messageId: event.payload.messageId,
+                    toolName: "inference-error",
+                    invocationSource: "inferred",
+                    status: "failed",
+                    provider: null,
+                    detail: error instanceof Error ? error.message : "unknown inference failure"
+                  });
+                  recordToolExecution({ toolName: "inference-error", status: "failed" });
+                  logger.warn({ err: error, messageId: event.payload.messageId }, "Tool inference failed; falling back to chat");
+                }
+
+                saveUserConversationTurn();
+                const updatedConversation = persistence.listRecentConversationTurns(
+                  event.correlation.conversationId ?? "",
+                  RECENT_CHAT_HISTORY_LIMIT
+                );
+                const response = await chatService.generateOwnerReply({
+                  userMessage: content,
+                  recentConversation: updatedConversation.slice(0, -1)
+                });
+                logger.info(
+                  { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
+                  "Generated owner chat response"
+                );
+                pipelineOutcome = "owner_chat";
+                await publishReply(response.reply, response.route);
+              } catch (error) {
+                pipelineOutcome = "owner_chat_error";
+                logger.error({ err: error, messageId: event.payload.messageId }, "Failed to generate owner chat response");
+                await bus.publishOutboundMessage(
+                  createOutboundMessageRequestedEvent({
+                    inboundEvent: event,
+                    content: appendPowerIndicator(
+                      "I couldn't generate a response from the configured model provider. Check the model settings or provider configuration.",
+                      chatService.getPowerStatus("none")
+                    ),
+                    recordConversationTurn: false
+                  })
+                );
+              }
+
+              return;
+            }
+
+            if (!content) {
+              pipelineOutcome = "ignored_empty";
+              return;
+            }
+
+            if (
+              isSettingsCommand(content) ||
+              isPersonalityCommand(content) ||
+              isReminderCommand(content) ||
+              isCalendarCommand(content)
+            ) {
+              pipelineOutcome = "owner_only_denied";
+              await publishReply("That command is owner-only.", "none", false);
+              return;
+            }
+
+            try {
+              saveUserConversationTurn();
+              const updatedConversation = persistence.listRecentConversationTurns(
+                event.correlation.conversationId ?? "",
+                RECENT_CHAT_HISTORY_LIMIT
+              );
+              const response = await chatService.generateOwnerReply({
+                userMessage: content,
+                recentConversation: updatedConversation.slice(0, -1)
+              });
+              logger.info(
+                { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
+                "Generated non-owner chat response"
+              );
+              pipelineOutcome = "non_owner_chat";
+              await publishReply(response.reply, response.route);
+            } catch (error) {
+              pipelineOutcome = "non_owner_chat_error";
+              logger.error({ err: error, messageId: event.payload.messageId }, "Failed to generate non-owner chat response");
+              await publishReply("I couldn't generate a response right now.", "none", false);
+            }
+          } finally {
+            span.setAttribute("dot.pipeline.outcome", pipelineOutcome);
+            stopPipelineTimer();
           }
-
-          persistence.saveToolExecutionAudit({
-            messageId: event.payload.messageId,
-            toolName: "none",
-            invocationSource: "inferred",
-            status: "skipped",
-            provider: inferred.route,
-            detail: inferred.decision.reason
-          });
-        } catch (error) {
-          persistence.saveToolExecutionAudit({
-            messageId: event.payload.messageId,
-            toolName: "inference-error",
-            invocationSource: "inferred",
-            status: "failed",
-            provider: null,
-            detail: error instanceof Error ? error.message : "unknown inference failure"
-          });
-          logger.warn({ err: error, messageId: event.payload.messageId }, "Tool inference failed; falling back to chat");
         }
-
-        saveUserConversationTurn();
-        const updatedConversation = persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
-        const response = await chatService.generateOwnerReply({
-          userMessage: content,
-          recentConversation: updatedConversation.slice(0, -1)
-        });
-        logger.info(
-          { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
-          "Generated owner chat response"
-        );
-        await publishReply(response.reply, response.route);
-      } catch (error) {
-        logger.error({ err: error, messageId: event.payload.messageId }, "Failed to generate owner chat response");
-        await bus.publishOutboundMessage(
-          createOutboundMessageRequestedEvent({
-            inboundEvent: event,
-            content: appendPowerIndicator(
-              "I couldn't generate a response from the configured model provider. Check the model settings or provider configuration.",
-              chatService.getPowerStatus("none")
-            ),
-            recordConversationTurn: false
-          })
-        );
-      }
-
-      return;
-    }
-
-    if (!content) {
-      return;
-    }
-
-    if (isSettingsCommand(content) || isPersonalityCommand(content) || isReminderCommand(content) || isCalendarCommand(content)) {
-      await publishReply("That command is owner-only.", "none", false);
-      return;
-    }
-
-    try {
-      saveUserConversationTurn();
-      const updatedConversation = persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
-      const response = await chatService.generateOwnerReply({
-        userMessage: content,
-        recentConversation: updatedConversation.slice(0, -1)
-      });
-      logger.info(
-        { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
-        "Generated non-owner chat response"
       );
-      await publishReply(response.reply, response.route);
-    } catch (error) {
-      logger.error({ err: error, messageId: event.payload.messageId }, "Failed to generate non-owner chat response");
-      await publishReply("I couldn't generate a response right now.", "none", false);
-    }
+    });
   });
 }
 

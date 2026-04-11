@@ -1,4 +1,6 @@
 import type { Persistence } from "./persistence.js";
+import { SpanKind } from "@opentelemetry/api";
+import { withSpan } from "./observability.js";
 import { handleCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
 import { handleReminderCommand } from "./reminders.js";
 
@@ -111,37 +113,48 @@ export async function executeToolDecision(params: {
   decision: Extract<ToolDecision, { decision: "execute" }>;
   persistence: Persistence;
 }): Promise<string> {
-  const { calendarClient, decision, persistence } = params;
+  return withSpan(
+    "tool.execute",
+    {
+      kind: SpanKind.INTERNAL,
+      attributes: {
+        "dot.tool.name": params.decision.toolName
+      }
+    },
+    async () => {
+      const { calendarClient, decision, persistence } = params;
 
-  switch (decision.toolName) {
-    case "reminder.add": {
-      const duration = getRequiredStringArg(decision.args, "duration");
-      const message = getRequiredStringArg(decision.args, "message");
-      return handleReminderCommand(persistence, `!reminder add ${duration} ${message}`);
+      switch (decision.toolName) {
+        case "reminder.add": {
+          const duration = getRequiredStringArg(decision.args, "duration");
+          const message = getRequiredStringArg(decision.args, "message");
+          return handleReminderCommand(persistence, `!reminder add ${duration} ${message}`);
+        }
+        case "reminder.show":
+          return handleReminderCommand(persistence, "!reminder show");
+        case "reminder.ack": {
+          const id = getRequiredNumericLikeArg(decision.args, "id");
+          return handleReminderCommand(persistence, `!reminder ack ${id}`);
+        }
+        case "calendar.show":
+          return handleCalendarCommand({
+            calendarClient,
+            content: "!calendar show",
+            persistence
+          });
+        case "calendar.remind": {
+          const index = getRequiredNumericLikeArg(decision.args, "index");
+          const leadTime = getOptionalStringArg(decision.args, "leadTime");
+          const content = leadTime ? `!calendar remind ${index} ${leadTime}` : `!calendar remind ${index}`;
+          return handleCalendarCommand({
+            calendarClient,
+            content,
+            persistence
+          });
+        }
+      }
     }
-    case "reminder.show":
-      return handleReminderCommand(persistence, "!reminder show");
-    case "reminder.ack": {
-      const id = getRequiredNumericLikeArg(decision.args, "id");
-      return handleReminderCommand(persistence, `!reminder ack ${id}`);
-    }
-    case "calendar.show":
-      return handleCalendarCommand({
-        calendarClient,
-        content: "!calendar show",
-        persistence
-      });
-    case "calendar.remind": {
-      const index = getRequiredNumericLikeArg(decision.args, "index");
-      const leadTime = getOptionalStringArg(decision.args, "leadTime");
-      const content = leadTime ? `!calendar remind ${index} ${leadTime}` : `!calendar remind ${index}`;
-      return handleCalendarCommand({
-        calendarClient,
-        content,
-        persistence
-      });
-    }
-  }
+  );
 }
 
 function getRequiredStringArg(args: Record<string, string | number>, key: string): string {

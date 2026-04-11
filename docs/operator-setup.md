@@ -56,6 +56,10 @@ Recommended additional values:
 
 - `EVENT_BUS_ADAPTER`
 - `NATS_URL` if you want to run against a NATS broker instead of the in-memory bus
+- `OTEL_SERVICE_NAME`
+- `OTEL_EXPORTER_OTLP_ENDPOINT` if you want traces exported to Tempo or another OTLP endpoint
+- `METRICS_HOST`
+- `METRICS_PORT`
 - `OLLAMA_BASE_URL`
 - `OLLAMA_MODEL`
 - `ONEMINAI_API_KEY`
@@ -88,6 +92,14 @@ For the event bus:
 - set `EVENT_BUS_ADAPTER=nats` and `NATS_URL=<broker-url>` when you want Dot to publish and subscribe through NATS
 - the bundled `compose.yaml` now includes a `nats` service and defaults the bot container to `EVENT_BUS_ADAPTER=nats` with `NATS_URL=nats://nats:4222`
 - current transport semantics are intentionally simple: canonical Dot events are serialized as JSON, topics map directly to `eventType`, and v1 does not add replay or durable consumer management yet
+
+For observability:
+
+- `OTEL_SERVICE_NAME=dot` is the default logical service name
+- `OTEL_EXPORTER_OTLP_ENDPOINT` should be a full OTLP HTTP traces endpoint such as `http://tempo:4318/v1/traces`
+- `METRICS_HOST=0.0.0.0` and `METRICS_PORT=9464` expose Prometheus metrics from the bot process
+- logs now include active `traceId`, `spanId`, and canonical event correlation fields when a traced flow is active
+- Prometheus should scrape `http://<bot-host>:<METRICS_PORT>/metrics`
 
 The compose stack bind-mounts `${HOME}/ollama` into the Ollama container so downloaded models are reused directly.
 
@@ -151,6 +163,18 @@ You should confirm:
 - the bot can reach Ollama
 - the bot can reach NATS when the compose stack uses the bundled broker
 - the bot loads required configuration without fatal errors
+- the bot starts the metrics endpoint if observability is enabled
+
+Optional observability checks:
+
+```bash
+curl http://127.0.0.1:9464/metrics | head
+```
+
+If OTLP export is configured, you should also confirm:
+
+- traces are accepted by Tempo or the configured OTLP endpoint
+- logs include `traceId` and `spanId` fields for traced request paths
 
 ## Talking to the Bot
 
@@ -204,6 +228,7 @@ If the implementation is complete, the shortest path to talking to the bot is:
 - Ollama is the default local model runtime.
 - 1minAI is the hosted fallback when configured.
 - NATS is included in the compose stack for the DOT-38 event-bus path.
+- OpenTelemetry traces, Prometheus metrics, and correlation-aware structured logs are now emitted by the bot process.
 - Backend services are intended to be containerized so the stack can be started and stopped cleanly.
 - Persistent state should survive container restarts via mounted volumes.
 

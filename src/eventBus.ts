@@ -1,7 +1,9 @@
 import { StringCodec, connect, type NatsConnection, type Subscription } from "nats";
+import { SpanKind } from "@opentelemetry/api";
 
 import type { AppConfig } from "./config.js";
 import type { DotEvent, InboundMessageReceivedEvent, OutboundMessageRequestedEvent } from "./events.js";
+import { createSpanAttributesForEvent, recordEventConsumed, recordEventPublished, withEventContext, withSpan } from "./observability.js";
 
 type EventHandler<TEvent extends DotEvent = DotEvent> = (event: TEvent) => void | Promise<void>;
 
@@ -34,17 +36,27 @@ export function createInMemoryEventBus(): EventBus {
   };
 
   const publish = async <TEvent extends DotEvent>(event: TEvent) => {
-    const handlers = handlersByTopic.get(event.eventType);
+    await withSpan(
+      "eventbus.publish",
+      {
+        kind: SpanKind.PRODUCER,
+        attributes: createSpanAttributesForEvent(event)
+      },
+      async () => {
+        recordEventPublished(event);
+        const handlers = handlersByTopic.get(event.eventType);
 
-    if (handlers) {
-      for (const handler of handlers) {
-        await handler(event);
+        if (handlers) {
+          for (const handler of handlers) {
+            await instrumentEventConsumption(event, "topic-subscriber", () => handler(event));
+          }
+        }
+
+        for (const handler of allHandlers) {
+          await instrumentEventConsumption(event, "all-topics-subscriber", () => handler(event));
+        }
       }
-    }
-
-    for (const handler of allHandlers) {
-      await handler(event);
-    }
+    );
   };
 
   return {
@@ -88,7 +100,8 @@ export async function createNatsEventBus(params: {
           throw error;
         }
 
-        void Promise.resolve(handler(deserializeEvent<TEvent>(codec.decode(message.data)))).catch((handlerError) => {
+        const event = deserializeEvent<TEvent>(codec.decode(message.data));
+        void instrumentEventConsumption(event, "nats-subscriber", () => handler(event)).catch((handlerError) => {
           setImmediate(() => {
             throw handlerError;
           });
@@ -111,7 +124,8 @@ export async function createNatsEventBus(params: {
           throw error;
         }
 
-        void Promise.resolve(handler(deserializeEvent(codec.decode(message.data)))).catch((handlerError) => {
+        const event = deserializeEvent(codec.decode(message.data));
+        void instrumentEventConsumption(event, "nats-all-subscriber", () => handler(event)).catch((handlerError) => {
           setImmediate(() => {
             throw handlerError;
           });
@@ -128,8 +142,18 @@ export async function createNatsEventBus(params: {
   };
 
   const publish = async <TEvent extends DotEvent>(event: TEvent) => {
-    connection.publish(event.eventType, codec.encode(JSON.stringify(event)));
-    await connection.flush();
+    await withSpan(
+      "eventbus.publish",
+      {
+        kind: SpanKind.PRODUCER,
+        attributes: createSpanAttributesForEvent(event)
+      },
+      async () => {
+        recordEventPublished(event);
+        connection.publish(event.eventType, codec.encode(JSON.stringify(event)));
+        await connection.flush();
+      }
+    );
   };
 
   return {
@@ -172,4 +196,27 @@ export async function createConfiguredEventBus(config: Pick<AppConfig, "EVENT_BU
 
 function deserializeEvent<TEvent extends DotEvent = DotEvent>(raw: string): TEvent {
   return JSON.parse(raw) as TEvent;
+}
+
+async function instrumentEventConsumption<TEvent extends DotEvent, TResult>(
+  event: TEvent,
+  consumer: string,
+  fn: () => Promise<TResult> | TResult
+): Promise<TResult> {
+  return withEventContext(event, () =>
+    withSpan(
+      "eventbus.consume",
+      {
+        kind: SpanKind.CONSUMER,
+        attributes: {
+          ...createSpanAttributesForEvent(event),
+          "dot.consumer": consumer
+        }
+      },
+      async () => {
+        recordEventConsumed({ event, consumer });
+        return await fn();
+      }
+    )
+  );
 }

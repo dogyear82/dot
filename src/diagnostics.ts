@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 
 import type { EventBus } from "./eventBus.js";
+import { recordServiceHealthSnapshot } from "./observability.js";
 import type { DotEvent, ServiceHealthReportedEvent } from "./events.js";
 import { createServiceHealthReportedEvent } from "./events.js";
 import type { Persistence } from "./persistence.js";
@@ -20,7 +21,9 @@ export function createDiagnosticsObserver(params: {
     params.persistence.saveDiagnosticEvent(event);
 
     if (isServiceHealthReportedEvent(event)) {
-      params.persistence.upsertServiceHealthSnapshot(buildServiceHealthSnapshotFromEvent(event));
+      const snapshot = buildServiceHealthSnapshotFromEvent(event);
+      params.persistence.upsertServiceHealthSnapshot(snapshot);
+      recordServiceHealthSnapshot(snapshot);
     }
   });
 

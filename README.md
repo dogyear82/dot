@@ -44,6 +44,31 @@ Current transport expectations:
 - delivery is at-most-once for v1; Dot does not add replay, deduplication, or durable consumer semantics yet
 - handler failures are still process-local concerns and should be treated as operator-visible errors
 
+## Observability
+
+- Dot now emits OpenTelemetry spans for the current core flow boundaries:
+  Discord ingress, canonical bus publish/consume, message routing, LLM requests, tool execution, and Outlook calendar requests
+- Correlation data from canonical events is attached to span attributes, including:
+  `dot.event.id`, `dot.event.type`, `dot.correlation.id`, `dot.causation.id`, `dot.conversation.id`, and `dot.actor.id`
+- Logs are now correlation-aware for Loki-style ingestion and include active `traceId`, `spanId`, and canonical event identifiers when available
+- Prometheus metrics are exposed from the bot process at `http://<host>:<METRICS_PORT>/metrics`
+
+Relevant environment variables:
+
+- `OTEL_SERVICE_NAME` defaults to `dot`
+- `OTEL_EXPORTER_OTLP_ENDPOINT` should point to an OTLP HTTP traces endpoint such as `http://tempo:4318/v1/traces`
+- `METRICS_HOST` defaults to `0.0.0.0`
+- `METRICS_PORT` defaults to `9464`
+
+Current Prometheus signals include:
+
+- inbound and outbound message counts
+- canonical bus publish/consume counts
+- message-pipeline duration
+- LLM request counts and latency
+- tool execution counts
+- current service health as one-hot gauges
+
 ## Current Scope
 
 This bootstrap includes:
