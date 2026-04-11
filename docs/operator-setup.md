@@ -111,11 +111,20 @@ For Outlook OAuth:
 
 - set `OUTLOOK_CLIENT_ID`
 - optionally set `OUTLOOK_TENANT_ID` and `OUTLOOK_OAUTH_SCOPES`
+- keep `Mail.ReadWrite` in `OUTLOOK_OAUTH_SCOPES` if you want the Outlook mail sync substrate to run under the same durable token
 - start the bot
 - run `!calendar auth start`
 - complete the Microsoft device-code sign-in in a browser
 - run `!calendar auth complete`
 - verify with `!calendar auth status`
+
+For Outlook mail sync:
+
+- optionally set `OUTLOOK_MAIL_APPROVED_FOLDER` and `OUTLOOK_MAIL_SYNC_INTERVAL_MS`
+- the first pass stays inside the single bot runtime as the `mail-sync` host
+- it uses Microsoft Graph delta sync rather than rescanning the whole inbox every cycle
+- it ensures the approved folder exists and persists the delta cursor for future runs
+- this story does not classify mail or move messages yet; it only establishes the durable substrate
 
 ### 3. Create the Discord application
 
