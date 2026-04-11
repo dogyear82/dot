@@ -29,27 +29,44 @@ function inboundEvent(overrides: Partial<InboundMessageReceivedEvent> = {}): Inb
   return {
     eventId: "discord:msg-1",
     eventType: "inbound.message.received",
+    eventVersion: "1.0.0",
     occurredAt: "2026-04-09T00:00:00.000Z",
-    transport: "discord",
-    conversationId: "channel-1",
-    sourceMessageId: "msg-1",
-    correlationId: "msg-1",
-    sender: {
-      actorId: "owner-1",
-      displayName: "tan",
-      actorRole: "owner"
+    producer: {
+      service: "discord-ingress"
     },
-    replyRoute: {
+    correlation: {
+      correlationId: "msg-1",
+      causationId: null,
+      conversationId: "channel-1",
+      actorId: "owner-1"
+    },
+    routing: {
       transport: "discord",
       channelId: "channel-1",
       guildId: "guild-1",
-      replyToMessageId: "msg-1"
+      replyTo: "msg-1"
+    },
+    diagnostics: {
+      severity: "info",
+      category: "discord.inbound"
     },
     payload: {
+      messageId: "msg-1",
+      sender: {
+        actorId: "owner-1",
+        displayName: "tan",
+        actorRole: "owner"
+      },
       content: "!settings show",
       addressedContent: "!settings show",
       isDirectMessage: false,
-      mentionedBot: true
+      mentionedBot: true,
+      replyRoute: {
+        transport: "discord",
+        channelId: "channel-1",
+        guildId: "guild-1",
+        replyTo: "msg-1"
+      }
     },
     ...overrides
   };
@@ -103,10 +120,10 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
     await bus.publishInboundMessage(inboundEvent());
 
     assert.equal(outbound.length, 1);
-    assert.equal(outbound[0]?.replyRoute.replyToMessageId, "msg-1");
-    assert.equal(outbound[0]?.recordConversationTurn, true);
-    assert.match(outbound[0]?.content ?? "", /Current settings:/);
-    assert.match(outbound[0]?.content ?? "", /\[mode: normal\]/);
+    assert.equal(outbound[0]?.payload.replyRoute.replyTo, "msg-1");
+    assert.equal(outbound[0]?.payload.recordConversationTurn, true);
+    assert.match(outbound[0]?.payload.content ?? "", /Current settings:/);
+    assert.match(outbound[0]?.payload.content ?? "", /\[mode: normal\]/);
   } finally {
     unsubscribe();
     cleanup();
@@ -152,18 +169,35 @@ test("message pipeline handles explicit owner commands before addressedness infe
   try {
     await bus.publishInboundMessage(
       inboundEvent({
-        sourceMessageId: "msg-owner-command-unmentioned",
+        routing: {
+          transport: "discord",
+          channelId: "channel-1",
+          guildId: "guild-1",
+          replyTo: "msg-owner-command-unmentioned"
+        },
         payload: {
+          messageId: "msg-owner-command-unmentioned",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
           content: "!settings show",
           addressedContent: "!settings show",
           isDirectMessage: false,
-          mentionedBot: false
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-owner-command-unmentioned"
+          }
         }
       })
     );
 
     assert.equal(outbound.length, 1);
-    assert.match(outbound[0]?.content ?? "", /Current settings:/);
+    assert.match(outbound[0]?.payload.content ?? "", /Current settings:/);
   } finally {
     unsubscribe();
     cleanup();
@@ -261,18 +295,30 @@ test("message pipeline appends an engaged power indicator when chat uses the hos
     await bus.publishInboundMessage(
       inboundEvent({
         payload: {
+          messageId: "msg-1",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
           content: "tell me something interesting",
           addressedContent: "tell me something interesting",
           isDirectMessage: false,
-          mentionedBot: true
+          mentionedBot: true,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-1"
+          }
         }
       })
     );
 
     assert.equal(outbound.length, 1);
-    assert.equal(outbound[0]?.recordConversationTurn, true);
-    assert.match(outbound[0]?.content ?? "", /hosted chat reply/);
-    assert.match(outbound[0]?.content ?? "", /\[mode: power\]/);
+    assert.equal(outbound[0]?.payload.recordConversationTurn, true);
+    assert.match(outbound[0]?.payload.content ?? "", /hosted chat reply/);
+    assert.match(outbound[0]?.payload.content ?? "", /\[mode: power\]/);
   } finally {
     unsubscribe();
     cleanup();
@@ -316,23 +362,35 @@ test("message pipeline lets clearly addressed non-owner messages flow through no
   try {
     await bus.publishInboundMessage(
       inboundEvent({
-        sourceMessageId: "msg-non-owner",
-        sender: {
-          actorId: "user-2",
-          displayName: "alice",
-          actorRole: "non-owner"
+        correlation: {
+          correlationId: "msg-non-owner",
+          causationId: null,
+          conversationId: "channel-1",
+          actorId: "user-2"
         },
         payload: {
+          messageId: "msg-non-owner",
+          sender: {
+            actorId: "user-2",
+            displayName: "alice",
+            actorRole: "non-owner"
+          },
           content: "<@bot> can you tell the owner I need a callback?",
           addressedContent: "can you tell the owner I need a callback?",
           isDirectMessage: false,
-          mentionedBot: true
+          mentionedBot: true,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-non-owner"
+          }
         }
       })
     );
 
     assert.equal(outbound.length, 1);
-    assert.match(outbound[0]?.content ?? "", /non-owner chat reply/i);
+    assert.match(outbound[0]?.payload.content ?? "", /non-owner chat reply/i);
   } finally {
     unsubscribe();
     cleanup();
@@ -377,17 +435,29 @@ test("message pipeline stays silent for non-owner shared-channel messages that a
   try {
     await bus.publishInboundMessage(
       inboundEvent({
-        sourceMessageId: "msg-unaddressed-non-owner",
-        sender: {
-          actorId: "user-2",
-          displayName: "alice",
-          actorRole: "non-owner"
+        correlation: {
+          correlationId: "msg-unaddressed-non-owner",
+          causationId: null,
+          conversationId: "channel-1",
+          actorId: "user-2"
         },
         payload: {
+          messageId: "msg-unaddressed-non-owner",
+          sender: {
+            actorId: "user-2",
+            displayName: "alice",
+            actorRole: "non-owner"
+          },
           content: "what about tomorrow?",
           addressedContent: "what about tomorrow?",
           isDirectMessage: false,
-          mentionedBot: false
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-unaddressed-non-owner"
+          }
         }
       })
     );
@@ -437,23 +507,35 @@ test("message pipeline blocks owner-only commands for non-owner users", async ()
   try {
     await bus.publishInboundMessage(
       inboundEvent({
-        sourceMessageId: "msg-non-owner-command",
-        sender: {
-          actorId: "user-2",
-          displayName: "alice",
-          actorRole: "non-owner"
+        correlation: {
+          correlationId: "msg-non-owner-command",
+          causationId: null,
+          conversationId: "channel-1",
+          actorId: "user-2"
         },
         payload: {
+          messageId: "msg-non-owner-command",
+          sender: {
+            actorId: "user-2",
+            displayName: "alice",
+            actorRole: "non-owner"
+          },
           content: "!settings show",
           addressedContent: "!settings show",
           isDirectMessage: true,
-          mentionedBot: false
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-non-owner-command"
+          }
         }
       })
     );
 
     assert.equal(outbound.length, 1);
-    assert.match(outbound[0]?.content ?? "", /owner-only/i);
+    assert.match(outbound[0]?.payload.content ?? "", /owner-only/i);
   } finally {
     unsubscribe();
     cleanup();

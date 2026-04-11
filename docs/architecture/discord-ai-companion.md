@@ -130,14 +130,54 @@ Recommended core event fields:
 
 - `eventId`
 - `eventType`
+- `eventVersion`
 - `occurredAt`
-- `transport`
-- `conversationId`
-- `messageId`
-- `sender`
-- `recipient`
-- `replyRoute`
+- `producer`
+- `correlation`
+- `routing`
+- `diagnostics`
 - `payload`
+
+Canonical envelope shape:
+
+```ts
+type DotEvent<TPayload = unknown> = {
+  eventId: string;
+  eventType: string;
+  eventVersion: string;
+  occurredAt: string;
+  producer: {
+    service: string;
+    instanceId?: string;
+  };
+  correlation: {
+    correlationId: string;
+    causationId: string | null;
+    conversationId: string | null;
+    actorId: string | null;
+  };
+  routing: {
+    transport: string | null;
+    channelId: string | null;
+    guildId: string | null;
+    replyTo: string | null;
+  };
+  diagnostics: {
+    severity: "debug" | "info" | "warn" | "error";
+    category: string | null;
+  };
+  payload: TPayload;
+};
+```
+
+Rules:
+
+- all inter-service events use the same top-level envelope
+- only `payload` changes materially by domain
+- `correlationId` groups an end-to-end flow
+- `causationId` links a derived event to its parent event
+- routing metadata belongs in `routing`, not flattened top-level fields
+- additive payload evolution should preserve existing event consumers whenever possible
 
 Examples:
 
