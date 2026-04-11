@@ -1,4 +1,6 @@
 import type { AppConfig } from "../config.js";
+import { SpanKind } from "@opentelemetry/api";
+import { startLlmTimer, withSpan } from "../observability.js";
 import type { SettingsStore } from "../settings.js";
 import type { ConversationTurnRecord } from "../types.js";
 import { buildToolInferencePrompt, inferDeterministicToolDecision, parseToolDecision, type ToolDecision } from "../toolInvocation.js";
@@ -63,6 +65,7 @@ export function createLlmService(params: {
       const { route, reply } = await executeProviderRequest({
         mode: getLlmMode(params.settings),
         providers,
+        operation: "chat.generate",
         invoke: (provider) => provider.generate(messages),
         failurePrefix: "No LLM provider could generate a response."
       });
@@ -92,6 +95,7 @@ export function createLlmService(params: {
       const { route, reply } = await executeProviderRequest({
         mode: getLlmMode(params.settings),
         providers,
+        operation: "tool.infer",
         invoke: async (provider) => parseToolDecision(await provider.generate(messages)),
         failurePrefix: "No LLM provider could infer a tool decision."
       });
@@ -142,6 +146,7 @@ export function orderProvidersForMode(providers: ChatProvider[], mode: LlmMode):
 async function executeProviderRequest<T>(params: {
   mode: LlmMode;
   providers: ChatProvider[];
+  operation: string;
   invoke: (provider: ChatProvider) => Promise<T>;
   failurePrefix: string;
 }): Promise<{ route: LlmRoute; reply: T }> {
@@ -154,10 +159,33 @@ async function executeProviderRequest<T>(params: {
       continue;
     }
 
+    const timer = startLlmTimer({
+      operation: params.operation,
+      provider: provider.name,
+      route: provider.route
+    });
+
     try {
-      const reply = await params.invoke(provider);
+      const reply = await withSpan(
+        "llm.request",
+        {
+          kind: SpanKind.CLIENT,
+          attributes: {
+            "dot.llm.operation": params.operation,
+            "dot.llm.provider": provider.name,
+            "dot.llm.route": provider.route
+          }
+        },
+        async (span) => {
+          const response = await params.invoke(provider);
+          span.setAttribute("dot.llm.outcome", "success");
+          return response;
+        }
+      );
+      timer.stop("success");
       return { route: provider.route, reply };
     } catch (error) {
+      timer.stop("failure");
       failures.push(`${provider.route}: ${formatError(error)}`);
     }
   }

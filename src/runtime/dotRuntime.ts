@@ -9,6 +9,7 @@ import { createDiagnosticsObserver, createHostHealthEvent } from "../diagnostics
 import { createDiscordClient } from "../discord/createClient.js";
 import { createConfiguredEventBus } from "../eventBus.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
+import { startObservability } from "../observability.js";
 import { MicrosoftGraphOutlookCalendarClient } from "../outlookCalendar.js";
 import { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
 import { initializePersistence } from "../persistence.js";
@@ -40,6 +41,7 @@ export async function createDotRuntime(params: {
   let unregisterMessagePipeline: (() => void) | undefined;
   let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
   let diagnosticsObserver: ReturnType<typeof createDiagnosticsObserver> | undefined;
+  let observability: ReturnType<typeof startObservability> | undefined;
 
   const emitHostHealth = async (status: ServiceStatus) => {
     try {
@@ -65,6 +67,20 @@ export async function createDotRuntime(params: {
       }
     }),
     createServiceHost({
+      name: "observability",
+      onStatusChange: emitHostHealth,
+      start() {
+        observability = startObservability({
+          config,
+          logger
+        });
+      },
+      async stop() {
+        await observability?.stop();
+        observability = undefined;
+      }
+    }),
+    createServiceHost({
       name: "diagnostics",
       onStatusChange: emitHostHealth,
       async start() {
@@ -75,6 +91,11 @@ export async function createDotRuntime(params: {
         });
         await emitHostHealth({
           name: "event-bus",
+          readiness: "ready",
+          detail: null
+        });
+        await emitHostHealth({
+          name: "observability",
           readiness: "ready",
           detail: null
         });
@@ -172,7 +193,7 @@ export async function createDotRuntime(params: {
 
       logger.info(
         {
-          services: ["event-bus", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders"]
+          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders"]
         },
         "Initialized Dot service host topology"
       );

@@ -1,4 +1,6 @@
 import type { AppConfig } from "./config.js";
+import { SpanKind } from "@opentelemetry/api";
+import { withSpan } from "./observability.js";
 import { MicrosoftOutlookOAuthClient, OutlookOAuthConfigurationError } from "./outlookOAuth.js";
 import type { Persistence } from "./persistence.js";
 import { parseDuration } from "./reminders.js";
@@ -46,36 +48,48 @@ export class MicrosoftGraphOutlookCalendarClient implements OutlookCalendarClien
   ) {}
 
   async listUpcomingEvents(now = new Date(), limit = DEFAULT_EVENT_LIMIT): Promise<OutlookCalendarEvent[]> {
-    const accessToken = await this.resolveAccessToken(now);
+    return withSpan(
+      "outlook.calendar.list",
+      {
+        kind: SpanKind.CLIENT,
+        attributes: {
+          "dot.outlook.calendar.limit": limit,
+          "dot.outlook.calendar.lookahead_days": this.config.OUTLOOK_LOOKAHEAD_DAYS
+        }
+      },
+      async () => {
+        const accessToken = await this.resolveAccessToken(now);
 
-    const start = now.toISOString();
-    const end = new Date(now.getTime() + this.config.OUTLOOK_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    const calendarPath = this.config.OUTLOOK_CALENDAR_ID
-      ? `/me/calendars/${encodeURIComponent(this.config.OUTLOOK_CALENDAR_ID)}/calendarView`
-      : "/me/calendarView";
-    const url = new URL(`${this.config.OUTLOOK_GRAPH_BASE_URL}${calendarPath}`);
-    url.searchParams.set("startDateTime", start);
-    url.searchParams.set("endDateTime", end);
-    url.searchParams.set("$top", String(limit));
-    url.searchParams.set("$orderby", "start/dateTime");
-    url.searchParams.set("$select", "id,subject,start,end,webLink");
+        const start = now.toISOString();
+        const end = new Date(now.getTime() + this.config.OUTLOOK_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+        const calendarPath = this.config.OUTLOOK_CALENDAR_ID
+          ? `/me/calendars/${encodeURIComponent(this.config.OUTLOOK_CALENDAR_ID)}/calendarView`
+          : "/me/calendarView";
+        const url = new URL(`${this.config.OUTLOOK_GRAPH_BASE_URL}${calendarPath}`);
+        url.searchParams.set("startDateTime", start);
+        url.searchParams.set("endDateTime", end);
+        url.searchParams.set("$top", String(limit));
+        url.searchParams.set("$orderby", "start/dateTime");
+        url.searchParams.set("$select", "id,subject,start,end,webLink");
 
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Prefer: 'outlook.timezone="UTC"'
+        const response = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Prefer: 'outlook.timezone="UTC"'
+          }
+        });
+
+        if (!response.ok) {
+          const detail = await response.text();
+          throw new Error(`Outlook calendar request failed: ${response.status} ${detail}`.trim());
+        }
+
+        const payload = (await response.json()) as MicrosoftGraphCalendarViewResponse;
+        return (payload.value ?? [])
+          .map((event) => mapMicrosoftGraphEvent(event))
+          .filter((event): event is OutlookCalendarEvent => event != null);
       }
-    });
-
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`Outlook calendar request failed: ${response.status} ${detail}`.trim());
-    }
-
-    const payload = (await response.json()) as MicrosoftGraphCalendarViewResponse;
-    return (payload.value ?? [])
-      .map((event) => mapMicrosoftGraphEvent(event))
-      .filter((event): event is OutlookCalendarEvent => event != null);
+    );
   }
 
   private async resolveAccessToken(now: Date): Promise<string> {
@@ -124,120 +138,131 @@ export async function handleCalendarCommand(params: {
   oauthClient?: MicrosoftOutlookOAuthClient;
   persistence: Persistence;
 }): Promise<string> {
-  const { calendarClient, content, now = new Date(), oauthClient, persistence } = params;
-  const parts = normalizeCalendarCommand(content).split(/\s+/);
+  return withSpan(
+    "outlook.calendar.command",
+    {
+      kind: SpanKind.INTERNAL,
+      attributes: {
+        "dot.calendar.command": params.content.trim()
+      }
+    },
+    async () => {
+      const { calendarClient, content, now = new Date(), oauthClient, persistence } = params;
+      const parts = normalizeCalendarCommand(content).split(/\s+/);
 
-  if (parts.length === 1 || parts[1] === "help") {
-    return [
-      "Calendar commands:",
-      "- `!calendar show`",
-      "- `!calendar remind <index> [lead-time]`",
-      "- `!calendar auth help|start|complete|status`",
-      "Examples:",
-      "- `!calendar remind 1`",
-      "- `!calendar remind 2 15m`",
-      "- `!calendar auth start`"
-    ].join("\n");
-  }
-
-  if (parts[1] === "auth") {
-    if (!oauthClient) {
-      return "Outlook OAuth is not configured in this runtime. Set `OUTLOOK_CLIENT_ID` and restart Dot.";
-    }
-
-    if (!parts[2] || parts[2] === "help") {
-      return [
-        "Calendar auth commands:",
-        "- `!calendar auth start`",
-        "- `!calendar auth complete`",
-        "- `!calendar auth status`"
-      ].join("\n");
-    }
-
-    if (parts[2] === "start") {
-      try {
-        const flow = await oauthClient.startDeviceAuthorization(now);
+      if (parts.length === 1 || parts[1] === "help") {
         return [
-          "Outlook authorization started.",
-          flow.message,
-          `After signing in, run \`!calendar auth complete\`.`
+          "Calendar commands:",
+          "- `!calendar show`",
+          "- `!calendar remind <index> [lead-time]`",
+          "- `!calendar auth help|start|complete|status`",
+          "Examples:",
+          "- `!calendar remind 1`",
+          "- `!calendar remind 2 15m`",
+          "- `!calendar auth start`"
         ].join("\n");
-      } catch (error) {
-        return formatCalendarError(error);
-      }
-    }
-
-    if (parts[2] === "complete") {
-      try {
-        return await oauthClient.completeDeviceAuthorization(now);
-      } catch (error) {
-        return formatCalendarError(error);
-      }
-    }
-
-    if (parts[2] === "status") {
-      try {
-        return oauthClient.getAuthorizationStatus(now);
-      } catch (error) {
-        return formatCalendarError(error);
-      }
-    }
-
-    return "Invalid calendar auth command. Use `!calendar auth help`.";
-  }
-
-  if (parts[1] === "show") {
-    try {
-      const events = await calendarClient.listUpcomingEvents(now, DEFAULT_EVENT_LIMIT);
-      if (events.length === 0) {
-        return "No upcoming Outlook calendar events were found in the configured lookahead window.";
       }
 
-      return [
-        "Upcoming Outlook events:",
-        ...events.map((event, index) => formatEventSummary(index + 1, event))
-      ].join("\n");
-    } catch (error) {
-      return formatCalendarError(error);
-    }
-  }
+      if (parts[1] === "auth") {
+        if (!oauthClient) {
+          return "Outlook OAuth is not configured in this runtime. Set `OUTLOOK_CLIENT_ID` and restart Dot.";
+        }
 
-  if (parts[1] === "remind" && parts[2]) {
-    const index = Number(parts[2]);
-    if (!Number.isInteger(index) || index <= 0) {
-      return "Calendar event indexes must be positive integers. Use `!calendar show` first.";
-    }
+        if (!parts[2] || parts[2] === "help") {
+          return [
+            "Calendar auth commands:",
+            "- `!calendar auth start`",
+            "- `!calendar auth complete`",
+            "- `!calendar auth status`"
+          ].join("\n");
+        }
 
-    const leadTime = parts[3] ? parseDuration(parts[3]) : 0;
-    if (parts[3] && leadTime == null) {
-      return "Lead time must look like `30s`, `10m`, `2h`, or `1d`.";
-    }
+        if (parts[2] === "start") {
+          try {
+            const flow = await oauthClient.startDeviceAuthorization(now);
+            return [
+              "Outlook authorization started.",
+              flow.message,
+              `After signing in, run \`!calendar auth complete\`.`
+            ].join("\n");
+          } catch (error) {
+            return formatCalendarError(error);
+          }
+        }
 
-    try {
-      const events = await calendarClient.listUpcomingEvents(now, DEFAULT_EVENT_LIMIT);
-      const selectedEvent = events[index - 1];
-      if (!selectedEvent) {
-        return `Calendar event #${index} was not found. Use \`!calendar show\` to refresh the list.`;
+        if (parts[2] === "complete") {
+          try {
+            return await oauthClient.completeDeviceAuthorization(now);
+          } catch (error) {
+            return formatCalendarError(error);
+          }
+        }
+
+        if (parts[2] === "status") {
+          try {
+            return oauthClient.getAuthorizationStatus(now);
+          } catch (error) {
+            return formatCalendarError(error);
+          }
+        }
+
+        return "Invalid calendar auth command. Use `!calendar auth help`.";
       }
 
-      const dueAt = new Date(new Date(selectedEvent.startAt).getTime() - (leadTime ?? 0));
-      if (Number.isNaN(dueAt.getTime())) {
-        return `Calendar event #${index} has an invalid start time.`;
+      if (parts[1] === "show") {
+        try {
+          const events = await calendarClient.listUpcomingEvents(now, DEFAULT_EVENT_LIMIT);
+          if (events.length === 0) {
+            return "No upcoming Outlook calendar events were found in the configured lookahead window.";
+          }
+
+          return [
+            "Upcoming Outlook events:",
+            ...events.map((event, index) => formatEventSummary(index + 1, event))
+          ].join("\n");
+        } catch (error) {
+          return formatCalendarError(error);
+        }
       }
 
-      if (dueAt.getTime() <= now.getTime()) {
-        return `Calendar event #${index} starts too soon for that reminder lead time.`;
+      if (parts[1] === "remind" && parts[2]) {
+        const index = Number(parts[2]);
+        if (!Number.isInteger(index) || index <= 0) {
+          return "Calendar event indexes must be positive integers. Use `!calendar show` first.";
+        }
+
+        const leadTime = parts[3] ? parseDuration(parts[3]) : 0;
+        if (parts[3] && leadTime == null) {
+          return "Lead time must look like `30s`, `10m`, `2h`, or `1d`.";
+        }
+
+        try {
+          const events = await calendarClient.listUpcomingEvents(now, DEFAULT_EVENT_LIMIT);
+          const selectedEvent = events[index - 1];
+          if (!selectedEvent) {
+            return `Calendar event #${index} was not found. Use \`!calendar show\` to refresh the list.`;
+          }
+
+          const dueAt = new Date(new Date(selectedEvent.startAt).getTime() - (leadTime ?? 0));
+          if (Number.isNaN(dueAt.getTime())) {
+            return `Calendar event #${index} has an invalid start time.`;
+          }
+
+          if (dueAt.getTime() <= now.getTime()) {
+            return `Calendar event #${index} starts too soon for that reminder lead time.`;
+          }
+
+          const reminderMessage = buildCalendarReminderMessage(selectedEvent, leadTime ?? 0);
+          const reminder = persistence.createReminder(reminderMessage, dueAt.toISOString());
+          return `Saved reminder #${reminder.id} for Outlook event #${index} at ${dueAt.toISOString()}: ${reminder.message}`;
+        } catch (error) {
+          return formatCalendarError(error);
+        }
       }
 
-      const reminderMessage = buildCalendarReminderMessage(selectedEvent, leadTime ?? 0);
-      const reminder = persistence.createReminder(reminderMessage, dueAt.toISOString());
-      return `Saved reminder #${reminder.id} for Outlook event #${index} at ${dueAt.toISOString()}: ${reminder.message}`;
-    } catch (error) {
-      return formatCalendarError(error);
+      return "Invalid calendar command. Use `!calendar help`.";
     }
-  }
-
-  return "Invalid calendar command. Use `!calendar help`.";
+  );
 }
 
 export function formatEventSummary(index: number, event: OutlookCalendarEvent): string {
