@@ -106,7 +106,64 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
     assert.equal(outbound[0]?.replyRoute.replyToMessageId, "msg-1");
     assert.equal(outbound[0]?.recordConversationTurn, true);
     assert.match(outbound[0]?.content ?? "", /Current settings:/);
-    assert.match(outbound[0]?.content ?? "", /\[power: standby\]/);
+    assert.match(outbound[0]?.content ?? "", /\[mode: normal\]/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline handles explicit owner commands before addressedness inference", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("explicit commands should not invoke chat");
+    },
+    async inferToolDecision() {
+      throw new Error("explicit commands should not invoke inference");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        sourceMessageId: "msg-owner-command-unmentioned",
+        payload: {
+          content: "!settings show",
+          addressedContent: "!settings show",
+          isDirectMessage: false,
+          mentionedBot: false
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.content ?? "", /Current settings:/);
   } finally {
     unsubscribe();
     cleanup();
@@ -215,7 +272,188 @@ test("message pipeline appends an engaged power indicator when chat uses the hos
     assert.equal(outbound.length, 1);
     assert.equal(outbound[0]?.recordConversationTurn, true);
     assert.match(outbound[0]?.content ?? "", /hosted chat reply/);
-    assert.match(outbound[0]?.content ?? "", /\[power: engaged\]/);
+    assert.match(outbound[0]?.content ?? "", /\[mode: power\]/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+test("message pipeline lets clearly addressed non-owner messages flow through normal chat", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      return { route: "local", powerStatus: "standby", reply: "non-owner chat reply" };
+    },
+    async inferToolDecision() {
+      throw new Error("non-owner chat should not invoke tool inference");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        sourceMessageId: "msg-non-owner",
+        sender: {
+          actorId: "user-2",
+          displayName: "alice",
+          actorRole: "non-owner"
+        },
+        payload: {
+          content: "<@bot> can you tell the owner I need a callback?",
+          addressedContent: "can you tell the owner I need a callback?",
+          isDirectMessage: false,
+          mentionedBot: true
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.content ?? "", /non-owner chat reply/i);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline stays silent for non-owner shared-channel messages that are not clearly addressed", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("unaddressed non-owner messages should stay silent");
+    },
+    async inferToolDecision() {
+      throw new Error("unaddressed non-owner messages should stay silent");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        sourceMessageId: "msg-unaddressed-non-owner",
+        sender: {
+          actorId: "user-2",
+          displayName: "alice",
+          actorRole: "non-owner"
+        },
+        payload: {
+          content: "what about tomorrow?",
+          addressedContent: "what about tomorrow?",
+          isDirectMessage: false,
+          mentionedBot: false
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 0);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline blocks owner-only commands for non-owner users", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("owner-only command denial should not invoke chat");
+    },
+    async inferToolDecision() {
+      throw new Error("owner-only command denial should not invoke tool inference");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        sourceMessageId: "msg-non-owner-command",
+        sender: {
+          actorId: "user-2",
+          displayName: "alice",
+          actorRole: "non-owner"
+        },
+        payload: {
+          content: "!settings show",
+          addressedContent: "!settings show",
+          isDirectMessage: true,
+          mentionedBot: false
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.content ?? "", /owner-only/i);
   } finally {
     unsubscribe();
     cleanup();

@@ -58,7 +58,10 @@ export function registerMessagePipeline(params: {
       "Processing inbound message event"
     );
 
-    if (accessDecision.canUsePrivilegedFeatures) {
+    const content = event.payload.addressedContent.trim();
+    const isExplicitCommand = content.startsWith("!");
+
+    if (!isExplicitCommand) {
       const message = mapInboundEventToIncomingMessage(event);
       const recentConversation = persistence.listRecentConversationTurns(event.conversationId, RECENT_CHAT_HISTORY_LIMIT);
       const recentMessages = persistence.listRecentNormalizedMessages(event.conversationId, RECENT_CHAT_HISTORY_LIMIT);
@@ -73,35 +76,40 @@ export function registerMessagePipeline(params: {
       if (!isAddressed) {
         return;
       }
+    }
 
-      const content = event.payload.addressedContent.trim();
-      let hasSavedUserTurn = false;
+    let hasSavedUserTurn = false;
 
-      const saveUserConversationTurn = () => {
-        if (hasSavedUserTurn || !content) {
-          return;
-        }
+    const saveUserConversationTurn = () => {
+      if (hasSavedUserTurn || !content) {
+        return;
+      }
 
         persistence.saveConversationTurn({
           conversationId: event.conversationId,
           role: "user",
+          participantActorId: event.sender.actorId,
           content,
           sourceMessageId: event.sourceMessageId,
           createdAt: event.occurredAt
-        });
-        hasSavedUserTurn = true;
-      };
+      });
+      hasSavedUserTurn = true;
+    };
 
-      const publishReply = async (reply: string, route: LlmRoute = "none") => {
+    const publishReply = async (reply: string, route: LlmRoute = "none", recordConversationTurn = true) => {
+      if (recordConversationTurn) {
         saveUserConversationTurn();
-        await bus.publishOutboundMessage(
-          createOutboundMessageRequestedEvent({
-            inboundEvent: event,
-            content: appendPowerIndicator(reply, chatService.getPowerStatus(route)),
-            recordConversationTurn: true
-          })
-        );
-      };
+      }
+      await bus.publishOutboundMessage(
+        createOutboundMessageRequestedEvent({
+          inboundEvent: event,
+          content: appendPowerIndicator(reply, chatService.getPowerStatus(route)),
+          recordConversationTurn
+        })
+      );
+    };
+
+    if (accessDecision.canUsePrivilegedFeatures) {
 
       if (!persistence.settings.hasCompletedOnboarding()) {
         const response = content
@@ -244,14 +252,30 @@ export function registerMessagePipeline(params: {
       return;
     }
 
-    if (accessDecision.shouldReply && accessDecision.responseMessage) {
-      await bus.publishOutboundMessage(
-        createOutboundMessageRequestedEvent({
-          inboundEvent: event,
-          content: appendPowerIndicator(accessDecision.responseMessage, chatService.getPowerStatus("none")),
-          recordConversationTurn: false
-        })
+    if (!content) {
+      return;
+    }
+
+    if (isSettingsCommand(content) || isPersonalityCommand(content) || isReminderCommand(content) || isCalendarCommand(content)) {
+      await publishReply("That command is owner-only.", "none", false);
+      return;
+    }
+
+    try {
+      saveUserConversationTurn();
+      const updatedConversation = persistence.listRecentConversationTurns(event.conversationId, RECENT_CHAT_HISTORY_LIMIT);
+      const response = await chatService.generateOwnerReply({
+        userMessage: content,
+        recentConversation: updatedConversation.slice(0, -1)
+      });
+      logger.info(
+        { route: response.route, powerStatus: response.powerStatus, messageId: event.sourceMessageId },
+        "Generated non-owner chat response"
       );
+      await publishReply(response.reply, response.route);
+    } catch (error) {
+      logger.error({ err: error, messageId: event.sourceMessageId }, "Failed to generate non-owner chat response");
+      await publishReply("I couldn't generate a response right now.", "none", false);
     }
   });
 }

@@ -3,7 +3,7 @@ import { Client, Events, GatewayIntentBits, Partials, type Message } from "disco
 import type { Logger } from "pino";
 
 import type { EventBus } from "../eventBus.js";
-import { normalizeMessage, stripLeadingBotMention } from "./normalize.js";
+import { normalizeMessage } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 import { createDiscordInboundMessageEvent } from "./events.js";
 
@@ -41,12 +41,15 @@ export function createDiscordClient(params: {
     }
 
     const botUserId = client.user.id;
-    const normalized = normalizeMessage(message, botUserId);
+    const botRoleIds = message.guild?.members.me?.roles.cache.map((role) => role.id) ?? [];
+    const normalized = normalizeMessage(message, { botUserId, botUsername: client.user.username, botRoleIds });
     persistence.saveNormalizedMessage(normalized);
     replyRegistry.set(normalized.id, message);
     const inboundEvent = createDiscordInboundMessageEvent({
       message: normalized,
       botUserId,
+      botUsername: client.user.username,
+      botRoleIds,
       ownerUserId
     });
 
@@ -76,12 +79,17 @@ export function createDiscordClient(params: {
     const replyTo = replyRegistry.get(event.replyRoute.replyToMessageId);
     if (replyTo) {
       const sent = await replyTo.reply(event.content);
-      const normalizedSent = normalizeMessage(sent, client.user.id);
+      const normalizedSent = normalizeMessage(sent, {
+        botUserId: client.user.id,
+        botUsername: client.user.username,
+        botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
+      });
       persistence.saveNormalizedMessage(normalizedSent);
       if (event.recordConversationTurn) {
         persistence.saveConversationTurn({
           conversationId: event.conversationId,
           role: "assistant",
+          participantActorId: event.participantActorId,
           content: event.content,
           sourceMessageId: sent.id,
           createdAt: sent.createdAt.toISOString()
@@ -98,12 +106,17 @@ export function createDiscordClient(params: {
 
     const sent = await channel.send(event.content);
     if ("author" in sent) {
-      const normalizedSent = normalizeMessage(sent, client.user.id);
+      const normalizedSent = normalizeMessage(sent, {
+        botUserId: client.user.id,
+        botUsername: client.user.username,
+        botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
+      });
       persistence.saveNormalizedMessage(normalizedSent);
       if (event.recordConversationTurn) {
         persistence.saveConversationTurn({
           conversationId: event.conversationId,
           role: "assistant",
+          participantActorId: event.participantActorId,
           content: event.content,
           sourceMessageId: sent.id,
           createdAt: sent.createdAt.toISOString()

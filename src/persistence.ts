@@ -24,6 +24,7 @@ export interface Persistence {
   saveConversationTurn(record: {
     conversationId: string;
     role: "user" | "assistant";
+    participantActorId?: string | null;
     content: string;
     sourceMessageId?: string | null;
     createdAt?: string;
@@ -77,6 +78,7 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       conversation_id TEXT NOT NULL,
       role TEXT NOT NULL,
+      participant_actor_id TEXT,
       content TEXT NOT NULL,
       source_message_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -161,6 +163,7 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       FOREIGN KEY(reminder_id) REFERENCES reminders(id)
     );
   `);
+  ensureColumn(db, "conversation_turns", "participant_actor_id", "TEXT");
   ensureColumn(db, "access_audit", "transport", "TEXT NOT NULL DEFAULT 'discord'");
   ensureColumn(db, "access_audit", "conversation_id", "TEXT NOT NULL DEFAULT ''");
 
@@ -248,12 +251,14 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     INSERT INTO conversation_turns (
       conversation_id,
       role,
+      participant_actor_id,
       content,
       source_message_id,
       created_at
     ) VALUES (
       @conversationId,
       @role,
+      @participantActorId,
       @content,
       @sourceMessageId,
       COALESCE(@createdAt, CURRENT_TIMESTAMP)
@@ -265,6 +270,7 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       id,
       conversation_id AS conversationId,
       role,
+      participant_actor_id AS participantActorId,
       content,
       source_message_id AS sourceMessageId,
       created_at AS createdAt
@@ -273,6 +279,7 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         id,
         conversation_id,
         role,
+        participant_actor_id,
         content,
         source_message_id,
         created_at
@@ -552,6 +559,7 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       saveConversationTurnStatement.run({
         conversationId: record.conversationId,
         role: record.role,
+        participantActorId: record.participantActorId ?? null,
         content: record.content,
         sourceMessageId: record.sourceMessageId ?? null,
         createdAt: record.createdAt ?? null

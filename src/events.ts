@@ -41,6 +41,7 @@ export interface OutboundMessageRequestedEvent {
   conversationId: string;
   correlationId: string;
   inResponseToEventId: string;
+  participantActorId: string;
   replyRoute: InboundReplyRoute;
   content: string;
   recordConversationTurn: boolean;
@@ -61,6 +62,7 @@ export function createOutboundMessageRequestedEvent(params: {
     conversationId: inboundEvent.conversationId,
     correlationId: inboundEvent.correlationId,
     inResponseToEventId: inboundEvent.eventId,
+    participantActorId: inboundEvent.sender.actorId,
     replyRoute: inboundEvent.replyRoute,
     content,
     recordConversationTurn

@@ -14,6 +14,7 @@ export interface ConversationTurnRecord {
   id: number;
   conversationId: string;
   role: "user" | "assistant";
+  participantActorId: string | null;
   content: string;
   sourceMessageId: string | null;
   createdAt: string;

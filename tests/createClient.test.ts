@@ -33,6 +33,8 @@ function createFakeMessage(params: {
   content: string;
   authorId?: string;
   mentionedBot?: boolean;
+  mentionedRoleIds?: string[];
+  botRoleIds?: string[];
   isDirectMessage?: boolean;
   createdAt?: string;
   replyLog: string[];
@@ -42,6 +44,8 @@ function createFakeMessage(params: {
     content,
     authorId = "owner-1",
     mentionedBot = false,
+    mentionedRoleIds = [],
+    botRoleIds = [],
     isDirectMessage = false,
     createdAt = "2026-04-09T00:00:00.000Z",
     replyLog
@@ -51,6 +55,21 @@ function createFakeMessage(params: {
     id,
     channelId: "chan-1",
     guildId: isDirectMessage ? null : "guild-1",
+    guild: isDirectMessage
+      ? null
+      : {
+          members: {
+            me: {
+              roles: {
+                cache: {
+                  map<T>(callback: (role: { id: string }) => T) {
+                    return botRoleIds.map((roleId) => callback({ id: roleId }));
+                  }
+                }
+              }
+            }
+          }
+        },
     author: {
       id: authorId,
       username: authorId === "owner-1" ? "owner" : "user",
@@ -63,6 +82,11 @@ function createFakeMessage(params: {
         has(userId: string) {
           return mentionedBot && userId === "bot-1";
         }
+      },
+      roles: {
+        some(predicate: (role: { id: string }) => boolean) {
+          return mentionedRoleIds.some((roleId) => predicate({ id: roleId }));
+        }
       }
     },
     async reply(reply: string) {
@@ -71,6 +95,21 @@ function createFakeMessage(params: {
         id: `${id}-reply-${replyLog.length}`,
         channelId: "chan-1",
         guildId: isDirectMessage ? null : "guild-1",
+        guild: isDirectMessage
+          ? null
+          : {
+              members: {
+                me: {
+                  roles: {
+                    cache: {
+                      map<T>(callback: (role: { id: string }) => T) {
+                        return botRoleIds.map((roleId) => callback({ id: roleId }));
+                      }
+                    }
+                  }
+                }
+              }
+            },
         author: {
           id: "bot-1",
           username: "Dot",
@@ -81,6 +120,11 @@ function createFakeMessage(params: {
         mentions: {
           users: {
             has() {
+              return false;
+            }
+          },
+          roles: {
+            some() {
               return false;
             }
           }
@@ -169,13 +213,14 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
 
       const turnsAfterCommand = persistence.listRecentConversationTurns("chan-1", 10);
       assert.deepEqual(
-        turnsAfterCommand.map((turn) => ({ role: turn.role, content: turn.content })),
+        turnsAfterCommand.map((turn) => ({ role: turn.role, participantActorId: turn.participantActorId, content: turn.content })),
         [
-          { role: "user", content: "!settings" },
+          { role: "user", participantActorId: "owner-1", content: "!settings" },
           {
             role: "assistant",
+            participantActorId: "owner-1",
             content:
-              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[power: standby]"
+              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[mode: normal]"
           }
         ]
       );
@@ -198,7 +243,7 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
           {
             role: "assistant",
             content:
-              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[power: standby]"
+              "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[mode: normal]"
           }
         ]);
 
@@ -226,6 +271,317 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       assert.equal(generatedMessages.length, 1);
+    } finally {
+      unsubscribe();
+      await client.destroy();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("Discord ingress normalizes a plain-text @Dot command before pipeline routing", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const replies: string[] = [];
+  const bus = createInMemoryEventBus();
+
+  try {
+    const unsubscribe = registerMessagePipeline({
+      bus,
+      calendarClient: {
+        listUpcomingEvents: async () => []
+      } as never,
+      chatService: {
+        inferToolDecision: async () => ({
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "none",
+            reason: "not a tool request"
+          }
+        }),
+        generateOwnerReply: async () => ({
+          route: "local",
+          powerStatus: "standby",
+          reply: "freeform reply"
+        }),
+        getPowerStatus: () => "standby"
+      },
+      logger: createLogger() as never,
+      outlookOAuthClient: {} as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    const client = createDiscordClient({
+      bus,
+      logger: createLogger() as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    try {
+      Object.defineProperty(client, "user", {
+        configurable: true,
+        value: {
+          id: "bot-1",
+          username: "Dot"
+        }
+      });
+
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-plain-at-command",
+          content: "@Dot !settings show",
+          mentionedBot: false,
+          createdAt: "2026-04-09T00:00:00.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(replies.length, 1);
+      assert.match(replies[0] ?? "", /Current settings:/);
+
+      const turns = persistence.listRecentConversationTurns("chan-1", 10);
+      assert.equal(turns[0]?.role, "user");
+      assert.equal(turns[0]?.content, "!settings show");
+      assert.equal(turns[1]?.role, "assistant");
+      assert.match(turns[1]?.content ?? "", /Current settings:/);
+    } finally {
+      unsubscribe();
+      await client.destroy();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("Discord ingress normalizes a role mention command before pipeline routing", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const replies: string[] = [];
+  const bus = createInMemoryEventBus();
+
+  try {
+    const unsubscribe = registerMessagePipeline({
+      bus,
+      calendarClient: {
+        listUpcomingEvents: async () => []
+      } as never,
+      chatService: {
+        inferToolDecision: async () => ({
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "none",
+            reason: "not a tool request"
+          }
+        }),
+        generateOwnerReply: async () => ({
+          route: "local",
+          powerStatus: "standby",
+          reply: "freeform reply"
+        }),
+        getPowerStatus: () => "standby"
+      },
+      logger: createLogger() as never,
+      outlookOAuthClient: {} as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    const client = createDiscordClient({
+      bus,
+      logger: createLogger() as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    try {
+      Object.defineProperty(client, "user", {
+        configurable: true,
+        value: {
+          id: "bot-1",
+          username: "Dot"
+        }
+      });
+
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-role-command",
+          content: "<@&1492214618611908830> !settings show",
+          mentionedBot: false,
+          mentionedRoleIds: ["1492214618611908830"],
+          botRoleIds: ["1492214618611908830"],
+          createdAt: "2026-04-09T00:00:00.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(replies.length, 1);
+      assert.match(replies[0] ?? "", /Current settings:/);
+
+      const turns = persistence.listRecentConversationTurns("chan-1", 10);
+      assert.equal(turns[0]?.content, "!settings show");
+    } finally {
+      unsubscribe();
+      await client.destroy();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("Discord ingress treats the bot role mention as addressed chat", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const replies: string[] = [];
+  const generatedMessages: string[] = [];
+  const bus = createInMemoryEventBus();
+
+  try {
+    const unsubscribe = registerMessagePipeline({
+      bus,
+      calendarClient: {
+        listUpcomingEvents: async () => []
+      } as never,
+      chatService: {
+        inferToolDecision: async () => ({
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "none",
+            reason: "not a tool request"
+          }
+        }),
+        generateOwnerReply: async ({ userMessage }) => {
+          generatedMessages.push(userMessage);
+          return {
+            route: "local",
+            powerStatus: "standby",
+            reply: "role mention chat reply"
+          };
+        },
+        getPowerStatus: () => "standby"
+      },
+      logger: createLogger() as never,
+      outlookOAuthClient: {} as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    const client = createDiscordClient({
+      bus,
+      logger: createLogger() as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    try {
+      Object.defineProperty(client, "user", {
+        configurable: true,
+        value: {
+          id: "bot-1",
+          username: "Dot"
+        }
+      });
+
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-role-chat",
+          content: "<@&1492214618611908830> what do you think?",
+          mentionedBot: false,
+          mentionedRoleIds: ["1492214618611908830"],
+          botRoleIds: ["1492214618611908830"],
+          createdAt: "2026-04-09T00:00:00.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(generatedMessages[0], "what do you think?");
+      assert.match(replies[0] ?? "", /role mention chat reply/);
+    } finally {
+      unsubscribe();
+      await client.destroy();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("Discord ingress does not treat an unrelated same-name role as Dot", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const replies: string[] = [];
+  const generatedMessages: string[] = [];
+  const bus = createInMemoryEventBus();
+
+  try {
+    const unsubscribe = registerMessagePipeline({
+      bus,
+      calendarClient: {
+        listUpcomingEvents: async () => []
+      } as never,
+      chatService: {
+        inferToolDecision: async () => ({
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "none",
+            reason: "not a tool request"
+          }
+        }),
+        generateOwnerReply: async ({ userMessage }) => {
+          generatedMessages.push(userMessage);
+          return {
+            route: "local",
+            powerStatus: "standby",
+            reply: "should not happen"
+          };
+        },
+        getPowerStatus: () => "standby"
+      },
+      logger: createLogger() as never,
+      outlookOAuthClient: {} as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    const client = createDiscordClient({
+      bus,
+      logger: createLogger() as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    try {
+      Object.defineProperty(client, "user", {
+        configurable: true,
+        value: {
+          id: "bot-1",
+          username: "Dot"
+        }
+      });
+
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-other-role-chat",
+          content: "<@&role-other> what do you think?",
+          mentionedBot: false,
+          mentionedRoleIds: ["role-other"],
+          botRoleIds: ["role-bot"],
+          createdAt: "2026-04-09T00:00:00.000Z",
+          replyLog: replies
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(replies.length, 0);
+      assert.equal(generatedMessages.length, 0);
     } finally {
       unsubscribe();
       await client.destroy();

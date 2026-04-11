@@ -20,6 +20,8 @@ test("createDiscordInboundMessageEvent produces a canonical transport-neutral en
   const event = createDiscordInboundMessageEvent({
     message,
     botUserId: "bot-1",
+    botUsername: "Dot",
+    botRoleIds: ["role-bot"],
     ownerUserId: "owner-1"
   });
 
@@ -30,4 +32,77 @@ test("createDiscordInboundMessageEvent produces a canonical transport-neutral en
   assert.equal(event.replyRoute.replyToMessageId, "msg-1");
   assert.equal(event.payload.content, "<@bot-1> hello there");
   assert.equal(event.payload.addressedContent, "hello there");
+});
+
+test("createDiscordInboundMessageEvent strips a plain-text bot address prefix", () => {
+  const message: IncomingMessage = {
+    id: "msg-2",
+    channelId: "channel-1",
+    guildId: "guild-1",
+    authorId: "owner-1",
+    authorUsername: "tan",
+    content: "@Dot !settings show",
+    isDirectMessage: false,
+    mentionedBot: false,
+    createdAt: "2026-04-09T00:00:00.000Z"
+  };
+
+  const event = createDiscordInboundMessageEvent({
+    message,
+    botUserId: "bot-1",
+    botUsername: "Dot",
+    botRoleIds: ["role-bot"],
+    ownerUserId: "owner-1"
+  });
+
+  assert.equal(event.payload.content, "@Dot !settings show");
+  assert.equal(event.payload.addressedContent, "!settings show");
+});
+
+test("createDiscordInboundMessageEvent strips the bot role mention prefix only when it is the leading target", () => {
+  const message: IncomingMessage = {
+    id: "msg-3",
+    channelId: "channel-1",
+    guildId: "guild-1",
+    authorId: "owner-1",
+    authorUsername: "tan",
+    content: "<@&role-bot> !settings show",
+    isDirectMessage: false,
+    mentionedBot: true,
+    createdAt: "2026-04-09T00:00:00.000Z"
+  };
+
+  const event = createDiscordInboundMessageEvent({
+    message,
+    botUserId: "bot-1",
+    botUsername: "Dot",
+    botRoleIds: ["role-bot"],
+    ownerUserId: "owner-1"
+  });
+
+  assert.equal(event.payload.addressedContent, "!settings show");
+});
+
+test("createDiscordInboundMessageEvent does not strip unrelated leading role mentions", () => {
+  const message: IncomingMessage = {
+    id: "msg-4",
+    channelId: "channel-1",
+    guildId: "guild-1",
+    authorId: "owner-1",
+    authorUsername: "tan",
+    content: "<@&role-other> <@&role-bot> !settings show",
+    isDirectMessage: false,
+    mentionedBot: true,
+    createdAt: "2026-04-09T00:00:00.000Z"
+  };
+
+  const event = createDiscordInboundMessageEvent({
+    message,
+    botUserId: "bot-1",
+    botUsername: "Dot",
+    botRoleIds: ["role-bot"],
+    ownerUserId: "owner-1"
+  });
+
+  assert.equal(event.payload.addressedContent, "<@&role-other> <@&role-bot> !settings show");
 });

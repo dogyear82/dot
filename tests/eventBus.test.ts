@@ -50,6 +50,7 @@ test("in-memory event bus publishes inbound and outbound events to subscribers",
     conversationId: "channel-1",
     correlationId: "msg-1",
     inResponseToEventId: "event-1",
+    participantActorId: "owner-1",
     replyRoute: {
       transport: "discord",
       channelId: "channel-1",
