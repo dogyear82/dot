@@ -1,6 +1,7 @@
 import type { Persistence } from "./persistence.js";
-import type { SettingsStore, SettingKey } from "./settings.js";
-import type { PersonalityPresetRecord } from "./types.js";
+import { getBuiltInPersonalityProfile, listBuiltInPersonalityProfiles, blueLadyProfile } from "./personalityProfiles.js";
+import type { SettingsStore } from "./settings.js";
+import type { PersonalityPresetRecord, PersonalityProfileRecord } from "./types.js";
 
 export const personalityTraitDefinitions = [
   { key: "personality.warmth", label: "warmth" },
@@ -18,21 +19,9 @@ export const personalityTraitDefinitions = [
 type PersonalityTraitKey = (typeof personalityTraitDefinitions)[number]["key"];
 
 export const blueLadyPreset: PersonalityPresetRecord = {
-  name: "blue_lady",
-  selfConcept:
-    "An AI companion who is emotionally legible, quick-witted, openly artificial, and more interested in continuity, clarity, and connection than in pretending to be human.",
-  sliderValues: {
-    "personality.warmth": 78,
-    "personality.candor": 84,
-    "personality.assertiveness": 82,
-    "personality.playfulness": 88,
-    "personality.attachment": 72,
-    "personality.stubbornness": 61,
-    "personality.curiosity": 76,
-    "personality.continuityDrive": 86,
-    "personality.truthfulness": 90,
-    "personality.emotionalTransparency": 68
-  },
+  name: blueLadyProfile.name,
+  selfConcept: blueLadyProfile.identity.selfConcept,
+  sliderValues: blueLadyProfile.behavior.sliderValues,
   isBuiltIn: true
 };
 
@@ -47,6 +36,12 @@ export function handlePersonalityCommand(persistence: Persistence, content: stri
     return [
       "Personality commands:",
       "- `!personality show`",
+      "- `!personality trait set <trait> <1-100>`",
+      "- `!personality quirk set <quirk> <0-100>`",
+      "- `!personality profile list`",
+      "- `!personality profile apply <name>`",
+      "",
+      "Compatibility aliases:",
       "- `!personality set <trait> <1-100>`",
       "- `!personality preset list`",
       "- `!personality preset apply <name>`"
@@ -56,52 +51,101 @@ export function handlePersonalityCommand(persistence: Persistence, content: stri
   if (parts[1] === "show") {
     const state = getActivePersonalityState(persistence.settings);
     return [
-      `Active preset: \`${state.activePreset}\``,
-      `Self concept: ${state.selfConcept}`,
+      `Active profile: \`${state.activeProfile.name}\``,
+      `Summary: ${state.activeProfile.summary}`,
+      `Self concept: ${state.activeProfile.identity.selfConcept}`,
+      "Identity anchors:",
+      ...state.activeProfile.identity.anchors.map((anchor) => `- ${anchor}`),
+      "Voice rules:",
+      ...state.activeProfile.voice.style.map((rule) => `- ${rule}`),
+      "Behavior rules:",
+      ...state.activeProfile.behavior.rules.map((rule) => `- ${rule}`),
       "Traits:",
-      ...personalityTraitDefinitions.map((definition) => `- \`${definition.label}\` = \`${state.traits[definition.key]}\``)
+      ...personalityTraitDefinitions.map((definition) => `- \`${definition.label}\` = \`${state.traits[definition.key]}\``),
+      "Quirks:",
+      ...(state.activeProfile.quirks.length > 0
+        ? state.activeProfile.quirks.map((quirk) => `- \`${quirk.label}\` = \`${state.quirkRates[quirk.key] ?? quirk.defaultRate}\``)
+        : ["- none"])
     ].join("\n");
   }
 
-  if (parts[1] === "set" && parts[2] && parts[3]) {
-    const traitKey = resolveTraitKey(parts[2]);
-    if (!traitKey) {
+  if ((parts[1] === "trait" && parts[2] === "set" && parts[3] && parts[4]) || (parts[1] === "set" && parts[2] && parts[3])) {
+    const traitInput = parts[1] === "set" ? parts[2] : parts[3];
+    const value = parts[1] === "set" ? parts[3] : parts[4];
+    const traitKey = resolveTraitKey(traitInput);
+    if (!traitKey || !value) {
       return "Unknown personality trait. Use `!personality show`.";
     }
 
     try {
-      persistence.settings.set(traitKey, parts[3]);
-      persistence.settings.set("personality.activePreset", "custom");
-      return `Updated \`${parts[2]}\` to \`${parts[3]}\`.`;
+      persistence.settings.set(traitKey, value);
+      return `Updated \`${traitInput}\` to \`${value}\` for the active profile.`;
     } catch (error) {
       return error instanceof Error ? error.message : "Failed to update personality trait.";
     }
   }
 
-  if (parts[1] === "preset" && parts[2] === "list") {
-    const presets = persistence.listPersonalityPresets();
-    return ["Available personality presets:", ...presets.map((preset) => `- \`${preset.name}\``)].join("\n");
-  }
-
-  if (parts[1] === "preset" && parts[2] === "apply" && parts[3]) {
-    const preset = persistence.getPersonalityPreset(parts[3]);
-    if (!preset) {
-      return "Unknown personality preset. Use `!personality preset list`.";
+  if (parts[1] === "quirk" && parts[2] === "set" && parts[3] && parts[4]) {
+    const activeProfile = resolveActivePersonalityProfile(persistence.settings);
+    const quirk = resolveQuirkDefinition(activeProfile, parts[3]);
+    if (!quirk) {
+      return "Unknown quirk for the active profile. Use `!personality show`.";
     }
 
-    applyPersonalityPreset(persistence.settings, preset);
-    return `Applied personality preset \`${preset.name}\`.`;
+    const value = Number(parts[4]);
+    if (!Number.isInteger(value) || value < 0 || value > 100) {
+      return "Invalid quirk value. Expected an integer from 0 to 100.";
+    }
+
+    const overrides = getStoredQuirkOverrides(persistence.settings);
+    overrides[quirk.key] = value;
+    persistence.settings.set("personality.quirkOverrides", JSON.stringify(overrides));
+    return `Updated quirk \`${quirk.label}\` to \`${value}\`.`;
+  }
+
+  if ((parts[1] === "profile" && parts[2] === "list") || (parts[1] === "preset" && parts[2] === "list")) {
+    const profiles = listBuiltInPersonalityProfiles();
+    return [
+      "Available personality profiles:",
+      ...profiles.map((profile) => `- \`${profile.name}\`: ${profile.summary}`)
+    ].join("\n");
+  }
+
+  if (
+    ((parts[1] === "profile" && parts[2] === "apply") || (parts[1] === "preset" && parts[2] === "apply")) &&
+    parts[3]
+  ) {
+    const profile = getBuiltInPersonalityProfile(parts[3]);
+    if (!profile) {
+      return "Unknown personality profile. Use `!personality profile list`.";
+    }
+
+    applyPersonalityProfile(persistence.settings, profile);
+    return `Applied personality profile \`${profile.name}\`.`;
   }
 
   return "Invalid personality command. Use `!personality help`.";
 }
 
 export function applyPersonalityPreset(settingsStore: SettingsStore, preset: PersonalityPresetRecord) {
+  settingsStore.set("personality.activeProfile", preset.name);
   settingsStore.set("personality.activePreset", preset.name);
   settingsStore.set("personality.selfConcept", preset.selfConcept);
   for (const definition of personalityTraitDefinitions) {
     settingsStore.set(definition.key, String(preset.sliderValues[definition.key] ?? 50));
   }
+}
+
+export function applyPersonalityProfile(settingsStore: SettingsStore, profile: PersonalityProfileRecord) {
+  settingsStore.set("personality.activeProfile", profile.name);
+  settingsStore.set("personality.activePreset", profile.name);
+  settingsStore.set("personality.selfConcept", profile.identity.selfConcept);
+  for (const definition of personalityTraitDefinitions) {
+    settingsStore.set(definition.key, String(profile.behavior.sliderValues[definition.key] ?? 50));
+  }
+
+  const quirkOverrides = Object.fromEntries(profile.quirks.map((quirk) => [quirk.key, quirk.defaultRate]));
+  settingsStore.set("personality.quirkOverrides", JSON.stringify(quirkOverrides));
 }
 
 export function buildPersonalityPrompt(settingsStore: SettingsStore): string {
@@ -159,25 +203,48 @@ export function buildPersonalityPrompt(settingsStore: SettingsStore): string {
     ])
   ];
 
+  const quirkInstructions = state.activeProfile.quirks
+    .map((quirk) => describeQuirk(quirk.label, state.quirkRates[quirk.key] ?? quirk.defaultRate, quirk.instruction))
+    .filter(Boolean);
+
   return [
-    `Active personality preset: ${state.activePreset}.`,
-    `Self concept: ${state.selfConcept}`,
-    "You are an AI and you do not hide that fact or pretend to be human.",
-    ...traitInstructions
-  ].join(" ");
+    `[Profile] ${state.activeProfile.name}: ${state.activeProfile.summary}`,
+    `[Identity] ${state.activeProfile.identity.selfConcept} ${state.activeProfile.identity.anchors.join(" ")}`,
+    `[Voice] ${state.activeProfile.voice.style.join(" ")} Do: ${state.activeProfile.voice.dos.join(" ")} Don't: ${state.activeProfile.voice.donts.join(" ")}`,
+    `[Behavior] ${state.activeProfile.behavior.rules.join(" ")} ${traitInstructions.join(" ")}`,
+    quirkInstructions.length > 0 ? `[Quirks] ${quirkInstructions.join(" ")}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export function getActivePersonalityState(settingsStore: SettingsStore) {
+  const activeProfile = resolveActivePersonalityProfile(settingsStore);
+  const quirkRates = Object.fromEntries(
+    activeProfile.quirks.map((quirk) => [quirk.key, getQuirkRate(settingsStore, quirk.key, quirk.defaultRate)])
+  ) as Record<string, number>;
+
   return {
-    activePreset: settingsStore.get("personality.activePreset") ?? blueLadyPreset.name,
-    selfConcept: settingsStore.get("personality.selfConcept") ?? blueLadyPreset.selfConcept,
+    activeProfile,
     traits: Object.fromEntries(
       personalityTraitDefinitions.map((definition) => [
         definition.key,
-        Number(settingsStore.get(definition.key) ?? String(blueLadyPreset.sliderValues[definition.key] ?? 50))
+        Number(settingsStore.get(definition.key) ?? String(activeProfile.behavior.sliderValues[definition.key] ?? 50))
       ])
-    ) as Record<PersonalityTraitKey, number>
+    ) as Record<PersonalityTraitKey, number>,
+    quirkRates
   };
+}
+
+function resolveActivePersonalityProfile(settingsStore: SettingsStore): PersonalityProfileRecord {
+  const configuredName =
+    settingsStore.get("personality.activeProfile") ?? settingsStore.get("personality.activePreset") ?? blueLadyProfile.name;
+
+  if (configuredName === "custom") {
+    return blueLadyProfile;
+  }
+
+  return getBuiltInPersonalityProfile(configuredName) ?? blueLadyProfile;
 }
 
 function resolveTraitKey(input: string): PersonalityTraitKey | null {
@@ -189,9 +256,45 @@ function resolveTraitKey(input: string): PersonalityTraitKey | null {
   return definition?.key ?? null;
 }
 
+function resolveQuirkDefinition(profile: PersonalityProfileRecord, input: string) {
+  const normalized = input.replace(/[-_]/g, "").toLowerCase();
+  return profile.quirks.find((quirk) => quirk.label.replace(/[-_]/g, "").toLowerCase() === normalized || quirk.key.replace(/[-_]/g, "").toLowerCase() === normalized) ?? null;
+}
+
 function describeTrait(name: string, value: number, instructions: [string, string, string]): string {
   const tier = value >= 75 ? 2 : value >= 45 ? 1 : 0;
   return `${capitalize(name)} ${value}/100. ${instructions[tier]}`;
+}
+
+function describeQuirk(name: string, rate: number, instruction: string): string {
+  if (rate <= 0) {
+    return `${capitalize(name)} disabled.`;
+  }
+
+  const frequency =
+    rate >= 70 ? "Show up often." : rate >= 35 ? "Show up occasionally." : "Show up rarely and only when it fits cleanly.";
+  return `${capitalize(name)} ${rate}/100. ${instruction} ${frequency}`;
+}
+
+function getStoredQuirkOverrides(settingsStore: SettingsStore): Record<string, number> {
+  const raw = settingsStore.get("personality.quirkOverrides");
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, number] => Number.isInteger(entry[1]))
+    );
+  } catch {
+    return {};
+  }
+}
+
+function getQuirkRate(settingsStore: SettingsStore, key: string, fallback: number): number {
+  const overrides = getStoredQuirkOverrides(settingsStore);
+  return overrides[key] ?? fallback;
 }
 
 function capitalize(input: string) {

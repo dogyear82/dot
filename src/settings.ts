@@ -3,7 +3,9 @@ import type Database from "better-sqlite3";
 export type SettingKey =
   | "persona.mode"
   | "persona.balance"
+  | "personality.activeProfile"
   | "personality.activePreset"
+  | "personality.quirkOverrides"
   | "personality.selfConcept"
   | "personality.warmth"
   | "personality.candor"
@@ -57,10 +59,24 @@ const settingDefinitions: SettingDefinition[] = [
     userEditable: true
   },
   {
+    key: "personality.activeProfile",
+    label: "Active personality profile",
+    description: "Currently applied structured personality profile",
+    defaultValue: "blue_lady",
+    userEditable: false
+  },
+  {
     key: "personality.activePreset",
     label: "Active personality preset",
-    description: "Currently applied personality preset",
+    description: "Legacy personality preset marker kept for compatibility",
     defaultValue: "blue_lady",
+    userEditable: false
+  },
+  {
+    key: "personality.quirkOverrides",
+    label: "Personality quirk overrides",
+    description: "Stored quirk parameter overrides for the active personality system",
+    defaultValue: "{}",
     userEditable: false
   },
   {
@@ -245,9 +261,20 @@ export function createSettingsStore(db: Database.Database): SettingsStore {
   );
 
   for (const definition of settingDefinitions) {
-    if (definition.key === "onboarding.completed" && definition.defaultValue != null && getStatement.get(definition.key) == null) {
+    if (
+      (definition.key === "onboarding.completed" ||
+        definition.key === "personality.activeProfile" ||
+        definition.key === "personality.quirkOverrides") &&
+      definition.defaultValue != null &&
+      getStatement.get(definition.key) == null
+    ) {
       setStatement.run(definition.key, definition.defaultValue);
     }
+  }
+
+  const legacyActivePreset = getStatement.get("personality.activePreset")?.value;
+  if (getStatement.get("personality.activeProfile") == null && legacyActivePreset != null) {
+    setStatement.run("personality.activeProfile", legacyActivePreset);
   }
 
   return {
