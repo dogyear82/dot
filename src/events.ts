@@ -6,6 +6,8 @@ export const DOT_EVENT_VERSION = "1.0.0";
 export const DOT_EVENT_TOPICS = [
   "inbound.message.received",
   "outbound.message.requested",
+  "outbound.message.delivered",
+  "outbound.message.delivery_failed",
   "diagnostics.health.reported",
   "discord.message.received",
   "discord.message.delivery.requested",
@@ -87,17 +89,82 @@ export type InboundMessageReceivedEvent = DotEvent<
 >;
 
 export interface OutboundMessageRequestedPayload {
-  inResponseToEventId: string;
+  inResponseToEventId: string | null;
   participantActorId: string;
   content: string;
   recordConversationTurn: boolean;
-  replyRoute: InboundReplyRoute;
+  delivery: OutboundDelivery;
+  deliveryContext: OutboundDeliveryContext | null;
 }
 
 export type OutboundMessageRequestedEvent = DotEvent<
   "outbound.message.requested",
   OutboundMessageRequestedPayload,
-  InboundReplyRoute
+  OutboundMessageRouting
+>;
+
+export interface DirectMessageRoute extends DotEventRouting {
+  transport: "discord";
+  channelId: null;
+  guildId: null;
+  replyTo: null;
+}
+
+export type OutboundMessageRouting = InboundReplyRoute | DirectMessageRoute;
+
+export interface OutboundReplyDelivery {
+  transport: "discord";
+  kind: "reply";
+  channelId: string;
+  guildId: string | null;
+  replyTo: string;
+  recipientActorId: string;
+}
+
+export interface OutboundDirectMessageDelivery {
+  transport: "discord";
+  kind: "direct-message";
+  channelId: null;
+  guildId: null;
+  replyTo: null;
+  recipientActorId: string;
+}
+
+export type OutboundDelivery = OutboundReplyDelivery | OutboundDirectMessageDelivery;
+
+export interface ReminderDeliveryContext {
+  kind: "reminder";
+  reminderId: number;
+}
+
+export type OutboundDeliveryContext = ReminderDeliveryContext;
+
+export interface OutboundMessageDeliveredPayload {
+  requestEventId: string;
+  participantActorId: string;
+  delivery: OutboundDelivery;
+  deliveryContext: OutboundDeliveryContext | null;
+  transportMessageId: string | null;
+}
+
+export type OutboundMessageDeliveredEvent = DotEvent<
+  "outbound.message.delivered",
+  OutboundMessageDeliveredPayload,
+  OutboundMessageRouting
+>;
+
+export interface OutboundMessageDeliveryFailedPayload {
+  requestEventId: string;
+  participantActorId: string;
+  delivery: OutboundDelivery;
+  deliveryContext: OutboundDeliveryContext | null;
+  reason: string;
+}
+
+export type OutboundMessageDeliveryFailedEvent = DotEvent<
+  "outbound.message.delivery_failed",
+  OutboundMessageDeliveryFailedPayload,
+  OutboundMessageRouting
 >;
 
 export interface ServiceHealthReportedPayload {
@@ -119,8 +186,17 @@ export function createOutboundMessageRequestedEvent(params: {
   inboundEvent: InboundMessageReceivedEvent;
   content: string;
   recordConversationTurn?: boolean;
+  deliveryContext?: OutboundDeliveryContext | null;
 }): OutboundMessageRequestedEvent {
-  const { inboundEvent, content, recordConversationTurn = false } = params;
+  const { inboundEvent, content, recordConversationTurn = false, deliveryContext = null } = params;
+  const delivery: OutboundReplyDelivery = {
+    transport: "discord",
+    kind: "reply",
+    channelId: inboundEvent.payload.replyRoute.channelId,
+    guildId: inboundEvent.payload.replyRoute.guildId,
+    replyTo: inboundEvent.payload.replyRoute.replyTo,
+    recipientActorId: inboundEvent.payload.sender.actorId
+  };
 
   return {
     eventId: `${inboundEvent.eventId}:outbound:${Date.now()}`,
@@ -142,10 +218,149 @@ export function createOutboundMessageRequestedEvent(params: {
     payload: {
       inResponseToEventId: inboundEvent.eventId,
       participantActorId: inboundEvent.payload.sender.actorId,
-      replyRoute: inboundEvent.payload.replyRoute,
+      delivery,
+      deliveryContext,
       content,
       recordConversationTurn
     }
+  };
+}
+
+export function createSystemOutboundMessageRequestedEvent(params: {
+  content: string;
+  participantActorId: string;
+  delivery: OutboundDelivery;
+  producerService: string;
+  correlationId: string;
+  conversationId?: string | null;
+  actorId?: string | null;
+  diagnosticsCategory?: string | null;
+  deliveryContext?: OutboundDeliveryContext | null;
+  recordConversationTurn?: boolean;
+}): OutboundMessageRequestedEvent {
+  const {
+    actorId = null,
+    content,
+    conversationId = null,
+    correlationId,
+    delivery,
+    deliveryContext = null,
+    diagnosticsCategory = "outbound.delivery",
+    participantActorId,
+    producerService,
+    recordConversationTurn = false
+  } = params;
+  const routing = toOutboundRouting(delivery);
+
+  return {
+    eventId: `${producerService}:outbound:${Date.now()}`,
+    eventType: "outbound.message.requested",
+    eventVersion: DOT_EVENT_VERSION,
+    occurredAt: new Date().toISOString(),
+    producer: { service: producerService },
+    correlation: {
+      correlationId,
+      causationId: null,
+      conversationId,
+      actorId
+    },
+    routing,
+    diagnostics: {
+      severity: "info",
+      category: diagnosticsCategory
+    },
+    payload: {
+      inResponseToEventId: null,
+      participantActorId,
+      content,
+      recordConversationTurn,
+      delivery,
+      deliveryContext
+    }
+  };
+}
+
+export function createOutboundMessageDeliveredEvent(params: {
+  requestEvent: OutboundMessageRequestedEvent;
+  transportMessageId?: string | null;
+}): OutboundMessageDeliveredEvent {
+  const routing = toOutboundRouting(params.requestEvent.payload.delivery);
+
+  return {
+    eventId: `${params.requestEvent.eventId}:delivered:${Date.now()}`,
+    eventType: "outbound.message.delivered",
+    eventVersion: DOT_EVENT_VERSION,
+    occurredAt: new Date().toISOString(),
+    producer: { service: "discord-transport" },
+    correlation: {
+      correlationId: params.requestEvent.correlation.correlationId,
+      causationId: params.requestEvent.eventId,
+      conversationId: params.requestEvent.correlation.conversationId,
+      actorId: params.requestEvent.correlation.actorId
+    },
+    routing,
+    diagnostics: {
+      severity: "info",
+      category: "outbound.delivery"
+    },
+    payload: {
+      requestEventId: params.requestEvent.eventId,
+      participantActorId: params.requestEvent.payload.participantActorId,
+      delivery: params.requestEvent.payload.delivery,
+      deliveryContext: params.requestEvent.payload.deliveryContext,
+      transportMessageId: params.transportMessageId ?? null
+    }
+  };
+}
+
+export function createOutboundMessageDeliveryFailedEvent(params: {
+  requestEvent: OutboundMessageRequestedEvent;
+  reason: string;
+}): OutboundMessageDeliveryFailedEvent {
+  const routing = toOutboundRouting(params.requestEvent.payload.delivery);
+
+  return {
+    eventId: `${params.requestEvent.eventId}:failed:${Date.now()}`,
+    eventType: "outbound.message.delivery_failed",
+    eventVersion: DOT_EVENT_VERSION,
+    occurredAt: new Date().toISOString(),
+    producer: { service: "discord-transport" },
+    correlation: {
+      correlationId: params.requestEvent.correlation.correlationId,
+      causationId: params.requestEvent.eventId,
+      conversationId: params.requestEvent.correlation.conversationId,
+      actorId: params.requestEvent.correlation.actorId
+    },
+    routing,
+    diagnostics: {
+      severity: "warn",
+      category: "outbound.delivery"
+    },
+    payload: {
+      requestEventId: params.requestEvent.eventId,
+      participantActorId: params.requestEvent.payload.participantActorId,
+      delivery: params.requestEvent.payload.delivery,
+      deliveryContext: params.requestEvent.payload.deliveryContext,
+      reason: params.reason
+    }
+  };
+}
+
+function toOutboundRouting(delivery: OutboundDelivery): OutboundMessageRouting {
+  if (delivery.kind === "reply") {
+    return {
+      transport: delivery.transport,
+      channelId: delivery.channelId,
+      guildId: delivery.guildId,
+      replyTo: delivery.replyTo
+    };
+  }
+
+  return {
+    transport: delivery.transport,
+    channelId: null,
+    guildId: null,
+    replyTo: null
   };
 }
 

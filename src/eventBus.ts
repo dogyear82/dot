@@ -2,7 +2,13 @@ import { StringCodec, connect, type NatsConnection, type Subscription } from "na
 import { SpanKind } from "@opentelemetry/api";
 
 import type { AppConfig } from "./config.js";
-import type { DotEvent, InboundMessageReceivedEvent, OutboundMessageRequestedEvent } from "./events.js";
+import type {
+  DotEvent,
+  InboundMessageReceivedEvent,
+  OutboundMessageDeliveredEvent,
+  OutboundMessageDeliveryFailedEvent,
+  OutboundMessageRequestedEvent
+} from "./events.js";
 import { createSpanAttributesForEvent, recordEventConsumed, recordEventPublished, withEventContext, withSpan } from "./observability.js";
 
 type EventHandler<TEvent extends DotEvent = DotEvent> = (event: TEvent) => void | Promise<void>;
@@ -13,8 +19,12 @@ export interface EventBus {
   subscribeAll(handler: EventHandler<DotEvent>): () => void;
   publishInboundMessage(event: InboundMessageReceivedEvent): Promise<void>;
   publishOutboundMessage(event: OutboundMessageRequestedEvent): Promise<void>;
+  publishOutboundMessageDelivered(event: OutboundMessageDeliveredEvent): Promise<void>;
+  publishOutboundMessageDeliveryFailed(event: OutboundMessageDeliveryFailedEvent): Promise<void>;
   subscribeInboundMessage(handler: EventHandler<InboundMessageReceivedEvent>): () => void;
   subscribeOutboundMessage(handler: EventHandler<OutboundMessageRequestedEvent>): () => void;
+  subscribeOutboundMessageDelivered(handler: EventHandler<OutboundMessageDeliveredEvent>): () => void;
+  subscribeOutboundMessageDeliveryFailed(handler: EventHandler<OutboundMessageDeliveryFailedEvent>): () => void;
   close(): Promise<void>;
 }
 
@@ -72,11 +82,23 @@ export function createInMemoryEventBus(): EventBus {
     publishOutboundMessage(event) {
       return publish(event);
     },
+    publishOutboundMessageDelivered(event) {
+      return publish(event);
+    },
+    publishOutboundMessageDeliveryFailed(event) {
+      return publish(event);
+    },
     subscribeInboundMessage(handler) {
       return subscribe("inbound.message.received", handler);
     },
     subscribeOutboundMessage(handler) {
       return subscribe("outbound.message.requested", handler);
+    },
+    subscribeOutboundMessageDelivered(handler) {
+      return subscribe("outbound.message.delivered", handler);
+    },
+    subscribeOutboundMessageDeliveryFailed(handler) {
+      return subscribe("outbound.message.delivery_failed", handler);
     },
     async close() {}
   };
@@ -166,11 +188,23 @@ export async function createNatsEventBus(params: {
     publishOutboundMessage(event) {
       return publish(event);
     },
+    publishOutboundMessageDelivered(event) {
+      return publish(event);
+    },
+    publishOutboundMessageDeliveryFailed(event) {
+      return publish(event);
+    },
     subscribeInboundMessage(handler) {
       return subscribe("inbound.message.received", handler);
     },
     subscribeOutboundMessage(handler) {
       return subscribe("outbound.message.requested", handler);
+    },
+    subscribeOutboundMessageDelivered(handler) {
+      return subscribe("outbound.message.delivered", handler);
+    },
+    subscribeOutboundMessageDeliveryFailed(handler) {
+      return subscribe("outbound.message.delivery_failed", handler);
     },
     async close() {
       for (const subscription of subscriptions) {

@@ -262,10 +262,18 @@ Current minimum contract in code:
 
 - inbound event: `inbound.message.received`
 - outbound delivery request: `outbound.message.requested`
+- outbound delivery success: `outbound.message.delivered`
+- outbound delivery failure: `outbound.message.delivery_failed`
 - service health event: `diagnostics.health.reported`
 - current transport: `discord`
 - current conversation key: Discord `channelId`
-- current reply route: `transport`, `channelId`, `guildId`, `replyToMessageId`
+- current outbound delivery targets:
+  - reply-to-message: `transport`, `channelId`, `guildId`, `replyTo`
+  - system direct-message: `transport`, `recipientActorId`
+- current reminder flow:
+  - scheduler publishes a transport-neutral outbound delivery request
+  - Discord transport emits success/failure delivery result events
+  - reminder domain logic updates retries/follow-ups from those result events instead of calling Discord directly
 
 Important non-goal for this phase:
 

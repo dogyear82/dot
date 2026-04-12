@@ -1,6 +1,7 @@
-import type { Client } from "discord.js";
 import type { Logger } from "pino";
 
+import { createSystemOutboundMessageRequestedEvent } from "./events.js";
+import type { EventBus } from "./eventBus.js";
 import type { Persistence } from "./persistence.js";
 import type { ReminderRecord } from "./types.js";
 
@@ -97,13 +98,15 @@ export function getReminderDeliveryRetryAt(now = new Date()): string {
 }
 
 export function startReminderScheduler(params: {
-  client: Client;
+  bus: EventBus;
   logger: Logger;
   ownerUserId: string;
+  pollIntervalMs?: number;
   persistence: Persistence;
 }) {
-  const { client, logger, ownerUserId, persistence } = params;
+  const { bus, logger, ownerUserId, persistence, pollIntervalMs = REMINDER_POLL_INTERVAL_MS } = params;
   let running = false;
+  const inflightReminders = new Map<number, number>();
 
   const tick = async () => {
     if (running) {
@@ -112,25 +115,52 @@ export function startReminderScheduler(params: {
 
     running = true;
     try {
-      const dueReminders = persistence.listDueReminders(new Date().toISOString());
+      const dueReminders = persistence
+        .listDueReminders(new Date().toISOString())
+        .filter((reminder) => {
+          const inflightStartedAt = inflightReminders.get(reminder.id);
+          if (inflightStartedAt == null) {
+            return true;
+          }
+
+          if (Date.now() - inflightStartedAt >= DELIVERY_RETRY_MS) {
+            inflightReminders.delete(reminder.id);
+            return true;
+          }
+
+          return false;
+        });
       if (dueReminders.length === 0) {
         return;
       }
 
-      const owner = await client.users.fetch(ownerUserId);
-
       for (const reminder of dueReminders) {
         try {
-          await owner.send(formatReminderNotification(reminder));
-          const nextNotificationAt = getNextReminderNotificationAt(
-            reminder,
-            persistence.settings.get("reminders.escalationPolicy") ?? "discord-only",
-            new Date()
+          inflightReminders.set(reminder.id, Date.now());
+          await bus.publishOutboundMessage(
+            createSystemOutboundMessageRequestedEvent({
+              content: formatReminderNotification(reminder),
+              participantActorId: ownerUserId,
+              delivery: {
+                transport: "discord",
+                kind: "direct-message",
+                channelId: null,
+                guildId: null,
+                replyTo: null,
+                recipientActorId: ownerUserId
+              },
+              producerService: "reminders",
+              correlationId: `reminder:${reminder.id}`,
+              actorId: ownerUserId,
+              deliveryContext: {
+                kind: "reminder",
+                reminderId: reminder.id
+              }
+            })
           );
-          if (persistence.recordReminderNotification(reminder.id, nextNotificationAt, reminder.message)) {
-            logger.info({ reminderId: reminder.id, nextNotificationAt }, "Sent reminder notification");
-          }
+          logger.info({ reminderId: reminder.id }, "Published reminder delivery request");
         } catch (error) {
+          inflightReminders.delete(reminder.id);
           const retryAt = getReminderDeliveryRetryAt(new Date());
           persistence.recordReminderDeliveryFailure(
             reminder.id,
@@ -147,13 +177,53 @@ export function startReminderScheduler(params: {
     }
   };
 
+  const unsubscribeDelivered = bus.subscribeOutboundMessageDelivered(async (event) => {
+    const context = event.payload.deliveryContext;
+    if (context?.kind !== "reminder") {
+      return;
+    }
+
+    inflightReminders.delete(context.reminderId);
+
+    const reminder = persistence.listPendingReminders().find((candidate) => candidate.id === context.reminderId);
+    if (!reminder) {
+      return;
+    }
+
+    const nextNotificationAt = getNextReminderNotificationAt(
+      reminder,
+      persistence.settings.get("reminders.escalationPolicy") ?? "discord-only",
+      new Date()
+    );
+    if (persistence.recordReminderNotification(reminder.id, nextNotificationAt, reminder.message)) {
+      logger.info({ reminderId: reminder.id, nextNotificationAt }, "Sent reminder notification");
+    }
+  });
+
+  const unsubscribeFailed = bus.subscribeOutboundMessageDeliveryFailed(async (event) => {
+    const context = event.payload.deliveryContext;
+    if (context?.kind !== "reminder") {
+      return;
+    }
+
+    inflightReminders.delete(context.reminderId);
+    const retryAt = getReminderDeliveryRetryAt(new Date());
+    persistence.recordReminderDeliveryFailure(context.reminderId, retryAt, event.payload.reason);
+    logger.error(
+      { reminderId: context.reminderId, retryAt, reason: event.payload.reason },
+      "Failed to send reminder notification"
+    );
+  });
+
   const intervalId = setInterval(() => {
     void tick();
-  }, REMINDER_POLL_INTERVAL_MS);
+  }, pollIntervalMs);
 
   return {
     stop() {
       clearInterval(intervalId);
+      unsubscribeDelivered();
+      unsubscribeFailed();
     }
   };
 }

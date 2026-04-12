@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createInMemoryEventBus } from "../src/eventBus.js";
 
 import { initializePersistence } from "../src/persistence.js";
 import {
@@ -11,7 +12,8 @@ import {
   getReminderDeliveryRetryAt,
   handleReminderCommand,
   isReminderCommand,
-  parseDuration
+  parseDuration,
+  startReminderScheduler
 } from "../src/reminders.js";
 import type { ReminderRecord } from "../src/types.js";
 
@@ -151,4 +153,67 @@ test("formatReminderNotification includes acknowledgement guidance", () => {
   const notification = formatReminderNotification(createReminder({ id: 3, message: "drink water" }));
   assert.match(notification, /Reminder #3/);
   assert.match(notification, /reminder ack 3/);
+});
+
+test("reminder scheduler routes notifications through the outbound bus and records delivery on success", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-reminders-"));
+  const sqlitePath = path.join(tempDir, "dot.sqlite");
+  const persistence = initializePersistence(tempDir, sqlitePath);
+  const bus = createInMemoryEventBus();
+  const published: string[] = [];
+
+  persistence.settings.set("reminders.escalationPolicy", "nag-only");
+  const reminder = persistence.createReminder("stretch", "2000-01-01T00:00:00.000Z");
+
+  bus.subscribeOutboundMessage(async (event) => {
+    published.push(event.payload.content);
+    await bus.publishOutboundMessageDelivered({
+      eventId: `${event.eventId}:delivered`,
+      eventType: "outbound.message.delivered",
+      eventVersion: "1.0.0",
+      occurredAt: "2026-04-12T00:00:00.000Z",
+      producer: { service: "discord-transport" },
+      correlation: {
+        correlationId: event.correlation.correlationId,
+        causationId: event.eventId,
+        conversationId: event.correlation.conversationId,
+        actorId: event.correlation.actorId
+      },
+      routing: event.routing,
+      diagnostics: {
+        severity: "info",
+        category: "outbound.delivery"
+      },
+      payload: {
+        requestEventId: event.eventId,
+        participantActorId: event.payload.participantActorId,
+        delivery: event.payload.delivery,
+        deliveryContext: event.payload.deliveryContext,
+        transportMessageId: "dm-1"
+      }
+    });
+  });
+
+  const scheduler = startReminderScheduler({
+    bus,
+    logger: { info() {}, warn() {}, error() {} } as never,
+    ownerUserId: "owner-1",
+    pollIntervalMs: 5,
+    persistence
+  });
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(published.length, 1);
+
+    const pending = persistence.listPendingReminders();
+    assert.equal(pending[0]?.notificationCount, 1);
+    assert.notEqual(pending[0]?.nextNotificationAt, null);
+    const events = persistence.listReminderEvents(reminder.id);
+    assert.equal(events.map((event) => event.eventType).join(","), "created,notified");
+  } finally {
+    scheduler.stop();
+    persistence.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });

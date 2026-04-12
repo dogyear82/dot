@@ -120,7 +120,8 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
     await bus.publishInboundMessage(inboundEvent());
 
     assert.equal(outbound.length, 1);
-    assert.equal(outbound[0]?.payload.replyRoute.replyTo, "msg-1");
+    assert.equal(outbound[0]?.payload.delivery.kind, "reply");
+    assert.equal(outbound[0]?.payload.delivery.replyTo, "msg-1");
     assert.equal(outbound[0]?.payload.recordConversationTurn, true);
     assert.match(outbound[0]?.payload.content ?? "", /Current settings:/);
     assert.match(outbound[0]?.payload.content ?? "", /\[mode: normal\]/);
