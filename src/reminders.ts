@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 
-import { createSystemOutboundMessageRequestedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
+import { createOwnerDiscordDirectMessageNotification } from "./notifications.js";
 import type { Persistence } from "./persistence.js";
 import type { ReminderRecord } from "./types.js";
 
@@ -138,17 +138,9 @@ export function startReminderScheduler(params: {
         try {
           inflightReminders.set(reminder.id, Date.now());
           await bus.publishOutboundMessage(
-            createSystemOutboundMessageRequestedEvent({
+            createOwnerDiscordDirectMessageNotification({
               content: formatReminderNotification(reminder),
-              participantActorId: ownerUserId,
-              delivery: {
-                transport: "discord",
-                kind: "direct-message",
-                channelId: null,
-                guildId: null,
-                replyTo: null,
-                recipientActorId: ownerUserId
-              },
+              ownerUserId,
               producerService: "reminders",
               correlationId: `reminder:${reminder.id}`,
               actorId: ownerUserId,

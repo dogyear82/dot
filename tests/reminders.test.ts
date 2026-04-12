@@ -167,6 +167,9 @@ test("reminder scheduler routes notifications through the outbound bus and recor
 
   bus.subscribeOutboundMessage(async (event) => {
     published.push(event.payload.content);
+    assert.equal(event.producer.service, "reminders");
+    assert.equal(event.payload.delivery.kind, "direct-message");
+    assert.equal(event.payload.delivery.recipientActorId, "owner-1");
     await bus.publishOutboundMessageDelivered({
       eventId: `${event.eventId}:delivered`,
       eventType: "outbound.message.delivered",
