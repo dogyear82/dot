@@ -4,6 +4,7 @@ import { SpanKind } from "@opentelemetry/api";
 import type { Logger } from "pino";
 
 import type { EventBus } from "../eventBus.js";
+import { createOutboundMessageDeliveredEvent, createOutboundMessageDeliveryFailedEvent } from "../events.js";
 import { createSpanAttributesForEvent, recordInboundMessage, recordOutboundMessage, withEventContext, withSpan } from "../observability.js";
 import { normalizeMessage } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
@@ -125,52 +126,73 @@ export function createDiscordClient(params: {
           });
 
           const chunks = splitDiscordMessage(event.payload.content);
+          let firstSent: Message<boolean> | null = null;
 
-          const replyTo = replyRegistry.get(event.payload.replyRoute.replyTo);
-          if (replyTo) {
-            const sent = await replyTo.reply(chunks[0] ?? event.payload.content);
-            persistSentDiscordMessage(sent);
-            for (const chunk of chunks.slice(1)) {
-              const followUp = await sent.channel.send(chunk);
-              persistSentDiscordMessage(followUp);
+          try {
+            if (event.payload.delivery.kind === "reply") {
+              const replyTo = replyRegistry.get(event.payload.delivery.replyTo);
+              if (replyTo) {
+                const sent = await replyTo.reply(chunks[0] ?? event.payload.content);
+                persistSentDiscordMessage(sent);
+                firstSent = sent;
+                for (const chunk of chunks.slice(1)) {
+                  const followUp = await sent.channel.send(chunk);
+                  persistSentDiscordMessage(followUp);
+                }
+              } else {
+                const channel = await client.channels.fetch(event.payload.delivery.channelId);
+                if (!channel || !channel.isSendable()) {
+                  throw new Error(`Unable to route outbound Discord message to channel ${event.payload.delivery.channelId}`);
+                }
+
+                for (const chunk of chunks) {
+                  const sent = await channel.send(chunk);
+                  if ("author" in sent) {
+                    persistSentDiscordMessage(sent);
+                    firstSent ??= sent;
+                  }
+                }
+              }
+            } else {
+              const recipient = await client.users.fetch(event.payload.delivery.recipientActorId);
+              const sent = await recipient.send(chunks[0] ?? event.payload.content);
+              persistSentDiscordMessage(sent);
+              firstSent = sent;
+              if (!sent.channel.isSendable()) {
+                throw new Error("Unable to send follow-up Discord direct-message chunk");
+              }
+              for (const chunk of chunks.slice(1)) {
+                const followUp = await sent.channel.send(chunk);
+                persistSentDiscordMessage(followUp);
+              }
             }
-            if (event.payload.recordConversationTurn) {
+
+            if (firstSent && event.payload.recordConversationTurn) {
               persistence.saveConversationTurn({
                 conversationId: event.correlation.conversationId ?? "",
                 role: "assistant",
                 participantActorId: event.payload.participantActorId,
                 content: event.payload.content,
-                sourceMessageId: sent.id,
-                createdAt: sent.createdAt.toISOString()
+                sourceMessageId: firstSent.id,
+                createdAt: firstSent.createdAt.toISOString()
               });
             }
-            return;
-          }
 
-          const channel = await client.channels.fetch(event.payload.replyRoute.channelId);
-          if (!channel || !channel.isSendable()) {
-            logger.error({ channelId: event.payload.replyRoute.channelId }, "Unable to route outbound Discord message");
-            return;
-          }
-
-          let firstSent: Message<boolean> | null = null;
-          for (const chunk of chunks) {
-            const sent = await channel.send(chunk);
-            if ("author" in sent) {
-              persistSentDiscordMessage(sent);
-              firstSent ??= sent;
-            }
-          }
-
-          if (firstSent && event.payload.recordConversationTurn) {
-            persistence.saveConversationTurn({
-              conversationId: event.correlation.conversationId ?? "",
-              role: "assistant",
-              participantActorId: event.payload.participantActorId,
-              content: event.payload.content,
-              sourceMessageId: firstSent.id,
-              createdAt: firstSent.createdAt.toISOString()
-            });
+            await bus.publishOutboundMessageDelivered(
+              createOutboundMessageDeliveredEvent({
+                requestEvent: event,
+                transportMessageId: firstSent?.id ?? null
+              })
+            );
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : "unknown discord delivery failure";
+            logger.error({ err: error, eventId: event.eventId }, "Failed to deliver outbound Discord message");
+            await bus.publishOutboundMessageDeliveryFailed(
+              createOutboundMessageDeliveryFailedEvent({
+                requestEvent: event,
+                reason
+              })
+            );
           }
         }
       );

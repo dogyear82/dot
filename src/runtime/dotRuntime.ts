@@ -1,6 +1,5 @@
 import process from "node:process";
 
-import type { Client } from "discord.js";
 import type { Logger } from "pino";
 
 import { createLlmService } from "../chat/modelRouter.js";
@@ -45,7 +44,7 @@ export async function createDotRuntime(params: {
     settings: persistence.settings
   });
 
-  let discordClient: Client | undefined;
+  let discordClient: ReturnType<typeof createDiscordClient> | undefined;
   let unregisterMessagePipeline: (() => void) | undefined;
   let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
   let outlookMailSyncWorker: ReturnType<typeof startOutlookMailSyncWorker> | undefined;
@@ -166,12 +165,8 @@ export async function createDotRuntime(params: {
       name: "reminders",
       onStatusChange: emitHostHealth,
       start() {
-        if (!discordClient) {
-          throw new Error("Discord transport must be started before the reminder host.");
-        }
-
         reminderScheduler = startReminderScheduler({
-          client: discordClient,
+          bus,
           logger,
           ownerUserId: config.DISCORD_OWNER_USER_ID,
           persistence

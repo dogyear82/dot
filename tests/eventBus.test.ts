@@ -86,12 +86,15 @@ test("in-memory event bus publishes inbound and outbound events to subscribers",
     payload: {
       inResponseToEventId: "event-1",
       participantActorId: "owner-1",
-      replyRoute: {
+      delivery: {
         transport: "discord",
+        kind: "reply",
         channelId: "channel-1",
         guildId: "guild-1",
-        replyTo: "msg-1"
+        replyTo: "msg-1",
+        recipientActorId: "owner-1"
       },
+      deliveryContext: null,
       content: "world",
       recordConversationTurn: false
     }

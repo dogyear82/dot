@@ -8,7 +8,7 @@ import { Events } from "discord.js";
 
 import { createInMemoryEventBus } from "../src/eventBus.js";
 import { createDiscordClient } from "../src/discord/createClient.js";
-import { createOutboundMessageRequestedEvent } from "../src/events.js";
+import { createOutboundMessageRequestedEvent, createSystemOutboundMessageRequestedEvent } from "../src/events.js";
 import { registerMessagePipeline } from "../src/messagePipeline.js";
 import { initializePersistence } from "../src/persistence.js";
 
@@ -169,6 +169,80 @@ function createFakeMessage(params: {
           }
         }
       };
+    }
+  };
+}
+
+function createSentBotMessage(params: {
+  id: string;
+  content: string;
+  botRoleIds?: string[];
+  channelSendLog: string[];
+  isDirectMessage?: boolean;
+  createdAt?: string;
+}) {
+  const {
+    id,
+    content,
+    botRoleIds = [],
+    channelSendLog,
+    isDirectMessage = false,
+    createdAt = "2026-04-09T00:00:00.000Z"
+  } = params;
+
+  return {
+    id,
+    channelId: isDirectMessage ? "dm-chan-1" : "chan-1",
+    guildId: isDirectMessage ? null : "guild-1",
+    guild: isDirectMessage
+      ? null
+      : {
+          members: {
+            me: {
+              roles: {
+                cache: {
+                  map<T>(callback: (role: { id: string }) => T) {
+                    return botRoleIds.map((roleId) => callback({ id: roleId }));
+                  }
+                }
+              }
+            }
+          }
+        },
+    author: {
+      id: "bot-1",
+      username: "Dot",
+      bot: true
+    },
+    content,
+    createdAt: new Date(createdAt),
+    channel: {
+      isSendable() {
+        return true;
+      },
+      async send(nextContent: string) {
+        channelSendLog.push(nextContent);
+        return createSentBotMessage({
+          id: `${id}-follow-up-${channelSendLog.length}`,
+          content: nextContent,
+          botRoleIds,
+          channelSendLog,
+          isDirectMessage,
+          createdAt
+        });
+      }
+    },
+    mentions: {
+      users: {
+        has() {
+          return false;
+        }
+      },
+      roles: {
+        some() {
+          return false;
+        }
+      }
     }
   };
 }
@@ -412,6 +486,86 @@ test("Discord outbound delivery chunks oversized replies and stores one assistan
       const assistantTurns = turns.filter((turn) => turn.role === "assistant");
       assert.equal(assistantTurns.length, 1);
       assert.equal(assistantTurns[0]?.content, fullReply);
+    } finally {
+      client.destroy();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("Discord outbound delivery supports direct-message notifications and emits delivery results", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const sentChunks: string[] = [];
+  const deliveredRequestIds: string[] = [];
+  const bus = createInMemoryEventBus();
+
+  try {
+    const client = createDiscordClient({
+      bus,
+      logger: createLogger() as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    bus.subscribeOutboundMessageDelivered(async (event) => {
+      deliveredRequestIds.push(event.payload.requestEventId);
+    });
+
+    try {
+      Object.defineProperty(client, "user", {
+        configurable: true,
+        value: {
+          id: "bot-1",
+          username: "Dot"
+        }
+      });
+      Object.defineProperty(client, "users", {
+        configurable: true,
+        value: {
+          async fetch(userId: string) {
+            assert.equal(userId, "owner-1");
+            return {
+              async send(content: string) {
+                sentChunks.push(content);
+                return createSentBotMessage({
+                  id: `dm-${sentChunks.length}`,
+                  content,
+                  channelSendLog: sentChunks,
+                  isDirectMessage: true
+                });
+              }
+            };
+          }
+        }
+      });
+
+      await bus.publishOutboundMessage(
+        createSystemOutboundMessageRequestedEvent({
+          content: "Reminder #1: stretch\nReply with `reminder ack 1` when handled.",
+          participantActorId: "owner-1",
+          delivery: {
+            transport: "discord",
+            kind: "direct-message",
+            channelId: null,
+            guildId: null,
+            replyTo: null,
+            recipientActorId: "owner-1"
+          },
+          producerService: "reminders",
+          correlationId: "reminder:1",
+          actorId: "owner-1",
+          deliveryContext: {
+            kind: "reminder",
+            reminderId: 1
+          }
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(sentChunks.length, 1);
+      assert.match(sentChunks[0] ?? "", /Reminder #1/);
+      assert.equal(deliveredRequestIds.length, 1);
     } finally {
       client.destroy();
     }
