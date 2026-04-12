@@ -20,5 +20,6 @@ test("loadConfig applies defaults for optional values", () => {
   assert.equal(config.OUTLOOK_MAIL_APPROVED_FOLDER, "Dot Approved");
   assert.equal(config.OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER, "Needs Attention");
   assert.equal(config.OUTLOOK_MAIL_WHITELIST, "");
+  assert.equal(config.OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS, 7);
   assert.equal(config.OUTLOOK_MAIL_SYNC_INTERVAL_MS, 300000);
 });

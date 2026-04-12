@@ -50,6 +50,7 @@ test("mail sync worker ensures folder and persists delta cursor", async () => {
   try {
     await syncOutlookMailOnce({
       approvedFolderName: "Dot Approved",
+      initialLookbackDays: 7,
       logger: createLogger() as never,
       mailClient: {
         async ensureFolder(name) {
@@ -95,6 +96,7 @@ test("mail sync worker reuses stored folder state and previous delta cursor", as
 
     await syncOutlookMailOnce({
       approvedFolderName: "Dot Approved",
+      initialLookbackDays: 7,
       logger: createLogger() as never,
       mailClient: {
         async ensureFolder(name) {
@@ -133,6 +135,7 @@ test("mail sync worker resets an invalid delta cursor and retries from a fresh b
 
     await syncOutlookMailOnce({
       approvedFolderName: "Dot Approved",
+      initialLookbackDays: 7,
       logger: createLogger() as never,
       mailClient: {
         async ensureFolder(name) {
@@ -170,6 +173,7 @@ test("mail sync worker moves whitelisted mail into the approved folder and recor
   try {
     await syncOutlookMailOnce({
       approvedFolderName: "Dot Approved",
+      initialLookbackDays: 7,
       logger: createLogger() as never,
       mailClient: {
         async ensureFolder(name) {
@@ -241,6 +245,7 @@ test("mail sync worker ignores already-triaged messages to avoid repeated moves"
 
     await syncOutlookMailOnce({
       approvedFolderName: "Dot Approved",
+      initialLookbackDays: 7,
       logger: createLogger() as never,
       mailClient: {
         async ensureFolder(name) {
@@ -286,6 +291,72 @@ test("mail sync worker ignores already-triaged messages to avoid repeated moves"
 
     assert.equal(triageCalls, 0);
     assert.equal(moveCalls, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("mail sync worker only triages messages from the configured initial lookback window on first baseline", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const triaged: string[] = [];
+
+  try {
+    await syncOutlookMailOnce({
+      approvedFolderName: "Dot Approved",
+      initialLookbackDays: 7,
+      logger: createLogger() as never,
+      mailClient: {
+        async ensureFolder(name) {
+          return {
+            id: name === "Dot Approved" ? "folder-approved" : "folder-needs-attention",
+            displayName: name
+          };
+        },
+        async syncInboxDelta() {
+          return {
+            messages: [
+              {
+                id: "message-old",
+                subject: "Old mail",
+                from: "person@example.com",
+                receivedAt: new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString(),
+                bodyPreview: "Old backlog item",
+                parentFolderId: "inbox",
+                webLink: null
+              },
+              {
+                id: "message-new",
+                subject: "Recent mail",
+                from: "person@example.com",
+                receivedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+                bodyPreview: "Recent backlog item",
+                parentFolderId: "inbox",
+                webLink: null
+              }
+            ],
+            deltaCursor: "cursor-1"
+          };
+        },
+        async moveMessageToFolder() {}
+      },
+      needsAttentionFolderName: "Needs Attention",
+      persistence,
+      triageService: {
+        async triageMessage(message) {
+          triaged.push(message.id);
+          return {
+            outcome: "ignore",
+            source: "heuristic",
+            reason: "test decision",
+            route: "deterministic"
+          };
+        }
+      }
+    });
+
+    assert.deepEqual(triaged, ["message-new"]);
+    assert.equal(persistence.getMailTriageDecision("message-old"), null);
+    assert.equal(persistence.getMailTriageDecision("message-new")?.outcome, "ignore");
   } finally {
     cleanup();
   }

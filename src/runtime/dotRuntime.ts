@@ -188,6 +188,7 @@ export async function createDotRuntime(params: {
       start() {
         outlookMailSyncWorker = startOutlookMailSyncWorker({
           approvedFolderName: config.OUTLOOK_MAIL_APPROVED_FOLDER,
+          initialLookbackDays: config.OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS,
           logger,
           mailClient,
           needsAttentionFolderName: config.OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER,

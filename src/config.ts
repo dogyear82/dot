@@ -34,6 +34,7 @@ const envSchema = z.object({
   OUTLOOK_MAIL_APPROVED_FOLDER: z.string().default("Dot Approved"),
   OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER: z.string().default("Needs Attention"),
   OUTLOOK_MAIL_WHITELIST: z.string().default(""),
+  OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS: z.coerce.number().int().positive().default(7),
   OUTLOOK_MAIL_SYNC_INTERVAL_MS: z.coerce.number().int().positive().default(300000)
 });
 

@@ -11,13 +11,14 @@ const LAST_SYNC_AT_KEY = "outlookMail.lastSyncAt";
 
 export async function syncOutlookMailOnce(params: {
   approvedFolderName: string;
+  initialLookbackDays: number;
   logger: Logger;
   mailClient: OutlookMailClient;
   needsAttentionFolderName: string;
   persistence: Persistence;
   triageService: MailTriageService;
 }) {
-  const { approvedFolderName, logger, mailClient, needsAttentionFolderName, persistence, triageService } = params;
+  const { approvedFolderName, initialLookbackDays, logger, mailClient, needsAttentionFolderName, persistence, triageService } = params;
   const currentFolderId = persistence.getWorkerState(APPROVED_FOLDER_ID_KEY);
   if (!currentFolderId) {
     const folder = await mailClient.ensureFolder(approvedFolderName);
@@ -53,7 +54,11 @@ export async function syncOutlookMailOnce(params: {
     persistence.setWorkerState(DELTA_CURSOR_KEY, result.deltaCursor);
   }
 
-  for (const message of result.messages) {
+  const eligibleMessages = shouldApplyInitialLookback(deltaCursor)
+    ? filterMessagesByLookback(result.messages, initialLookbackDays)
+    : result.messages;
+
+  for (const message of eligibleMessages) {
     if (persistence.getMailTriageDecision(message.id)) {
       continue;
     }
@@ -101,13 +106,19 @@ export async function syncOutlookMailOnce(params: {
 
   persistence.setWorkerState(LAST_SYNC_AT_KEY, new Date().toISOString());
   logger.info(
-    { syncedMessages: result.messages.length, hasDeltaCursor: Boolean(result.deltaCursor) },
+    {
+      syncedMessages: result.messages.length,
+      eligibleMessages: eligibleMessages.length,
+      hasDeltaCursor: Boolean(result.deltaCursor),
+      baselineLookbackDays: shouldApplyInitialLookback(deltaCursor) ? initialLookbackDays : null
+    },
     "Synced Outlook mail delta"
   );
 }
 
 export function startOutlookMailSyncWorker(params: {
   approvedFolderName: string;
+  initialLookbackDays: number;
   logger: Logger;
   mailClient: OutlookMailClient;
   needsAttentionFolderName: string;
@@ -150,4 +161,16 @@ export function startOutlookMailSyncWorker(params: {
       clearInterval(intervalId);
     }
   };
+}
+
+function shouldApplyInitialLookback(deltaCursor: string | null): boolean {
+  return !deltaCursor;
+}
+
+function filterMessagesByLookback(messages: Awaited<ReturnType<OutlookMailClient["syncInboxDelta"]>>["messages"], lookbackDays: number) {
+  const cutoff = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
+  return messages.filter((message) => {
+    const receivedAt = Date.parse(message.receivedAt);
+    return Number.isFinite(receivedAt) && receivedAt >= cutoff;
+  });
 }
