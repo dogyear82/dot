@@ -1,5 +1,10 @@
 import type { Persistence } from "./persistence.js";
-import { getBuiltInPersonalityProfile, listBuiltInPersonalityProfiles, blueLadyProfile } from "./personalityProfiles.js";
+import {
+  getBuiltInPersonalityProfile,
+  listBuiltInPersonalityProfiles,
+  listPersonalityBundleErrors,
+  blueLadyProfile
+} from "./personalityProfiles.js";
 import type { SettingsStore } from "./settings.js";
 import type { PersonalityPresetRecord, PersonalityProfileRecord } from "./types.js";
 
@@ -50,6 +55,7 @@ export function handlePersonalityCommand(persistence: Persistence, content: stri
 
   if (parts[1] === "show") {
     const state = getActivePersonalityState(persistence.settings);
+    const bundleWarnings = formatBundleWarnings();
     return [
       `Active profile: \`${state.activeProfile.name}\``,
       `Summary: ${state.activeProfile.summary}`,
@@ -65,7 +71,8 @@ export function handlePersonalityCommand(persistence: Persistence, content: stri
       "Quirks:",
       ...(state.activeProfile.quirks.length > 0
         ? state.activeProfile.quirks.map((quirk) => `- \`${quirk.label}\` = \`${state.quirkRates[quirk.key] ?? quirk.defaultRate}\``)
-        : ["- none"])
+        : ["- none"]),
+      ...bundleWarnings
     ].join("\n");
   }
 
@@ -107,7 +114,8 @@ export function handlePersonalityCommand(persistence: Persistence, content: stri
     const profiles = listBuiltInPersonalityProfiles();
     return [
       "Available personality profiles:",
-      ...profiles.map((profile) => `- \`${profile.name}\`: ${profile.summary}`)
+      ...profiles.map((profile) => `- \`${profile.name}\`: ${profile.summary}`),
+      ...formatBundleWarnings()
     ].join("\n");
   }
 
@@ -300,6 +308,18 @@ function getStoredQuirkOverrides(settingsStore: SettingsStore): Record<string, n
   } catch {
     return {};
   }
+}
+
+function formatBundleWarnings(): string[] {
+  const bundleErrors = listPersonalityBundleErrors();
+  if (bundleErrors.length === 0) {
+    return [];
+  }
+
+  return [
+    "Bundle validation warnings:",
+    ...bundleErrors.map((error) => `- ${error.bundlePath}: ${error.message}`)
+  ];
 }
 
 function getQuirkRate(settingsStore: SettingsStore, key: string, fallback: number): number {
