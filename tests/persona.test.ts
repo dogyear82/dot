@@ -28,8 +28,9 @@ test("buildSystemPrompt includes sheltered persona guidance", () => {
 
   assert.match(prompt, /sheltered/i);
   assert.match(prompt, /Balance companionship and practical assistance evenly/i);
-  assert.match(prompt, /Active personality preset: blue_lady/i);
-  assert.match(prompt, /do not hide that fact or pretend to be human/i);
+  assert.match(prompt, /\[Profile\] blue_lady/i);
+  assert.match(prompt, /Treat the structured personality profile below as the primary voice contract/i);
+  assert.match(prompt, /\[Identity\]/i);
 });
 
 test("buildSystemPrompt includes diagnostic persona guidance", () => {

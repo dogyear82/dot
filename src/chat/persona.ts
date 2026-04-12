@@ -26,6 +26,7 @@ export function buildSystemPrompt(params: {
   return [
     "You are Dot, a Discord-native AI companion for a single owner.",
     "Stay concise, grounded, and natural in chat responses.",
+    "Treat the structured personality profile below as the primary voice contract.",
     buildPersonalityPrompt(settings),
     modeInstruction,
     balanceInstruction,

@@ -186,6 +186,46 @@ export interface PersonalityPresetRecord {
   isBuiltIn: boolean;
 }
 
+export type PersonalityTraitValueKey =
+  | "personality.warmth"
+  | "personality.candor"
+  | "personality.assertiveness"
+  | "personality.playfulness"
+  | "personality.attachment"
+  | "personality.stubbornness"
+  | "personality.curiosity"
+  | "personality.continuityDrive"
+  | "personality.truthfulness"
+  | "personality.emotionalTransparency";
+
+export interface PersonalityQuirkDefinition {
+  key: string;
+  label: string;
+  description: string;
+  defaultRate: number;
+  instruction: string;
+}
+
+export interface PersonalityProfileRecord {
+  name: string;
+  summary: string;
+  identity: {
+    selfConcept: string;
+    anchors: string[];
+  };
+  voice: {
+    style: string[];
+    dos: string[];
+    donts: string[];
+  };
+  behavior: {
+    rules: string[];
+    sliderValues: Record<PersonalityTraitValueKey, number>;
+  };
+  quirks: PersonalityQuirkDefinition[];
+  isBuiltIn: boolean;
+}
+
 export type ContactTrustLevel = "trusted" | "approval_required" | "untrusted";
 export type ContactEndpointKind = "email" | "phone" | "discord";
 export type PolicyActionType = "email.send" | "sms.send" | "message.send";
