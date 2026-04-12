@@ -107,6 +107,8 @@ Near-term implication:
 
 Current mail boundaries:
 
+- the main bot host now owns Discord ingress only; standalone Discord egress is extracted separately
+- the standalone `discord-egress` service consumes canonical `outbound.message.requested` events and owns Discord reply/DM delivery plus chunking
 - the standalone `mail-sync` service owns Microsoft Graph inbox delta polling and durable delta cursor state
 - the standalone `mail-triage` service consumes canonical `outlook.mail.message.detected` events from the bus and performs folder routing
 - the standalone `email-actions` service handles Outlook draft creation and draft sending for explicit `!email` commands

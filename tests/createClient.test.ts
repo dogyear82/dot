@@ -8,6 +8,7 @@ import { Events } from "discord.js";
 
 import { createInMemoryEventBus } from "../src/eventBus.js";
 import { createDiscordClient } from "../src/discord/createClient.js";
+import { registerDiscordEgressConsumer } from "../src/discord/egress.js";
 import { createOutboundMessageRequestedEvent, createSystemOutboundMessageRequestedEvent } from "../src/events.js";
 import { registerMessagePipeline } from "../src/messagePipeline.js";
 import { initializePersistence } from "../src/persistence.js";
@@ -247,6 +248,67 @@ function createSentBotMessage(params: {
   };
 }
 
+function createDiscordEgressTestClient(params: {
+  sentChunks: string[];
+  expectedReplyTo?: string;
+}) {
+  const { sentChunks, expectedReplyTo } = params;
+
+  return {
+    user: {
+      id: "bot-1",
+      username: "Dot"
+    },
+    channels: {
+      async fetch(channelId: string) {
+        assert.equal(channelId, "chan-1");
+        return {
+          isSendable() {
+            return true;
+          },
+          async send(payload: string | { content: string; reply?: { messageReference: string; failIfNotExists?: boolean } }) {
+            if (typeof payload === "string") {
+              sentChunks.push(payload);
+              return createSentBotMessage({
+                  id: `chan-${sentChunks.length}`,
+                content: payload,
+                channelSendLog: sentChunks
+              });
+            }
+
+            if (expectedReplyTo != null) {
+              assert.equal(payload.reply?.messageReference, expectedReplyTo);
+            }
+            assert.equal(payload.reply?.failIfNotExists, true);
+            sentChunks.push(payload.content);
+            return createSentBotMessage({
+              id: `chan-${sentChunks.length}`,
+              content: payload.content,
+              channelSendLog: sentChunks
+            });
+          }
+        };
+      }
+    },
+    users: {
+      async fetch(userId: string) {
+        assert.equal(userId, "owner-1");
+        return {
+          async send(content: string) {
+            sentChunks.push(content);
+            return createSentBotMessage({
+              id: `dm-${sentChunks.length}`,
+              content,
+              channelSendLog: sentChunks,
+              isDirectMessage: true
+            });
+          }
+        };
+      }
+    }
+  };
+}
+
 function createLogger() {
   return {
     info() {},
@@ -300,6 +362,14 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
       bus,
       logger: createLogger() as never,
       ownerUserId: "owner-1",
+      persistence
+    });
+    const unregisterEgress = registerDiscordEgressConsumer({
+      bus,
+      client: createDiscordEgressTestClient({
+        sentChunks: replies
+      }) as never,
+      logger: createLogger() as never,
       persistence
     });
 
@@ -385,6 +455,7 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
 
       assert.equal(generatedMessages.length, 1);
     } finally {
+      unregisterEgress();
       unsubscribe();
       await client.destroy();
     }
@@ -397,99 +468,78 @@ test("Discord outbound delivery chunks oversized replies and stores one assistan
   const { persistence, cleanup } = createPersistence();
   const sentChunks: string[] = [];
   const bus = createInMemoryEventBus();
+  const unregisterConsumer = registerDiscordEgressConsumer({
+    bus,
+    client: createDiscordEgressTestClient({
+      sentChunks,
+      expectedReplyTo: "msg-long"
+    }) as never,
+    logger: createLogger() as never,
+    persistence
+  });
 
   try {
-    const client = createDiscordClient({
-      bus,
-      logger: createLogger() as never,
-      ownerUserId: "owner-1",
-      persistence
-    });
-
-    try {
-      Object.defineProperty(client, "user", {
-        configurable: true,
-        value: {
-          id: "bot-1",
-          username: "Dot"
-        }
-      });
-
-      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
-        Events.MessageCreate,
-        createFakeMessage({
-          id: "msg-long",
-          content: "hello there",
-          mentionedBot: true,
-          replyLog: sentChunks,
-          channelSendLog: sentChunks
-        })
-      );
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      const inboundEvent = {
-        eventId: "discord:msg-long",
-        eventType: "inbound.message.received",
-        eventVersion: "1.0.0",
-        occurredAt: "2026-04-09T00:00:00.000Z",
-        producer: { service: "discord-transport" },
-        correlation: {
-          correlationId: "msg-long",
-          causationId: null,
-          conversationId: "chan-1",
-          actorId: "owner-1"
+    const inboundEvent = {
+      eventId: "discord:msg-long",
+      eventType: "inbound.message.received",
+      eventVersion: "1.0.0",
+      occurredAt: "2026-04-09T00:00:00.000Z",
+      producer: { service: "discord-transport" },
+      correlation: {
+        correlationId: "msg-long",
+        causationId: null,
+        conversationId: "chan-1",
+        actorId: "owner-1"
+      },
+      routing: {
+        transport: "discord",
+        channelId: "chan-1",
+        guildId: "guild-1",
+        replyTo: "msg-long"
+      },
+      diagnostics: {
+        severity: "info",
+        category: "transport.discord"
+      },
+      payload: {
+        messageId: "msg-long",
+        sender: {
+          actorId: "owner-1",
+          displayName: "owner",
+          actorRole: "owner"
         },
-        routing: {
+        content: "hello there",
+        addressedContent: "hello there",
+        isDirectMessage: false,
+        mentionedBot: true,
+        replyRoute: {
           transport: "discord",
           channelId: "chan-1",
           guildId: "guild-1",
           replyTo: "msg-long"
-        },
-        diagnostics: {
-          severity: "info",
-          category: "transport.discord"
-        },
-        payload: {
-          messageId: "msg-long",
-          sender: {
-            actorId: "owner-1",
-            displayName: "owner",
-            actorRole: "owner"
-          },
-          content: "hello there",
-          addressedContent: "hello there",
-          isDirectMessage: false,
-          mentionedBot: true,
-          replyRoute: {
-            transport: "discord",
-            channelId: "chan-1",
-            guildId: "guild-1",
-            replyTo: "msg-long"
-          }
         }
-      } as const;
+      }
+    } as const;
 
-      const fullReply = `${"Paragraph one is deliberately long and should become its own chunk. ".repeat(40)}\n\n\`\`\`txt\n${"code line\n".repeat(80)}\`\`\`\n\n[mode: power]`;
-      await bus.publishOutboundMessage(
-        createOutboundMessageRequestedEvent({
-          inboundEvent,
-          content: fullReply,
-          recordConversationTurn: true
-        })
-      );
+    const fullReply = `${"Paragraph one is deliberately long and should become its own chunk. ".repeat(40)}\n\n\`\`\`txt\n${"code line\n".repeat(80)}\`\`\`\n\n[mode: power]`;
+    await bus.publishOutboundMessage(
+      createOutboundMessageRequestedEvent({
+        inboundEvent,
+        content: fullReply,
+        recordConversationTurn: true
+      })
+    );
 
-      assert.ok(sentChunks.length > 1);
-      assert.equal(sentChunks.at(-1)?.includes("[mode: power]"), true);
-      assert.equal(sentChunks.slice(0, -1).some((chunk) => chunk.includes("[mode: power]")), false);
+    assert.ok(sentChunks.length > 1);
+    assert.equal(sentChunks.at(-1)?.includes("[mode: power]"), true);
+    assert.equal(sentChunks.slice(0, -1).some((chunk) => chunk.includes("[mode: power]")), false);
 
-      const turns = persistence.listRecentConversationTurns("chan-1", 10);
-      const assistantTurns = turns.filter((turn) => turn.role === "assistant");
-      assert.equal(assistantTurns.length, 1);
-      assert.equal(assistantTurns[0]?.content, fullReply);
-    } finally {
-      client.destroy();
-    }
+    const turns = persistence.listRecentConversationTurns("chan-1", 10);
+    const assistantTurns = turns.filter((turn) => turn.role === "assistant");
+    assert.equal(assistantTurns.length, 1);
+    assert.equal(assistantTurns[0]?.content, fullReply);
   } finally {
+    unregisterConsumer();
     cleanup();
   }
 });
@@ -499,77 +549,48 @@ test("Discord outbound delivery supports direct-message notifications and emits 
   const sentChunks: string[] = [];
   const deliveredRequestIds: string[] = [];
   const bus = createInMemoryEventBus();
+  const unregisterConsumer = registerDiscordEgressConsumer({
+    bus,
+    client: createDiscordEgressTestClient({
+      sentChunks
+    }) as never,
+    logger: createLogger() as never,
+    persistence
+  });
 
   try {
-    const client = createDiscordClient({
-      bus,
-      logger: createLogger() as never,
-      ownerUserId: "owner-1",
-      persistence
-    });
-
     bus.subscribeOutboundMessageDelivered(async (event) => {
       deliveredRequestIds.push(event.payload.requestEventId);
     });
 
-    try {
-      Object.defineProperty(client, "user", {
-        configurable: true,
-        value: {
-          id: "bot-1",
-          username: "Dot"
+    await bus.publishOutboundMessage(
+      createSystemOutboundMessageRequestedEvent({
+        content: "Reminder #1: stretch\nReply with `reminder ack 1` when handled.",
+        participantActorId: "owner-1",
+        delivery: {
+          transport: "discord",
+          kind: "direct-message",
+          channelId: null,
+          guildId: null,
+          replyTo: null,
+          recipientActorId: "owner-1"
+        },
+        producerService: "reminders",
+        correlationId: "reminder:1",
+        actorId: "owner-1",
+        deliveryContext: {
+          kind: "reminder",
+          reminderId: 1
         }
-      });
-      Object.defineProperty(client, "users", {
-        configurable: true,
-        value: {
-          async fetch(userId: string) {
-            assert.equal(userId, "owner-1");
-            return {
-              async send(content: string) {
-                sentChunks.push(content);
-                return createSentBotMessage({
-                  id: `dm-${sentChunks.length}`,
-                  content,
-                  channelSendLog: sentChunks,
-                  isDirectMessage: true
-                });
-              }
-            };
-          }
-        }
-      });
+      })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-      await bus.publishOutboundMessage(
-        createSystemOutboundMessageRequestedEvent({
-          content: "Reminder #1: stretch\nReply with `reminder ack 1` when handled.",
-          participantActorId: "owner-1",
-          delivery: {
-            transport: "discord",
-            kind: "direct-message",
-            channelId: null,
-            guildId: null,
-            replyTo: null,
-            recipientActorId: "owner-1"
-          },
-          producerService: "reminders",
-          correlationId: "reminder:1",
-          actorId: "owner-1",
-          deliveryContext: {
-            kind: "reminder",
-            reminderId: 1
-          }
-        })
-      );
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      assert.equal(sentChunks.length, 1);
-      assert.match(sentChunks[0] ?? "", /Reminder #1/);
-      assert.equal(deliveredRequestIds.length, 1);
-    } finally {
-      client.destroy();
-    }
+    assert.equal(sentChunks.length, 1);
+    assert.match(sentChunks[0] ?? "", /Reminder #1/);
+    assert.equal(deliveredRequestIds.length, 1);
   } finally {
+    unregisterConsumer();
     cleanup();
   }
 });
@@ -613,6 +634,14 @@ test("Discord ingress normalizes a plain-text @Dot command before pipeline routi
       ownerUserId: "owner-1",
       persistence
     });
+    const unregisterEgress = registerDiscordEgressConsumer({
+      bus,
+      client: createDiscordEgressTestClient({
+        sentChunks: replies
+      }) as never,
+      logger: createLogger() as never,
+      persistence
+    });
 
     try {
       Object.defineProperty(client, "user", {
@@ -644,6 +673,7 @@ test("Discord ingress normalizes a plain-text @Dot command before pipeline routi
       assert.equal(turns[1]?.role, "assistant");
       assert.match(turns[1]?.content ?? "", /Current settings:/);
     } finally {
+      unregisterEgress();
       unsubscribe();
       await client.destroy();
     }
@@ -691,6 +721,14 @@ test("Discord ingress normalizes a role mention command before pipeline routing"
       ownerUserId: "owner-1",
       persistence
     });
+    const unregisterEgress = registerDiscordEgressConsumer({
+      bus,
+      client: createDiscordEgressTestClient({
+        sentChunks: replies
+      }) as never,
+      logger: createLogger() as never,
+      persistence
+    });
 
     try {
       Object.defineProperty(client, "user", {
@@ -721,6 +759,7 @@ test("Discord ingress normalizes a role mention command before pipeline routing"
       const turns = persistence.listRecentConversationTurns("chan-1", 10);
       assert.equal(turns[0]?.content, "!settings show");
     } finally {
+      unregisterEgress();
       unsubscribe();
       await client.destroy();
     }
@@ -772,6 +811,14 @@ test("Discord ingress treats the bot role mention as addressed chat", async () =
       ownerUserId: "owner-1",
       persistence
     });
+    const unregisterEgress = registerDiscordEgressConsumer({
+      bus,
+      client: createDiscordEgressTestClient({
+        sentChunks: replies
+      }) as never,
+      logger: createLogger() as never,
+      persistence
+    });
 
     try {
       Object.defineProperty(client, "user", {
@@ -799,6 +846,7 @@ test("Discord ingress treats the bot role mention as addressed chat", async () =
       assert.equal(generatedMessages[0], "what do you think?");
       assert.match(replies[0] ?? "", /role mention chat reply/);
     } finally {
+      unregisterEgress();
       unsubscribe();
       await client.destroy();
     }
