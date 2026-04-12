@@ -135,6 +135,13 @@ export interface OAuthDeviceFlowRecord {
   message: string;
 }
 
+export interface DetectedMailMessageRecord {
+  messageId: string;
+  message: OutlookMailMessage;
+  initialBaseline: boolean;
+  detectedAt: string;
+}
+
 export type EmailActionStatus =
   | "pending_contact_classification"
   | "awaiting_approval"

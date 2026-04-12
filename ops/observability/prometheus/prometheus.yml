@@ -7,6 +7,10 @@ scrape_configs:
     static_configs:
       - targets: ["bot:9464"]
 
+  - job_name: dot-mail-sync
+    static_configs:
+      - targets: ["mail-sync:9464"]
+
   - job_name: prometheus
     static_configs:
       - targets: ["prometheus:9090"]

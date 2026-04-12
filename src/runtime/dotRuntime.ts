@@ -7,8 +7,7 @@ import type { AppConfig } from "../config.js";
 import { createDiagnosticsObserver, createHostHealthEvent } from "../diagnostics.js";
 import { createDiscordClient } from "../discord/createClient.js";
 import { createConfiguredEventBus } from "../eventBus.js";
-import { createMailTriageService } from "../mailTriage.js";
-import { startOutlookMailSyncWorker } from "../mailSyncWorker.js";
+import { createMailTriageService, registerMailTriageConsumer } from "../mailTriage.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
 import { startObservability } from "../observability.js";
 import { MicrosoftGraphOutlookCalendarClient } from "../outlookCalendar.js";
@@ -47,7 +46,7 @@ export async function createDotRuntime(params: {
   let discordClient: ReturnType<typeof createDiscordClient> | undefined;
   let unregisterMessagePipeline: (() => void) | undefined;
   let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
-  let outlookMailSyncWorker: ReturnType<typeof startOutlookMailSyncWorker> | undefined;
+  let unregisterMailTriageConsumer: (() => void) | undefined;
   let diagnosticsObserver: ReturnType<typeof createDiagnosticsObserver> | undefined;
   let observability: ReturnType<typeof startObservability> | undefined;
 
@@ -179,23 +178,22 @@ export async function createDotRuntime(params: {
       }
     }),
     createServiceHost({
-      name: "mail-sync",
+      name: "mail-triage",
       onStatusChange: emitHostHealth,
-      start() {
-        outlookMailSyncWorker = startOutlookMailSyncWorker({
+      async start() {
+        unregisterMailTriageConsumer = await registerMailTriageConsumer({
           approvedFolderName: config.OUTLOOK_MAIL_APPROVED_FOLDER,
-          initialLookbackDays: config.OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS,
+          bus,
           logger,
           mailClient,
           needsAttentionFolderName: config.OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER,
           persistence,
-          pollIntervalMs: config.OUTLOOK_MAIL_SYNC_INTERVAL_MS,
           triageService: mailTriageService
         });
       },
       stop() {
-        outlookMailSyncWorker?.stop();
-        outlookMailSyncWorker = undefined;
+        unregisterMailTriageConsumer?.();
+        unregisterMailTriageConsumer = undefined;
       }
     })
   ];
@@ -218,7 +216,7 @@ export async function createDotRuntime(params: {
 
       logger.info(
         {
-          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders", "mail-sync"]
+          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders", "mail-triage"]
         },
         "Initialized Dot service host topology"
       );

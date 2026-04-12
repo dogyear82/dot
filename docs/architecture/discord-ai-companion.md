@@ -90,7 +90,7 @@ Current host topology:
 - `discord-transport`
 - `reminders`
 - `diagnostics`
-- `mail-sync`
+- `mail-triage`
 
 Rules:
 
@@ -106,12 +106,12 @@ Near-term implication:
 - future service extraction should preserve the same host names, event topics, and ownership boundaries wherever practical
 - new infrastructure like mail sync or diagnostics should prefer landing as their own host boundary before they become separate containers
 
-Current mail-sync boundary:
+Current mail boundaries:
 
-- keep the Outlook mail sync worker inside the single bot process for now
-- use a bounded mail adapter around Microsoft Graph mail delta and move-folder APIs
-- persist the approved-folder identifier and delta cursor as durable worker state
-- leave classification and move/no-move decisions to a later story once the substrate is stable
+- the standalone `mail-sync` service owns Microsoft Graph inbox delta polling and durable delta cursor state
+- the main bot process currently owns `mail-triage` and consumes canonical `outlook.mail.message.detected` events from the bus
+- use bounded Outlook adapters around Graph mail delta, folder ensure, and move-folder APIs
+- persist triage folder identifiers and audit state durably so follow-on service extraction can stay behavior-stable
 
 ## Observability Substrate
 

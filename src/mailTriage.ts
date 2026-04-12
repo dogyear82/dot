@@ -1,7 +1,12 @@
 import { SpanKind } from "@opentelemetry/api";
+import type { Logger } from "pino";
 
 import type { AppConfig } from "./config.js";
+import type { OutlookMailMessageDetectedEvent } from "./events.js";
+import type { EventBus } from "./eventBus.js";
 import { startLlmTimer, withSpan } from "./observability.js";
+import type { OutlookMailClient } from "./outlookMail.js";
+import type { Persistence } from "./persistence.js";
 import type { SettingsStore } from "./settings.js";
 import type { MailTriageOutcome, MailTriageSource, OutlookMailMessage } from "./types.js";
 import { getLlmMode, orderProvidersForMode, type LlmRoute } from "./chat/modelRouter.js";
@@ -17,6 +22,9 @@ export interface MailTriageDecision {
 export interface MailTriageService {
   triageMessage(message: OutlookMailMessage): Promise<MailTriageDecision>;
 }
+
+const APPROVED_FOLDER_ID_KEY = "outlookMail.approvedFolderId";
+const NEEDS_ATTENTION_FOLDER_ID_KEY = "outlookMail.needsAttentionFolderId";
 
 export function createMailTriageService(params: {
   config: AppConfig;
@@ -63,6 +71,55 @@ export function createMailTriageService(params: {
       }
     }
   };
+}
+
+export async function registerMailTriageConsumer(params: {
+  approvedFolderName: string;
+  bus: EventBus;
+  logger: Logger;
+  mailClient: OutlookMailClient;
+  needsAttentionFolderName: string;
+  persistence: Persistence;
+  triageService: MailTriageService;
+}): Promise<() => void> {
+  const { approvedFolderName, bus, logger, mailClient, needsAttentionFolderName, persistence, triageService } = params;
+  const approvedFolder = await ensureFolder(persistence, mailClient, APPROVED_FOLDER_ID_KEY, approvedFolderName);
+  const needsAttentionFolder = await ensureFolder(
+    persistence,
+    mailClient,
+    NEEDS_ATTENTION_FOLDER_ID_KEY,
+    needsAttentionFolderName
+  );
+
+  logger.info({ folderId: approvedFolder.id, displayName: approvedFolder.displayName }, "Ensured Outlook approved-mail folder");
+  logger.info(
+    { folderId: needsAttentionFolder.id, displayName: needsAttentionFolder.displayName },
+    "Ensured Outlook needs-attention folder"
+  );
+
+  for (const row of persistence.listDetectedMailMessages()) {
+    await processDetectedMail({
+      approvedFolderId: approvedFolder.id,
+      logger,
+      mailClient,
+      message: row.message,
+      needsAttentionFolderId: needsAttentionFolder.id,
+      persistence,
+      triageService
+    });
+  }
+
+  return bus.subscribe<OutlookMailMessageDetectedEvent>("outlook.mail.message.detected", async (event) => {
+    await processDetectedMail({
+      approvedFolderId: approvedFolder.id,
+      logger,
+      mailClient,
+      message: event.payload.message,
+      needsAttentionFolderId: needsAttentionFolder.id,
+      persistence,
+      triageService
+    });
+  });
 }
 
 export function parseWhitelist(value: string): Set<string> {
@@ -319,4 +376,80 @@ function normalizeEmail(value: string | null | undefined): string | null {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
+}
+
+async function ensureFolder(
+  persistence: Persistence,
+  mailClient: OutlookMailClient,
+  stateKey: string,
+  displayName: string
+) {
+  const existingFolderId = persistence.getWorkerState(stateKey);
+  if (existingFolderId) {
+    return {
+      id: existingFolderId,
+      displayName
+    };
+  }
+
+  const folder = await mailClient.ensureFolder(displayName);
+  persistence.setWorkerState(stateKey, folder.id);
+  return folder;
+}
+
+async function processDetectedMail(params: {
+  approvedFolderId: string;
+  logger: Logger;
+  mailClient: OutlookMailClient;
+  message: OutlookMailMessage;
+  needsAttentionFolderId: string;
+  persistence: Persistence;
+  triageService: MailTriageService;
+}) {
+  const { approvedFolderId, logger, mailClient, message, needsAttentionFolderId, persistence, triageService } = params;
+  if (persistence.getMailTriageDecision(message.id)) {
+    persistence.clearDetectedMailMessage(message.id);
+    return;
+  }
+
+  const decision = await triageService.triageMessage(message);
+  let destinationFolderId: string | null = null;
+  let movedAt: string | null = null;
+
+  if (decision.outcome === "dot_approved") {
+    destinationFolderId = approvedFolderId;
+  } else if (decision.outcome === "needs_attention") {
+    destinationFolderId = needsAttentionFolderId;
+  }
+
+  if (destinationFolderId && message.parentFolderId !== destinationFolderId) {
+    await mailClient.moveMessageToFolder(message.id, destinationFolderId);
+    movedAt = new Date().toISOString();
+  }
+
+  persistence.saveMailTriageDecision({
+    messageId: message.id,
+    senderEmail: message.from,
+    outcome: decision.outcome,
+    source: decision.source,
+    reason: decision.reason,
+    route: decision.route,
+    sourceFolderId: message.parentFolderId,
+    destinationFolderId,
+    triagedAt: new Date().toISOString(),
+    movedAt
+  });
+  persistence.clearDetectedMailMessage(message.id);
+
+  logger.info(
+    {
+      messageId: message.id,
+      from: message.from,
+      outcome: decision.outcome,
+      source: decision.source,
+      route: decision.route,
+      destinationFolderId
+    },
+    "Triaged Outlook mail message"
+  );
 }

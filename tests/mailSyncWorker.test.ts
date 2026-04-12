@@ -4,9 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { createInMemoryEventBus } from "../src/eventBus.js";
 import { syncOutlookMailOnce } from "../src/mailSyncWorker.js";
 import { OutlookMailDeltaCursorError } from "../src/outlookMail.js";
 import { initializePersistence } from "../src/persistence.js";
+import type { OutlookMailMessageDetectedEvent } from "../src/events.js";
 
 function createPersistence() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-mail-sync-"));
@@ -30,41 +32,44 @@ function createLogger() {
   };
 }
 
-function createTriageService(outcome: "dot_approved" | "needs_attention" | "ignore" = "ignore") {
-  return {
-    async triageMessage() {
-      return {
-        outcome,
-        source: "heuristic" as const,
-        reason: "test decision",
-        route: "deterministic" as const
-      };
-    }
-  };
-}
-
-test("mail sync worker ensures folder and persists delta cursor", async () => {
+test("mail sync worker persists delta cursor and publishes detected-mail events", async () => {
   const { persistence, cleanup } = createPersistence();
-  const calls: Array<{ method: string; value: string | null }> = [];
+  const bus = createInMemoryEventBus();
+  const detectedEvents: OutlookMailMessageDetectedEvent[] = [];
 
   try {
+    bus.subscribe("outlook.mail.message.detected", async (event) => {
+      detectedEvents.push(event as OutlookMailMessageDetectedEvent);
+    });
+
     await syncOutlookMailOnce({
-      approvedFolderName: "Dot Approved",
+      bus,
       initialLookbackDays: 7,
       logger: createLogger() as never,
       mailClient: {
-        async ensureFolder(name) {
-          calls.push({ method: "ensureFolder", value: name });
-          return { id: "folder-1", displayName: name };
-        },
         async syncInboxDelta(deltaCursor) {
-          calls.push({ method: "syncInboxDelta", value: deltaCursor ?? null });
+          assert.equal(deltaCursor, null);
           return {
-            messages: [],
+            messages: [
+              {
+                id: "message-1",
+                subject: "Need your input",
+                from: "trusted@example.com",
+                receivedAt: "2026-04-11T00:00:00.000Z",
+                bodyPreview: "Can you review this?",
+                parentFolderId: "inbox",
+                webLink: null
+              }
+            ],
             deltaCursor: "cursor-1"
           };
         },
-        async moveMessageToFolder() {},
+        async ensureFolder() {
+          throw new Error("not used");
+        },
+        async moveMessageToFolder() {
+          throw new Error("not used");
+        },
         async createDraft() {
           throw new Error("not used");
         },
@@ -72,87 +77,32 @@ test("mail sync worker ensures folder and persists delta cursor", async () => {
           throw new Error("not used");
         }
       },
-      needsAttentionFolderName: "Needs Attention",
-      persistence,
-      triageService: createTriageService()
+      persistence
     });
 
-    assert.deepEqual(calls, [
-      { method: "ensureFolder", value: "Dot Approved" },
-      { method: "ensureFolder", value: "Needs Attention" },
-      { method: "syncInboxDelta", value: null }
-    ]);
-    assert.equal(persistence.getWorkerState("outlookMail.approvedFolderId"), "folder-1");
-    assert.equal(persistence.getWorkerState("outlookMail.needsAttentionFolderId"), "folder-1");
     assert.equal(persistence.getWorkerState("outlookMail.deltaCursor"), "cursor-1");
     assert.ok(persistence.getWorkerState("outlookMail.lastSyncAt"));
+    assert.equal(detectedEvents.length, 1);
+    assert.equal(detectedEvents[0]?.payload.message.id, "message-1");
+    assert.equal(detectedEvents[0]?.payload.initialBaseline, true);
   } finally {
     cleanup();
   }
 });
 
-test("mail sync worker reuses stored folder state and previous delta cursor", async () => {
+test("mail sync worker reuses previous delta cursor and resets invalid cursors", async () => {
   const { persistence, cleanup } = createPersistence();
-  const calls: Array<{ method: string; value: string | null }> = [];
-
-  try {
-    persistence.setWorkerState("outlookMail.approvedFolderId", "folder-1");
-    persistence.setWorkerState("outlookMail.needsAttentionFolderId", "folder-2");
-    persistence.setWorkerState("outlookMail.deltaCursor", "cursor-1");
-
-    await syncOutlookMailOnce({
-      approvedFolderName: "Dot Approved",
-      initialLookbackDays: 7,
-      logger: createLogger() as never,
-      mailClient: {
-        async ensureFolder(name) {
-          calls.push({ method: "ensureFolder", value: name });
-          return { id: "folder-1", displayName: name };
-        },
-        async syncInboxDelta(deltaCursor) {
-          calls.push({ method: "syncInboxDelta", value: deltaCursor ?? null });
-          return {
-            messages: [],
-            deltaCursor: "cursor-2"
-          };
-        },
-        async moveMessageToFolder() {},
-        async createDraft() {
-          throw new Error("not used");
-        },
-        async sendDraft() {
-          throw new Error("not used");
-        }
-      },
-      needsAttentionFolderName: "Needs Attention",
-      persistence,
-      triageService: createTriageService()
-    });
-
-    assert.deepEqual(calls, [{ method: "syncInboxDelta", value: "cursor-1" }]);
-    assert.equal(persistence.getWorkerState("outlookMail.deltaCursor"), "cursor-2");
-  } finally {
-    cleanup();
-  }
-});
-
-test("mail sync worker resets an invalid delta cursor and retries from a fresh baseline", async () => {
-  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
   const calls: Array<string | null> = [];
 
   try {
-    persistence.setWorkerState("outlookMail.approvedFolderId", "folder-1");
-    persistence.setWorkerState("outlookMail.needsAttentionFolderId", "folder-2");
     persistence.setWorkerState("outlookMail.deltaCursor", "cursor-1");
 
     await syncOutlookMailOnce({
-      approvedFolderName: "Dot Approved",
+      bus,
       initialLookbackDays: 7,
       logger: createLogger() as never,
       mailClient: {
-        async ensureFolder(name) {
-          return { id: "folder-1", displayName: name };
-        },
         async syncInboxDelta(deltaCursor) {
           calls.push(deltaCursor ?? null);
           if (deltaCursor) {
@@ -164,7 +114,12 @@ test("mail sync worker resets an invalid delta cursor and retries from a fresh b
             deltaCursor: "cursor-2"
           };
         },
-        async moveMessageToFolder() {},
+        async ensureFolder() {
+          throw new Error("not used");
+        },
+        async moveMessageToFolder() {
+          throw new Error("not used");
+        },
         async createDraft() {
           throw new Error("not used");
         },
@@ -172,9 +127,7 @@ test("mail sync worker resets an invalid delta cursor and retries from a fresh b
           throw new Error("not used");
         }
       },
-      needsAttentionFolderName: "Needs Attention",
-      persistence,
-      triageService: createTriageService()
+      persistence
     });
 
     assert.deepEqual(calls, ["cursor-1", null]);
@@ -184,78 +137,14 @@ test("mail sync worker resets an invalid delta cursor and retries from a fresh b
   }
 });
 
-test("mail sync worker moves whitelisted mail into the approved folder and records triage state", async () => {
+test("mail sync worker skips already-triaged messages and applies the initial lookback window", async () => {
   const { persistence, cleanup } = createPersistence();
-  const moves: Array<{ messageId: string; destinationFolderId: string }> = [];
-
-  try {
-    await syncOutlookMailOnce({
-      approvedFolderName: "Dot Approved",
-      initialLookbackDays: 7,
-      logger: createLogger() as never,
-      mailClient: {
-        async ensureFolder(name) {
-          return {
-            id: name === "Dot Approved" ? "folder-approved" : "folder-needs-attention",
-            displayName: name
-          };
-        },
-        async syncInboxDelta() {
-          return {
-            messages: [
-              {
-                id: "message-1",
-                subject: "Need your input",
-                from: "trusted@example.com",
-                receivedAt: "2026-04-11T00:00:00.000Z",
-                bodyPreview: "Can you review this?",
-                parentFolderId: "inbox",
-                webLink: null
-              }
-            ],
-            deltaCursor: "cursor-1"
-          };
-        },
-        async moveMessageToFolder(messageId, destinationFolderId) {
-          moves.push({ messageId, destinationFolderId });
-        },
-        async createDraft() {
-          throw new Error("not used");
-        },
-        async sendDraft() {
-          throw new Error("not used");
-        }
-      },
-      needsAttentionFolderName: "Needs Attention",
-      persistence,
-      triageService: {
-        async triageMessage() {
-          return {
-            outcome: "dot_approved",
-            source: "whitelist",
-            reason: "Trusted sender whitelist match",
-            route: "deterministic"
-          };
-        }
-      }
-    });
-
-    assert.deepEqual(moves, [{ messageId: "message-1", destinationFolderId: "folder-approved" }]);
-    assert.equal(persistence.getMailTriageDecision("message-1")?.outcome, "dot_approved");
-    assert.equal(persistence.getMailTriageDecision("message-1")?.destinationFolderId, "folder-approved");
-  } finally {
-    cleanup();
-  }
-});
-
-test("mail sync worker ignores already-triaged messages to avoid repeated moves", async () => {
-  const { persistence, cleanup } = createPersistence();
-  let triageCalls = 0;
-  let moveCalls = 0;
+  const bus = createInMemoryEventBus();
+  const detectedIds: string[] = [];
 
   try {
     persistence.saveMailTriageDecision({
-      messageId: "message-1",
+      messageId: "message-existing",
       senderEmail: "trusted@example.com",
       outcome: "dot_approved",
       source: "whitelist",
@@ -267,81 +156,15 @@ test("mail sync worker ignores already-triaged messages to avoid repeated moves"
       movedAt: "2026-04-11T00:00:01.000Z"
     });
 
-    await syncOutlookMailOnce({
-      approvedFolderName: "Dot Approved",
-      initialLookbackDays: 7,
-      logger: createLogger() as never,
-      mailClient: {
-        async ensureFolder(name) {
-          return {
-            id: name === "Dot Approved" ? "folder-approved" : "folder-needs-attention",
-            displayName: name
-          };
-        },
-        async syncInboxDelta() {
-          return {
-            messages: [
-              {
-                id: "message-1",
-                subject: "Need your input",
-                from: "trusted@example.com",
-                receivedAt: "2026-04-11T00:00:00.000Z",
-                bodyPreview: "Can you review this?",
-                parentFolderId: "inbox",
-                webLink: null
-              }
-            ],
-            deltaCursor: "cursor-1"
-          };
-        },
-        async moveMessageToFolder() {
-          moveCalls += 1;
-        },
-        async createDraft() {
-          throw new Error("not used");
-        },
-        async sendDraft() {
-          throw new Error("not used");
-        }
-      },
-      needsAttentionFolderName: "Needs Attention",
-      persistence,
-      triageService: {
-        async triageMessage() {
-          triageCalls += 1;
-          return {
-            outcome: "dot_approved",
-            source: "whitelist",
-            reason: "Trusted sender whitelist match",
-            route: "deterministic"
-          };
-        }
-      }
+    bus.subscribe("outlook.mail.message.detected", async (event) => {
+      detectedIds.push((event as OutlookMailMessageDetectedEvent).payload.message.id);
     });
 
-    assert.equal(triageCalls, 0);
-    assert.equal(moveCalls, 0);
-  } finally {
-    cleanup();
-  }
-});
-
-test("mail sync worker only triages messages from the configured initial lookback window on first baseline", async () => {
-  const { persistence, cleanup } = createPersistence();
-  const triaged: string[] = [];
-
-  try {
     await syncOutlookMailOnce({
-      approvedFolderName: "Dot Approved",
+      bus,
       initialLookbackDays: 7,
       logger: createLogger() as never,
       mailClient: {
-        async ensureFolder(name) {
-          return {
-            id: name === "Dot Approved" ? "folder-approved" : "folder-needs-attention",
-            displayName: name
-          };
-        },
         async syncInboxDelta() {
           return {
             messages: [
@@ -351,6 +174,15 @@ test("mail sync worker only triages messages from the configured initial lookbac
                 from: "person@example.com",
                 receivedAt: new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString(),
                 bodyPreview: "Old backlog item",
+                parentFolderId: "inbox",
+                webLink: null
+              },
+              {
+                id: "message-existing",
+                subject: "Already triaged",
+                from: "trusted@example.com",
+                receivedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+                bodyPreview: "Existing decision",
                 parentFolderId: "inbox",
                 webLink: null
               },
@@ -367,7 +199,12 @@ test("mail sync worker only triages messages from the configured initial lookbac
             deltaCursor: "cursor-1"
           };
         },
-        async moveMessageToFolder() {},
+        async ensureFolder() {
+          throw new Error("not used");
+        },
+        async moveMessageToFolder() {
+          throw new Error("not used");
+        },
         async createDraft() {
           throw new Error("not used");
         },
@@ -375,24 +212,10 @@ test("mail sync worker only triages messages from the configured initial lookbac
           throw new Error("not used");
         }
       },
-      needsAttentionFolderName: "Needs Attention",
-      persistence,
-      triageService: {
-        async triageMessage(message) {
-          triaged.push(message.id);
-          return {
-            outcome: "ignore",
-            source: "heuristic",
-            reason: "test decision",
-            route: "deterministic"
-          };
-        }
-      }
+      persistence
     });
 
-    assert.deepEqual(triaged, ["message-new"]);
-    assert.equal(persistence.getMailTriageDecision("message-old"), null);
-    assert.equal(persistence.getMailTriageDecision("message-new")?.outcome, "ignore");
+    assert.deepEqual(detectedIds, ["message-new"]);
   } finally {
     cleanup();
   }

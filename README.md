@@ -51,7 +51,7 @@ Current transport expectations:
 - Correlation data from canonical events is attached to span attributes, including:
   `dot.event.id`, `dot.event.type`, `dot.correlation.id`, `dot.causation.id`, `dot.conversation.id`, and `dot.actor.id`
 - Logs are now correlation-aware for Loki-style ingestion and include active `traceId`, `spanId`, and canonical event identifiers when available
-- Prometheus metrics are exposed from the bot process at `http://<host>:<METRICS_PORT>/metrics`
+- Prometheus metrics are exposed from the bot process and standalone service containers at `http://<host>:<METRICS_PORT>/metrics`
 - The compose stack now provisions Grafana, Prometheus, Loki, Tempo, and Promtail alongside Dot, Ollama, and NATS
 - Grafana datasources for Prometheus, Loki, and Tempo are provisioned automatically for a basic local run
 
@@ -137,7 +137,7 @@ Every user-visible reply now includes a mode indicator such as `[mode: lite]`, `
 ## Podman Notes
 
 - The bot image is built from `Containerfile`.
-- The compose stack now starts `bot`, `ollama`, `nats`, `prometheus`, `loki`, `promtail`, `tempo`, and `grafana`.
+- The compose stack now starts `bot`, `mail-sync`, `ollama`, `nats`, `prometheus`, `loki`, `promtail`, `tempo`, and `grafana`.
 - The Ollama service bind-mounts `${HOME}/ollama` into the container so existing local models are reused.
 - Use `podman-compose`, not `podman compose`, on this machine. `podman compose` delegates to the external Docker Compose provider here and drops the NVIDIA CDI GPU device mapping, which leaves Ollama running on CPU.
 - To start just the local model runtime with GPU support:
@@ -196,10 +196,11 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 
 ## Outlook Mail Substrate
 
-- Dot now includes a single-process `mail-sync` host in the service runtime.
-- The worker uses Microsoft Graph delta sync to track inbox changes without rescanning the full mailbox on every pass.
-- Durable worker state stores the triage folder identifiers, the latest delta cursor, and the last successful sync timestamp.
-- The worker ensures the Outlook folders named by `OUTLOOK_MAIL_APPROVED_FOLDER` and `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER` exist before use.
+- Outlook delta polling now runs in the standalone `mail-sync` service container instead of inside `dot_bot_1`.
+- The mail-sync service uses Microsoft Graph delta sync to track inbox changes without rescanning the full mailbox on every pass.
+- Durable worker state stores the latest delta cursor and the last successful sync timestamp.
+- The main bot process still performs mail triage in-process for now by consuming canonical `outlook.mail.message.detected` events from the bus.
+- The triage consumer ensures the Outlook folders named by `OUTLOOK_MAIL_APPROVED_FOLDER` and `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER` exist before use.
 - On the first baseline, only mail received within `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS` is eligible for triage; older backlog is ignored while the delta cursor is seeded.
 - The initial inbox delta request is now scoped with a `receivedDateTime` lookback so Dot does not have to walk your entire historical inbox before the first cursor is established.
 - Exact sender matches from `OUTLOOK_MAIL_WHITELIST` are approved deterministically without an LLM call.

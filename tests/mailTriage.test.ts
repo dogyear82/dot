@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import { classifyDeterministically, createMailTriageService, parseWhitelist } from "../src/mailTriage.js";
+import { createInMemoryEventBus } from "../src/eventBus.js";
+import { createOutlookMailMessageDetectedEvent } from "../src/events.js";
+import { classifyDeterministically, createMailTriageService, parseWhitelist, registerMailTriageConsumer } from "../src/mailTriage.js";
+import { initializePersistence } from "../src/persistence.js";
 import type { SettingsStore } from "../src/settings.js";
 
 function createSettings(): SettingsStore {
@@ -22,6 +28,20 @@ function createSettings(): SettingsStore {
     },
     isConfigured(key) {
       return values.has(key);
+    }
+  };
+}
+
+function createPersistence() {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-mail-triage-"));
+  const sqlitePath = path.join(dataDir, "dot.sqlite");
+  const persistence = initializePersistence(dataDir, sqlitePath);
+
+  return {
+    persistence,
+    cleanup() {
+      persistence.close();
+      fs.rmSync(dataDir, { recursive: true, force: true });
     }
   };
 }
@@ -125,4 +145,80 @@ test("mail triage falls back to needs attention when LLM classification is unava
   assert.equal(decision.outcome, "needs_attention");
   assert.equal(decision.source, "fallback");
   assert.equal(decision.route, "none");
+});
+
+test("mail triage consumer ensures folders and routes detected mail into the approved folder", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const moved: Array<{ messageId: string; destinationFolderId: string }> = [];
+
+  try {
+    const unsubscribe = await registerMailTriageConsumer({
+      approvedFolderName: "Dot Approved",
+      bus,
+      logger: {
+        info() {},
+        warn() {},
+        error() {}
+      } as never,
+      mailClient: {
+        async ensureFolder(displayName) {
+          return {
+            id: displayName === "Dot Approved" ? "folder-approved" : "folder-needs-attention",
+            displayName
+          };
+        },
+        async moveMessageToFolder(messageId, destinationFolderId) {
+          moved.push({ messageId, destinationFolderId });
+        },
+        async syncInboxDelta() {
+          throw new Error("not used");
+        },
+        async createDraft() {
+          throw new Error("not used");
+        },
+        async sendDraft() {
+          throw new Error("not used");
+        }
+      },
+      needsAttentionFolderName: "Needs Attention",
+      persistence,
+      triageService: {
+        async triageMessage() {
+          return {
+            outcome: "dot_approved",
+            source: "whitelist",
+            reason: "Trusted sender whitelist match",
+            route: "deterministic"
+          };
+        }
+      }
+    });
+
+    try {
+      await bus.publish(
+        createOutlookMailMessageDetectedEvent({
+          initialBaseline: false,
+          message: {
+            id: "message-1",
+            subject: "Need your input",
+            from: "trusted@example.com",
+            receivedAt: "2026-04-11T00:00:00.000Z",
+            bodyPreview: "Can you review this?",
+            parentFolderId: "inbox",
+            webLink: null
+          }
+        })
+      );
+
+      assert.deepEqual(moved, [{ messageId: "message-1", destinationFolderId: "folder-approved" }]);
+      assert.equal(persistence.getMailTriageDecision("message-1")?.outcome, "dot_approved");
+      assert.equal(persistence.getWorkerState("outlookMail.approvedFolderId"), "folder-approved");
+      assert.equal(persistence.getWorkerState("outlookMail.needsAttentionFolderId"), "folder-needs-attention");
+    } finally {
+      unsubscribe();
+    }
+  } finally {
+    cleanup();
+  }
 });

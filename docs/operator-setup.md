@@ -98,7 +98,7 @@ For observability:
 
 - `OTEL_SERVICE_NAME=dot` is the default logical service name
 - `OTEL_EXPORTER_OTLP_ENDPOINT` should be a full OTLP HTTP traces endpoint such as `http://tempo:4318/v1/traces`
-- `METRICS_HOST=0.0.0.0` and `METRICS_PORT=9464` expose Prometheus metrics from the bot process
+- `METRICS_HOST=0.0.0.0` and `METRICS_PORT=9464` expose Prometheus metrics from the bot process and standalone service containers
 - `LOG_FILE_PATH=/app/data/logs/dot.log` lets Dot tee JSON logs to a shared file for Promtail ingestion under compose
 - logs now include active `traceId`, `spanId`, and canonical event correlation fields when a traced flow is active
 - Prometheus should scrape `http://<bot-host>:<METRICS_PORT>/metrics`
@@ -121,9 +121,10 @@ For Outlook OAuth:
 For Outlook mail sync:
 
 - optionally set `OUTLOOK_MAIL_APPROVED_FOLDER`, `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER`, `OUTLOOK_MAIL_WHITELIST`, `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS`, `OUTLOOK_REQUEST_TIMEOUT_MS`, and `OUTLOOK_MAIL_SYNC_INTERVAL_MS`
-- the first pass stays inside the single bot runtime as the `mail-sync` host
-- it uses Microsoft Graph delta sync rather than rescanning the whole inbox every cycle
-- it ensures both triage folders exist and persists the delta cursor for future runs
+- the compose stack now includes a dedicated `mail-sync` service container
+- the mail-sync service uses Microsoft Graph delta sync rather than rescanning the whole inbox every cycle
+- it persists the delta cursor for future runs and publishes canonical detected-mail events onto the bus
+- the main bot process still performs triage and folder moves for now by consuming those events
 - on the initial baseline, only mail from the last `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS` days is eligible for triage; older inbox backlog is left alone while the cursor is seeded
 - Outlook Graph mail requests are bounded by `OUTLOOK_REQUEST_TIMEOUT_MS` so a slow delta sync fails visibly instead of hanging the worker indefinitely
 - whitelist sender matches go directly to `Dot Approved`
@@ -159,6 +160,7 @@ podman-compose up -d --build
 Expected backend services:
 
 - `bot`
+- `mail-sync`
 - `ollama`
 - `nats`
 - `prometheus`

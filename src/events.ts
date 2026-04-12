@@ -1,5 +1,5 @@
 import type { ActorRole } from "./auth.js";
-import type { ServiceHealthStatus } from "./types.js";
+import type { OutlookMailMessage, ServiceHealthStatus } from "./types.js";
 
 export const DOT_EVENT_VERSION = "1.0.0";
 
@@ -13,6 +13,7 @@ export const DOT_EVENT_TOPICS = [
   "discord.message.delivery.requested",
   "llm.reply.generated",
   "outlook.calendar.query.completed",
+  "outlook.mail.message.detected",
   "outlook.mail.delta.synced",
   "reminder.due"
 ] as const;
@@ -180,6 +181,16 @@ export interface ServiceHealthReportedPayload {
 export type ServiceHealthReportedEvent = DotEvent<
   "diagnostics.health.reported",
   ServiceHealthReportedPayload
+>;
+
+export interface OutlookMailMessageDetectedPayload {
+  message: OutlookMailMessage;
+  initialBaseline: boolean;
+}
+
+export type OutlookMailMessageDetectedEvent = DotEvent<
+  "outlook.mail.message.detected",
+  OutlookMailMessageDetectedPayload
 >;
 
 export function createOutboundMessageRequestedEvent(params: {
@@ -406,6 +417,41 @@ export function createServiceHealthReportedEvent(params: {
       detail: params.detail ?? null,
       observedLatencyMs: params.observedLatencyMs ?? null,
       sourceEventId: params.sourceEventId ?? null
+    }
+  };
+}
+
+export function createOutlookMailMessageDetectedEvent(params: {
+  message: OutlookMailMessage;
+  initialBaseline: boolean;
+}): OutlookMailMessageDetectedEvent {
+  return {
+    eventId: `outlook.mail.message.detected:${params.message.id}:${Date.now()}`,
+    eventType: "outlook.mail.message.detected",
+    eventVersion: DOT_EVENT_VERSION,
+    occurredAt: new Date().toISOString(),
+    producer: {
+      service: "mail-sync-service"
+    },
+    correlation: {
+      correlationId: `outlook-mail:${params.message.id}`,
+      causationId: null,
+      conversationId: null,
+      actorId: null
+    },
+    routing: {
+      transport: null,
+      channelId: null,
+      guildId: null,
+      replyTo: null
+    },
+    diagnostics: {
+      severity: "info",
+      category: "outlook.mail"
+    },
+    payload: {
+      message: params.message,
+      initialBaseline: params.initialBaseline
     }
   };
 }

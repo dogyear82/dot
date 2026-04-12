@@ -1,44 +1,25 @@
 import type { Logger } from "pino";
 
-import type { MailTriageService } from "./mailTriage.js";
+import { createOutlookMailMessageDetectedEvent } from "./events.js";
+import type { EventBus } from "./eventBus.js";
 import { OutlookMailDeltaCursorError, type OutlookMailClient } from "./outlookMail.js";
 import type { Persistence } from "./persistence.js";
 
 const DELTA_CURSOR_KEY = "outlookMail.deltaCursor";
-const APPROVED_FOLDER_ID_KEY = "outlookMail.approvedFolderId";
-const NEEDS_ATTENTION_FOLDER_ID_KEY = "outlookMail.needsAttentionFolderId";
 const LAST_SYNC_AT_KEY = "outlookMail.lastSyncAt";
 
 export async function syncOutlookMailOnce(params: {
-  approvedFolderName: string;
+  bus: EventBus;
   initialLookbackDays: number;
   logger: Logger;
   mailClient: OutlookMailClient;
-  needsAttentionFolderName: string;
   persistence: Persistence;
-  triageService: MailTriageService;
 }) {
-  const { approvedFolderName, initialLookbackDays, logger, mailClient, needsAttentionFolderName, persistence, triageService } = params;
-  const currentFolderId = persistence.getWorkerState(APPROVED_FOLDER_ID_KEY);
-  if (!currentFolderId) {
-    const folder = await mailClient.ensureFolder(approvedFolderName);
-    persistence.setWorkerState(APPROVED_FOLDER_ID_KEY, folder.id);
-    logger.info({ folderId: folder.id, displayName: folder.displayName }, "Ensured Outlook approved-mail folder");
-  }
-  const approvedFolderId = persistence.getWorkerState(APPROVED_FOLDER_ID_KEY) ?? currentFolderId;
-
-  const currentNeedsAttentionFolderId = persistence.getWorkerState(NEEDS_ATTENTION_FOLDER_ID_KEY);
-  if (!currentNeedsAttentionFolderId) {
-    const folder = await mailClient.ensureFolder(needsAttentionFolderName);
-    persistence.setWorkerState(NEEDS_ATTENTION_FOLDER_ID_KEY, folder.id);
-    logger.info({ folderId: folder.id, displayName: folder.displayName }, "Ensured Outlook needs-attention folder");
-  }
-  const needsAttentionFolderId =
-    persistence.getWorkerState(NEEDS_ATTENTION_FOLDER_ID_KEY) ?? currentNeedsAttentionFolderId;
-
+  const { bus, initialLookbackDays, logger, mailClient, persistence } = params;
   const deltaCursor = persistence.getWorkerState(DELTA_CURSOR_KEY);
   let result;
-  const initialReceivedAfter = shouldApplyInitialLookback(deltaCursor)
+  const initialBaseline = shouldApplyInitialLookback(deltaCursor);
+  const initialReceivedAfter = initialBaseline
     ? new Date(Date.now() - initialLookbackDays * 24 * 60 * 60 * 1000).toISOString()
     : null;
   try {
@@ -57,7 +38,7 @@ export async function syncOutlookMailOnce(params: {
     persistence.setWorkerState(DELTA_CURSOR_KEY, result.deltaCursor);
   }
 
-  const eligibleMessages = shouldApplyInitialLookback(deltaCursor)
+  const eligibleMessages = initialBaseline
     ? filterMessagesByLookback(result.messages, initialLookbackDays)
     : result.messages;
 
@@ -65,45 +46,16 @@ export async function syncOutlookMailOnce(params: {
     if (persistence.getMailTriageDecision(message.id)) {
       continue;
     }
-
-    const decision = await triageService.triageMessage(message);
-    let destinationFolderId: string | null = null;
-    let movedAt: string | null = null;
-
-    if (decision.outcome === "dot_approved" && approvedFolderId) {
-      destinationFolderId = approvedFolderId;
-    } else if (decision.outcome === "needs_attention" && needsAttentionFolderId) {
-      destinationFolderId = needsAttentionFolderId;
-    }
-
-    if (destinationFolderId && message.parentFolderId !== destinationFolderId) {
-      await mailClient.moveMessageToFolder(message.id, destinationFolderId);
-      movedAt = new Date().toISOString();
-    }
-
-    persistence.saveMailTriageDecision({
+    persistence.enqueueDetectedMailMessage({
       messageId: message.id,
-      senderEmail: message.from,
-      outcome: decision.outcome,
-      source: decision.source,
-      reason: decision.reason,
-      route: decision.route,
-      sourceFolderId: message.parentFolderId,
-      destinationFolderId,
-      triagedAt: new Date().toISOString(),
-      movedAt
+      message,
+      initialBaseline
     });
-
-    logger.info(
-      {
-        messageId: message.id,
-        from: message.from,
-        outcome: decision.outcome,
-        source: decision.source,
-        route: decision.route,
-        destinationFolderId
-      },
-      "Triaged Outlook mail message"
+    await bus.publish(
+      createOutlookMailMessageDetectedEvent({
+        message,
+        initialBaseline
+      })
     );
   }
 
@@ -120,14 +72,12 @@ export async function syncOutlookMailOnce(params: {
 }
 
 export function startOutlookMailSyncWorker(params: {
-  approvedFolderName: string;
+  bus: EventBus;
   initialLookbackDays: number;
   logger: Logger;
   mailClient: OutlookMailClient;
-  needsAttentionFolderName: string;
   persistence: Persistence;
   pollIntervalMs: number;
-  triageService: MailTriageService;
 }) {
   const { pollIntervalMs, logger } = params;
   let running = false;

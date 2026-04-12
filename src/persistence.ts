@@ -14,6 +14,7 @@ import type {
   ContactProfile,
   ContactRecord,
   ContactTrustLevel,
+  DetectedMailMessageRecord,
   ConversationTurnRecord,
   EmailActionRecord,
   EmailActionStatus,
@@ -72,6 +73,14 @@ export interface Persistence {
   listPendingContactClassifications(): PendingContactClassificationRecord[];
   getPendingContactClassification(id: number): PendingContactClassificationRecord | null;
   clearPendingContactClassification(id: number): void;
+  enqueueDetectedMailMessage(record: {
+    messageId: string;
+    message: unknown;
+    initialBaseline: boolean;
+    detectedAt?: string;
+  }): void;
+  listDetectedMailMessages(limit?: number): DetectedMailMessageRecord[];
+  clearDetectedMailMessage(messageId: string): void;
   createEmailAction(record: {
     contactQuery: string;
     contactId?: number | null;
@@ -314,6 +323,13 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       sent_at TEXT,
       FOREIGN KEY(contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS detected_mail_messages (
+      message_id TEXT PRIMARY KEY,
+      message_json TEXT NOT NULL,
+      initial_baseline INTEGER NOT NULL,
+      detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS reminders (
@@ -1100,6 +1116,41 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     WHERE id = @id
   `);
 
+  const enqueueDetectedMailMessageStatement = db.prepare(`
+    INSERT OR IGNORE INTO detected_mail_messages (
+      message_id,
+      message_json,
+      initial_baseline,
+      detected_at
+    ) VALUES (
+      @messageId,
+      @messageJson,
+      @initialBaseline,
+      COALESCE(@detectedAt, CURRENT_TIMESTAMP)
+    )
+  `);
+
+  const listDetectedMailMessagesStatement = db.prepare<[number], {
+    messageId: string;
+    messageJson: string;
+    initialBaseline: number;
+    detectedAt: string;
+  }>(`
+    SELECT
+      message_id AS messageId,
+      message_json AS messageJson,
+      initial_baseline AS initialBaseline,
+      detected_at AS detectedAt
+    FROM detected_mail_messages
+    ORDER BY datetime(detected_at) ASC, message_id ASC
+    LIMIT ?
+  `);
+
+  const clearDetectedMailMessageStatement = db.prepare(`
+    DELETE FROM detected_mail_messages
+    WHERE message_id = ?
+  `);
+
   const settings = createSettingsStore(db);
   upsertPersonalityPresetStatement.run(
     "blue_lady",
@@ -1287,6 +1338,25 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     },
     clearPendingContactClassification(id) {
       deletePendingContactClassificationStatement.run(id);
+    },
+    enqueueDetectedMailMessage(record) {
+      enqueueDetectedMailMessageStatement.run({
+        messageId: record.messageId,
+        messageJson: JSON.stringify(record.message),
+        initialBaseline: record.initialBaseline ? 1 : 0,
+        detectedAt: record.detectedAt ?? null
+      });
+    },
+    listDetectedMailMessages(limit = 100) {
+      return listDetectedMailMessagesStatement.all(limit).map((row) => ({
+        messageId: row.messageId,
+        message: JSON.parse(row.messageJson),
+        initialBaseline: row.initialBaseline === 1,
+        detectedAt: row.detectedAt
+      }));
+    },
+    clearDetectedMailMessage(messageId) {
+      clearDetectedMailMessageStatement.run(messageId);
     },
     createEmailAction(record) {
       const result = createEmailActionStatement.run({
