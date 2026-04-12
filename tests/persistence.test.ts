@@ -31,17 +31,23 @@ test("access audit persists transport and conversation id", () => {
       actorRole: "owner",
       canUsePrivilegedFeatures: true,
       decision: "owner-allowed",
+      addressed: true,
+      addressedReason: "explicit_command",
       transport: "discord",
       conversationId: "channel-123"
     });
 
     const row = persistence.db
-      .prepare("SELECT transport, conversation_id AS conversationId FROM access_audit WHERE message_id = ?")
-      .get("msg-1") as { transport: string; conversationId: string } | undefined;
+      .prepare(
+        "SELECT transport, conversation_id AS conversationId, addressed, addressed_reason AS addressedReason FROM access_audit WHERE message_id = ?"
+      )
+      .get("msg-1") as { transport: string; conversationId: string; addressed: number; addressedReason: string } | undefined;
 
     assert.deepEqual(row, {
       transport: "discord",
-      conversationId: "channel-123"
+      conversationId: "channel-123",
+      addressed: 1,
+      addressedReason: "explicit_command"
     });
   } finally {
     cleanup();
@@ -176,6 +182,8 @@ test("initializePersistence migrates legacy access_audit tables with transport m
 
   try {
     const columns = persistence.db.prepare("PRAGMA table_info(access_audit)").all() as Array<{ name: string }>;
+    assert(columns.some((column) => column.name === "addressed"));
+    assert(columns.some((column) => column.name === "addressed_reason"));
     assert(columns.some((column) => column.name === "transport"));
     assert(columns.some((column) => column.name === "conversation_id"));
   } finally {

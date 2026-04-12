@@ -16,7 +16,7 @@ import type { Persistence } from "./persistence.js";
 import { isReminderCommand } from "./reminders.js";
 import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
 import type { IncomingMessage } from "./types.js";
-import { shouldTreatOwnerMessageAsAddressed } from "./discord/addressing.js";
+import { evaluateAddressedness } from "./discord/addressing.js";
 
 const RECENT_CHAT_HISTORY_LIMIT = 10;
 
@@ -56,15 +56,6 @@ export function registerMessagePipeline(params: {
           });
 
           try {
-            persistence.saveAccessAudit({
-              messageId: event.payload.messageId,
-              actorRole: accessDecision.actorRole,
-              canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
-              decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
-              transport: event.routing.transport ?? "unknown",
-              conversationId: event.correlation.conversationId ?? "unknown"
-            });
-
             logger.info(
               {
                 messageId: event.payload.messageId,
@@ -79,6 +70,10 @@ export function registerMessagePipeline(params: {
 
             const content = event.payload.addressedContent.trim();
             const isExplicitCommand = content.startsWith("!");
+            let addressedDecision = {
+              addressed: isExplicitCommand,
+              reason: isExplicitCommand ? "explicit_command" : "recent_message_not_addressed_to_dot"
+            };
 
             span.setAttribute("dot.command.explicit", isExplicitCommand);
 
@@ -90,17 +85,53 @@ export function registerMessagePipeline(params: {
                 RECENT_CHAT_HISTORY_LIMIT
               );
               const defaultChannelPolicy = persistence.settings.get("channels.defaultPolicy");
-              const isAddressed = shouldTreatOwnerMessageAsAddressed({
+              addressedDecision = evaluateAddressedness({
                 message,
                 defaultChannelPolicy,
                 recentConversation,
                 recentMessages
               });
 
-              if (!isAddressed) {
+              span.setAttribute("dot.addressed", addressedDecision.addressed);
+              span.setAttribute("dot.addressed.reason", addressedDecision.reason);
+              logger.info(
+                {
+                  messageId: event.payload.messageId,
+                  addressed: addressedDecision.addressed,
+                  addressedReason: addressedDecision.reason,
+                  actorRole: accessDecision.actorRole
+                },
+                "Evaluated message addressedness"
+              );
+
+              persistence.saveAccessAudit({
+                messageId: event.payload.messageId,
+                actorRole: accessDecision.actorRole,
+                canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
+                decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
+                addressed: addressedDecision.addressed,
+                addressedReason: addressedDecision.reason,
+                transport: event.routing.transport ?? "unknown",
+                conversationId: event.correlation.conversationId ?? "unknown"
+              });
+
+              if (!addressedDecision.addressed) {
                 pipelineOutcome = "ignored_unaddressed";
                 return;
               }
+            } else {
+              span.setAttribute("dot.addressed", true);
+              span.setAttribute("dot.addressed.reason", addressedDecision.reason);
+              persistence.saveAccessAudit({
+                messageId: event.payload.messageId,
+                actorRole: accessDecision.actorRole,
+                canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
+                decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
+                addressed: true,
+                addressedReason: addressedDecision.reason,
+                transport: event.routing.transport ?? "unknown",
+                conversationId: event.correlation.conversationId ?? "unknown"
+              });
             }
 
             let hasSavedUserTurn = false;

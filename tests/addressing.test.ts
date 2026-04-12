@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { shouldTreatOwnerMessageAsAddressed } from "../src/discord/addressing.js";
+import { evaluateAddressedness, shouldTreatOwnerMessageAsAddressed } from "../src/discord/addressing.js";
 import type { ConversationTurnRecord, IncomingMessage } from "../src/types.js";
 
 function message(overrides: Partial<IncomingMessage> = {}): IncomingMessage {
@@ -174,4 +174,54 @@ test("addressedness stays false when another inbound message arrived after the a
     }),
     false
   );
+});
+
+test("addressedness requires the previous inbound message to have been explicitly addressed to Dot", () => {
+  assert.equal(
+    shouldTreatOwnerMessageAsAddressed({
+      message: message({ id: "msg-current", createdAt: "2026-04-09T00:01:30.000Z", content: "and tomorrow?" }),
+      defaultChannelPolicy: "mention-only",
+      recentConversation: [turn({ createdAt: "2026-04-09T00:01:00.000Z" })],
+      recentMessages: [
+        message({
+          id: "msg-current",
+          createdAt: "2026-04-09T00:01:30.000Z",
+          content: "and tomorrow?"
+        }),
+        message({
+          id: "msg-previous-same-author",
+          createdAt: "2026-04-09T00:00:30.000Z",
+          content: "what about tomorrow?",
+          mentionedBot: false
+        })
+      ]
+    }),
+    false
+  );
+});
+
+test("addressedness diagnostics return a stable reason for ignored follow-ups", () => {
+  const decision = evaluateAddressedness({
+    message: message({ id: "msg-current", createdAt: "2026-04-09T00:01:30.000Z", content: "and tomorrow?" }),
+    defaultChannelPolicy: "mention-only",
+    recentConversation: [turn({ createdAt: "2026-04-09T00:01:00.000Z" })],
+    recentMessages: [
+      message({
+        id: "msg-current",
+        createdAt: "2026-04-09T00:01:30.000Z",
+        content: "and tomorrow?"
+      }),
+      message({
+        id: "msg-previous-same-author",
+        createdAt: "2026-04-09T00:00:30.000Z",
+        content: "what about tomorrow?",
+        mentionedBot: false
+      })
+    ]
+  });
+
+  assert.deepEqual(decision, {
+    addressed: false,
+    reason: "recent_message_not_addressed_to_dot"
+  });
 });

@@ -397,13 +397,15 @@ test("message pipeline preserves transport and conversation metadata in access a
     await bus.publishInboundMessage(inboundEvent());
 
     const auditRow = persistence.db
-      .prepare<[string], { transport: string | null; conversationId: string | null }>(
-        "SELECT transport, conversation_id AS conversationId FROM access_audit WHERE message_id = ?"
+      .prepare<[string], { transport: string | null; conversationId: string | null; addressed: number | null; addressedReason: string | null }>(
+        "SELECT transport, conversation_id AS conversationId, addressed, addressed_reason AS addressedReason FROM access_audit WHERE message_id = ?"
       )
       .get("msg-1");
 
     assert.equal(auditRow?.transport, "discord");
     assert.equal(auditRow?.conversationId, "channel-1");
+    assert.equal(auditRow?.addressed, 1);
+    assert.equal(auditRow?.addressedReason, "explicit_command");
   } finally {
     unsubscribe();
     cleanup();
@@ -620,6 +622,15 @@ test("message pipeline stays silent for non-owner shared-channel messages that a
     );
 
     assert.equal(outbound.length, 0);
+
+    const auditRow = persistence.db
+      .prepare<[string], { addressed: number | null; addressedReason: string | null }>(
+        "SELECT addressed, addressed_reason AS addressedReason FROM access_audit WHERE message_id = ?"
+      )
+      .get("msg-unaddressed-non-owner");
+
+    assert.equal(auditRow?.addressed, 0);
+    assert.equal(auditRow?.addressedReason, "no_recent_assistant_turn");
   } finally {
     unsubscribe();
     cleanup();

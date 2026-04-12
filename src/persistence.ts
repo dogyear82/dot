@@ -189,6 +189,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       actor_role TEXT NOT NULL,
       can_use_privileged_features INTEGER NOT NULL,
       decision TEXT NOT NULL,
+      addressed INTEGER NOT NULL DEFAULT 0,
+      addressed_reason TEXT NOT NULL DEFAULT '',
       transport TEXT NOT NULL DEFAULT 'discord',
       conversation_id TEXT NOT NULL DEFAULT '',
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -354,6 +356,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     );
   `);
   ensureColumn(db, "conversation_turns", "participant_actor_id", "TEXT");
+  ensureColumn(db, "access_audit", "addressed", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "access_audit", "addressed_reason", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "access_audit", "transport", "TEXT NOT NULL DEFAULT 'discord'");
   ensureColumn(db, "access_audit", "conversation_id", "TEXT NOT NULL DEFAULT ''");
 
@@ -481,6 +485,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       actor_role,
       can_use_privileged_features,
       decision,
+      addressed,
+      addressed_reason,
       transport,
       conversation_id
     ) VALUES (
@@ -488,6 +494,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @actorRole,
       @canUsePrivilegedFeatures,
       @decision,
+      @addressed,
+      @addressedReason,
       @transport,
       @conversationId
     )
@@ -1218,7 +1226,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     saveAccessAudit(record) {
       accessAuditStatement.run({
         ...record,
-        canUsePrivilegedFeatures: record.canUsePrivilegedFeatures ? 1 : 0
+        canUsePrivilegedFeatures: record.canUsePrivilegedFeatures ? 1 : 0,
+        addressed: record.addressed ? 1 : 0
       });
     },
     saveToolExecutionAudit(record) {
