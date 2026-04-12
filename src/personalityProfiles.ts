@@ -1,3 +1,4 @@
+import { loadPersonalityBundleCatalog, type PersonalityBundleLoadError } from "./personalityBundles.js";
 import type { PersonalityProfileRecord } from "./types.js";
 
 export const blueLadyProfile: PersonalityProfileRecord = {
@@ -215,9 +216,27 @@ export const auntieDotProfile: PersonalityProfileRecord = {
 export const personalityProfiles = [blueLadyProfile, steadyHandProfile, auntieDotProfile] as const;
 
 export function listBuiltInPersonalityProfiles(): PersonalityProfileRecord[] {
-  return [...personalityProfiles];
+  return [...resolvePersonalityProfiles().profiles];
 }
 
 export function getBuiltInPersonalityProfile(name: string): PersonalityProfileRecord | null {
-  return personalityProfiles.find((profile) => profile.name === name) ?? null;
+  return resolvePersonalityProfiles().profiles.find((profile) => profile.name === name) ?? null;
+}
+
+export function listPersonalityBundleErrors(): PersonalityBundleLoadError[] {
+  return [...resolvePersonalityProfiles().errors];
+}
+
+function resolvePersonalityProfiles(): { profiles: PersonalityProfileRecord[]; errors: PersonalityBundleLoadError[] } {
+  const bundleCatalog = loadPersonalityBundleCatalog();
+  const mergedProfiles = new Map(personalityProfiles.map((profile) => [profile.name, profile] as const));
+
+  for (const profile of bundleCatalog.profiles) {
+    mergedProfiles.set(profile.name, profile);
+  }
+
+  return {
+    profiles: [...mergedProfiles.values()],
+    errors: bundleCatalog.errors
+  };
 }

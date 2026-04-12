@@ -206,6 +206,8 @@ export interface PersonalityQuirkDefinition {
   instruction: string;
 }
 
+export type PersonalityRuntimeHookKey = "contextual_quirk_suppression";
+
 export interface PersonalityProfileRecord {
   name: string;
   summary: string;
@@ -223,6 +225,7 @@ export interface PersonalityProfileRecord {
     sliderValues: Record<PersonalityTraitValueKey, number>;
   };
   quirks: PersonalityQuirkDefinition[];
+  runtimeHooks?: PersonalityRuntimeHookKey[];
   examples?: {
     approvedPhrases: string[];
     avoidedPhrases: string[];
@@ -233,6 +236,20 @@ export interface PersonalityProfileRecord {
     }>;
   };
   isBuiltIn: boolean;
+}
+
+export interface PersonalityBundleFileRecord {
+  metadata: {
+    name: string;
+    summary: string;
+    version: number;
+  };
+  identity: PersonalityProfileRecord["identity"];
+  voice: PersonalityProfileRecord["voice"];
+  behavior: PersonalityProfileRecord["behavior"];
+  quirks: PersonalityProfileRecord["quirks"];
+  runtimeHooks?: PersonalityRuntimeHookKey[];
+  examples?: NonNullable<PersonalityProfileRecord["examples"]>;
 }
 
 export type ContactTrustLevel = "trusted" | "approval_required" | "untrusted";
