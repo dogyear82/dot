@@ -8,6 +8,7 @@ import { createSpanAttributesForEvent, recordInboundMessage, recordOutboundMessa
 import { normalizeMessage } from "./normalize.js";
 import type { Persistence } from "../persistence.js";
 import { createDiscordInboundMessageEvent } from "./events.js";
+import { splitDiscordMessage } from "./outboundChunking.js";
 
 export function createDiscordClient(params: {
   bus: EventBus;
@@ -26,6 +27,15 @@ export function createDiscordClient(params: {
     partials: [Partials.Channel]
   });
   const replyRegistry = new Map<string, Message<boolean>>();
+
+  const persistSentDiscordMessage = (sent: Message<boolean>) => {
+    const normalizedSent = normalizeMessage(sent, {
+      botUserId: client.user!.id,
+      botUsername: client.user!.username,
+      botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
+    });
+    persistence.saveNormalizedMessage(normalizedSent);
+  };
 
   client.once(Events.ClientReady, (readyClient) => {
     logger.info(
@@ -114,15 +124,16 @@ export function createDiscordClient(params: {
             transport: event.routing.transport ?? "unknown"
           });
 
+          const chunks = splitDiscordMessage(event.payload.content);
+
           const replyTo = replyRegistry.get(event.payload.replyRoute.replyTo);
           if (replyTo) {
-            const sent = await replyTo.reply(event.payload.content);
-            const normalizedSent = normalizeMessage(sent, {
-              botUserId: botUser.id,
-              botUsername: botUser.username,
-              botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
-            });
-            persistence.saveNormalizedMessage(normalizedSent);
+            const sent = await replyTo.reply(chunks[0] ?? event.payload.content);
+            persistSentDiscordMessage(sent);
+            for (const chunk of chunks.slice(1)) {
+              const followUp = await sent.channel.send(chunk);
+              persistSentDiscordMessage(followUp);
+            }
             if (event.payload.recordConversationTurn) {
               persistence.saveConversationTurn({
                 conversationId: event.correlation.conversationId ?? "",
@@ -142,24 +153,24 @@ export function createDiscordClient(params: {
             return;
           }
 
-          const sent = await channel.send(event.payload.content);
-          if ("author" in sent) {
-            const normalizedSent = normalizeMessage(sent, {
-              botUserId: botUser.id,
-              botUsername: botUser.username,
-              botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
-            });
-            persistence.saveNormalizedMessage(normalizedSent);
-            if (event.payload.recordConversationTurn) {
-              persistence.saveConversationTurn({
-                conversationId: event.correlation.conversationId ?? "",
-                role: "assistant",
-                participantActorId: event.payload.participantActorId,
-                content: event.payload.content,
-                sourceMessageId: sent.id,
-                createdAt: sent.createdAt.toISOString()
-              });
+          let firstSent: Message<boolean> | null = null;
+          for (const chunk of chunks) {
+            const sent = await channel.send(chunk);
+            if ("author" in sent) {
+              persistSentDiscordMessage(sent);
+              firstSent ??= sent;
             }
+          }
+
+          if (firstSent && event.payload.recordConversationTurn) {
+            persistence.saveConversationTurn({
+              conversationId: event.correlation.conversationId ?? "",
+              role: "assistant",
+              participantActorId: event.payload.participantActorId,
+              content: event.payload.content,
+              sourceMessageId: firstSent.id,
+              createdAt: firstSent.createdAt.toISOString()
+            });
           }
         }
       );
