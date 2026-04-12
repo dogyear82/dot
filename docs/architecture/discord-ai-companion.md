@@ -87,7 +87,6 @@ Current host topology:
 - `outlook`
 - `llm`
 - `message-router`
-- `discord-transport`
 - `reminders`
 - `diagnostics`
 
@@ -107,7 +106,7 @@ Near-term implication:
 
 Current mail boundaries:
 
-- the main bot host now owns Discord ingress only; standalone Discord egress is extracted separately
+- the standalone `discord-ingress` service owns the Discord gateway connection, message normalization, and canonical inbound publication
 - the standalone `discord-egress` service consumes canonical `outbound.message.requested` events and owns Discord reply/DM delivery plus chunking
 - service-originated owner notifications should publish canonical direct-message requests through the shared helper rather than importing Discord SDK logic directly
 - the standalone `mail-sync` service owns Microsoft Graph inbox delta polling and durable delta cursor state
