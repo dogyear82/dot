@@ -7,7 +7,6 @@ import type { AppConfig } from "../config.js";
 import { createDiagnosticsObserver, createHostHealthEvent } from "../diagnostics.js";
 import { createDiscordClient } from "../discord/createClient.js";
 import { createConfiguredEventBus } from "../eventBus.js";
-import { createMailTriageService, registerMailTriageConsumer } from "../mailTriage.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
 import { startObservability } from "../observability.js";
 import { MicrosoftGraphOutlookCalendarClient } from "../outlookCalendar.js";
@@ -38,15 +37,10 @@ export async function createDotRuntime(params: {
     config,
     settings: persistence.settings
   });
-  const mailTriageService = createMailTriageService({
-    config,
-    settings: persistence.settings
-  });
 
   let discordClient: ReturnType<typeof createDiscordClient> | undefined;
   let unregisterMessagePipeline: (() => void) | undefined;
   let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
-  let unregisterMailTriageConsumer: (() => void) | undefined;
   let diagnosticsObserver: ReturnType<typeof createDiagnosticsObserver> | undefined;
   let observability: ReturnType<typeof startObservability> | undefined;
 
@@ -176,25 +170,6 @@ export async function createDotRuntime(params: {
         reminderScheduler?.stop();
         reminderScheduler = undefined;
       }
-    }),
-    createServiceHost({
-      name: "mail-triage",
-      onStatusChange: emitHostHealth,
-      async start() {
-        unregisterMailTriageConsumer = await registerMailTriageConsumer({
-          approvedFolderName: config.OUTLOOK_MAIL_APPROVED_FOLDER,
-          bus,
-          logger,
-          mailClient,
-          needsAttentionFolderName: config.OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER,
-          persistence,
-          triageService: mailTriageService
-        });
-      },
-      stop() {
-        unregisterMailTriageConsumer?.();
-        unregisterMailTriageConsumer = undefined;
-      }
     })
   ];
 
@@ -216,7 +191,7 @@ export async function createDotRuntime(params: {
 
       logger.info(
         {
-          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders", "mail-triage"]
+          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders"]
         },
         "Initialized Dot service host topology"
       );

@@ -90,7 +90,6 @@ Current host topology:
 - `discord-transport`
 - `reminders`
 - `diagnostics`
-- `mail-triage`
 
 Rules:
 
@@ -109,7 +108,7 @@ Near-term implication:
 Current mail boundaries:
 
 - the standalone `mail-sync` service owns Microsoft Graph inbox delta polling and durable delta cursor state
-- the main bot process currently owns `mail-triage` and consumes canonical `outlook.mail.message.detected` events from the bus
+- the standalone `mail-triage` service consumes canonical `outlook.mail.message.detected` events from the bus and performs folder routing
 - use bounded Outlook adapters around Graph mail delta, folder ensure, and move-folder APIs
 - persist triage folder identifiers and audit state durably so follow-on service extraction can stay behavior-stable
 

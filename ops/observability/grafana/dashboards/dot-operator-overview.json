@@ -334,7 +334,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "up{job=~\"dot-bot|dot-mail-sync|prometheus\"}",
+          "expr": "up{job=~\"dot-bot|dot-mail-sync|dot-mail-triage|prometheus\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",

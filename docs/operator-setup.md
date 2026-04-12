@@ -121,10 +121,10 @@ For Outlook OAuth:
 For Outlook mail sync:
 
 - optionally set `OUTLOOK_MAIL_APPROVED_FOLDER`, `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER`, `OUTLOOK_MAIL_WHITELIST`, `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS`, `OUTLOOK_REQUEST_TIMEOUT_MS`, and `OUTLOOK_MAIL_SYNC_INTERVAL_MS`
-- the compose stack now includes a dedicated `mail-sync` service container
+- the compose stack now includes dedicated `mail-sync` and `mail-triage` service containers
 - the mail-sync service uses Microsoft Graph delta sync rather than rescanning the whole inbox every cycle
 - it persists the delta cursor for future runs and publishes canonical detected-mail events onto the bus
-- the main bot process still performs triage and folder moves for now by consuming those events
+- the mail-triage service consumes those events and performs triage and folder moves
 - on the initial baseline, only mail from the last `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS` days is eligible for triage; older inbox backlog is left alone while the cursor is seeded
 - Outlook Graph mail requests are bounded by `OUTLOOK_REQUEST_TIMEOUT_MS` so a slow delta sync fails visibly instead of hanging the worker indefinitely
 - whitelist sender matches go directly to `Dot Approved`
@@ -161,6 +161,7 @@ Expected backend services:
 
 - `bot`
 - `mail-sync`
+- `mail-triage`
 - `ollama`
 - `nats`
 - `prometheus`

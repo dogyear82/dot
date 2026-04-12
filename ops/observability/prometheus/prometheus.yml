@@ -11,6 +11,10 @@ scrape_configs:
     static_configs:
       - targets: ["mail-sync:9464"]
 
+  - job_name: dot-mail-triage
+    static_configs:
+      - targets: ["mail-triage:9464"]
+
   - job_name: prometheus
     static_configs:
       - targets: ["prometheus:9090"]
