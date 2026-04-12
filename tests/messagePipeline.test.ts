@@ -205,6 +205,74 @@ test("message pipeline handles explicit owner commands before addressedness infe
   }
 });
 
+test("message pipeline turns incomplete explicit tool commands into clarification prompts", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("explicit tool clarification should not invoke chat");
+    },
+    async inferToolDecision() {
+      throw new Error("explicit tool clarification should not invoke inference");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-owner-tool-clarify",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "!calendar remind",
+          addressedContent: "!calendar remind",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-owner-tool-clarify"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /Which calendar event should I create a reminder for/i);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline preserves transport and conversation metadata in access audit", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();

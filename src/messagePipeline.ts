@@ -12,8 +12,8 @@ import type { MicrosoftOutlookOAuthClient } from "./outlookOAuth.js";
 import { handlePersonalityCommand, isPersonalityCommand } from "./personality.js";
 import { createSpanAttributesForEvent, recordToolExecution, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
-import { handleReminderCommand, isReminderCommand } from "./reminders.js";
-import { executeToolDecision } from "./toolInvocation.js";
+import { isReminderCommand } from "./reminders.js";
+import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
 import type { IncomingMessage } from "./types.js";
 import { shouldTreatOwnerMessageAsAddressed } from "./discord/addressing.js";
 
@@ -181,42 +181,54 @@ export function registerMessagePipeline(params: {
                 return;
               }
 
-              if (isReminderCommand(content)) {
-                const toolName = normalizeExplicitToolName(content);
-                const reply = handleReminderCommand(persistence, content);
+              const explicitToolDecision = parseExplicitToolDecision(content);
+              if (explicitToolDecision?.decision === "clarify") {
                 persistence.saveToolExecutionAudit({
                   messageId: event.payload.messageId,
-                  toolName,
+                  toolName: explicitToolDecision.toolName,
                   invocationSource: "explicit",
-                  status: "executed",
+                  status: "clarify",
                   provider: null,
-                  detail: content
+                  detail: explicitToolDecision.reason
                 });
-                recordToolExecution({ toolName, status: "executed" });
-                pipelineOutcome = "reminder_command";
-                await publishReply(reply);
+                recordToolExecution({ toolName: explicitToolDecision.toolName, status: "clarify" });
+                pipelineOutcome = "tool_clarify";
+                await publishReply(explicitToolDecision.question, "none");
                 return;
               }
 
-              if (isCalendarCommand(content)) {
-                const toolName = normalizeExplicitToolName(content);
-                const reply = await handleCalendarCommand({
+              if (explicitToolDecision?.decision === "execute") {
+                const result = await executeToolDecision({
                   calendarClient,
-                  content,
-                  oauthClient: outlookOAuthClient,
+                  decision: explicitToolDecision,
                   persistence
                 });
                 persistence.saveToolExecutionAudit({
                   messageId: event.payload.messageId,
-                  toolName,
+                  toolName: result.toolName,
                   invocationSource: "explicit",
-                  status: "executed",
+                  status: result.status,
                   provider: null,
-                  detail: content
+                  detail:
+                    result.policyDecision?.reason ??
+                    explicitToolDecision.reason
                 });
-                recordToolExecution({ toolName, status: "executed" });
+                recordToolExecution({ toolName: result.toolName, status: result.status });
+                pipelineOutcome = result.status === "executed" ? "tool_execute" : "tool_clarify";
+                await publishReply(result.reply);
+                return;
+              }
+
+              if (isCalendarCommand(content)) {
                 pipelineOutcome = "calendar_command";
-                await publishReply(reply);
+                await publishReply(
+                  await handleCalendarCommand({
+                    calendarClient,
+                    content,
+                    oauthClient: outlookOAuthClient,
+                    persistence
+                  })
+                );
                 return;
               }
 
@@ -244,26 +256,26 @@ export function registerMessagePipeline(params: {
                   }
 
                   if (inferred.decision.decision === "execute") {
-                    const reply = await executeToolDecision({
+                    const result = await executeToolDecision({
                       calendarClient,
                       decision: inferred.decision,
                       persistence
                     });
                     persistence.saveToolExecutionAudit({
                       messageId: event.payload.messageId,
-                      toolName: inferred.decision.toolName,
+                      toolName: result.toolName,
                       invocationSource: "inferred",
-                      status: "executed",
+                      status: result.status,
                       provider: inferred.route,
-                      detail: inferred.decision.reason
+                      detail: result.policyDecision?.reason ?? inferred.decision.reason
                     });
-                    recordToolExecution({ toolName: inferred.decision.toolName, status: "executed" });
+                    recordToolExecution({ toolName: result.toolName, status: result.status });
                     logger.info(
-                      { route: inferred.route, messageId: event.payload.messageId, toolName: inferred.decision.toolName },
+                      { route: inferred.route, messageId: event.payload.messageId, toolName: result.toolName, status: result.status },
                       "Executed inferred tool decision"
                     );
-                    pipelineOutcome = "tool_execute";
-                    await publishReply(reply, inferred.route);
+                    pipelineOutcome = result.status === "executed" ? "tool_execute" : "tool_clarify";
+                    await publishReply(result.reply, inferred.route);
                     return;
                   }
 
@@ -383,48 +395,4 @@ function mapInboundEventToIncomingMessage(event: InboundMessageReceivedEvent): I
     mentionedBot: event.payload.mentionedBot,
     createdAt: event.occurredAt
   };
-}
-
-function normalizeExplicitToolName(content: string): string {
-  if (content.startsWith("!reminder add ") || content.startsWith("!remind ")) {
-    return "reminder.add";
-  }
-
-  if (content.startsWith("!reminder ack ")) {
-    return "reminder.ack";
-  }
-
-  if (content.startsWith("!reminder show") || content === "!reminder") {
-    return "reminder.show";
-  }
-
-  if (content.startsWith("!calendar remind ")) {
-    return "calendar.remind";
-  }
-
-  if (content.startsWith("!calendar auth")) {
-    return "calendar.auth";
-  }
-
-  if (content.startsWith("!calendar show") || content === "!calendar") {
-    return "calendar.show";
-  }
-
-  if (content.startsWith("!settings")) {
-    return "settings";
-  }
-
-  if (content.startsWith("!personality")) {
-    return "personality";
-  }
-
-  if (content.startsWith("!contact")) {
-    return "contact";
-  }
-
-  if (content.startsWith("!policy")) {
-    return "policy";
-  }
-
-  return "explicit-command";
 }
