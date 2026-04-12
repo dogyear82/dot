@@ -1,5 +1,5 @@
 import type { ActorRole } from "./auth.js";
-import type { OutlookMailMessage, ServiceHealthStatus } from "./types.js";
+import type { EmailActionStatus, OutlookMailMessage, ServiceHealthStatus } from "./types.js";
 
 export const DOT_EVENT_VERSION = "1.0.0";
 
@@ -12,6 +12,8 @@ export const DOT_EVENT_TOPICS = [
   "discord.message.received",
   "discord.message.delivery.requested",
   "llm.reply.generated",
+  "email.action.requested",
+  "email.action.completed",
   "outlook.calendar.query.completed",
   "outlook.mail.message.detected",
   "outlook.mail.delta.synced",
@@ -191,6 +193,31 @@ export interface OutlookMailMessageDetectedPayload {
 export type OutlookMailMessageDetectedEvent = DotEvent<
   "outlook.mail.message.detected",
   OutlookMailMessageDetectedPayload
+>;
+
+export type EmailActionOperation = "create_draft" | "send_draft";
+
+export interface EmailActionRequestedPayload {
+  actionId: number;
+  operation: EmailActionOperation;
+}
+
+export type EmailActionRequestedEvent = DotEvent<
+  "email.action.requested",
+  EmailActionRequestedPayload
+>;
+
+export interface EmailActionCompletedPayload {
+  requestEventId: string;
+  actionId: number;
+  operation: EmailActionOperation;
+  status: EmailActionStatus;
+  reply: string;
+}
+
+export type EmailActionCompletedEvent = DotEvent<
+  "email.action.completed",
+  EmailActionCompletedPayload
 >;
 
 export function createOutboundMessageRequestedEvent(params: {
@@ -452,6 +479,83 @@ export function createOutlookMailMessageDetectedEvent(params: {
     payload: {
       message: params.message,
       initialBaseline: params.initialBaseline
+    }
+  };
+}
+
+export function createEmailActionRequestedEvent(params: {
+  actionId: number;
+  operation: EmailActionOperation;
+  correlationId: string;
+  conversationId?: string | null;
+  actorId?: string | null;
+}): EmailActionRequestedEvent {
+  return {
+    eventId: `email.action.requested:${params.actionId}:${params.operation}:${Date.now()}`,
+    eventType: "email.action.requested",
+    eventVersion: DOT_EVENT_VERSION,
+    occurredAt: new Date().toISOString(),
+    producer: {
+      service: "email-workflow"
+    },
+    correlation: {
+      correlationId: params.correlationId,
+      causationId: null,
+      conversationId: params.conversationId ?? null,
+      actorId: params.actorId ?? null
+    },
+    routing: {
+      transport: null,
+      channelId: null,
+      guildId: null,
+      replyTo: null
+    },
+    diagnostics: {
+      severity: "info",
+      category: "email.action"
+    },
+    payload: {
+      actionId: params.actionId,
+      operation: params.operation
+    }
+  };
+}
+
+export function createEmailActionCompletedEvent(params: {
+  requestEvent: EmailActionRequestedEvent;
+  status: EmailActionStatus;
+  reply: string;
+}): EmailActionCompletedEvent {
+  return {
+    eventId: `${params.requestEvent.eventId}:completed:${Date.now()}`,
+    eventType: "email.action.completed",
+    eventVersion: DOT_EVENT_VERSION,
+    occurredAt: new Date().toISOString(),
+    producer: {
+      service: "email-actions-service"
+    },
+    correlation: {
+      correlationId: params.requestEvent.correlation.correlationId,
+      causationId: params.requestEvent.eventId,
+      conversationId: params.requestEvent.correlation.conversationId,
+      actorId: params.requestEvent.correlation.actorId
+    },
+    routing: {
+      transport: null,
+      channelId: null,
+      guildId: null,
+      replyTo: null
+    },
+    diagnostics: {
+      severity: params.status === "draft_failed" || params.status === "send_failed" ? "warn" : "info",
+      category: "email.action"
+    },
+    payload: {
+      requestEventId: params.requestEvent.eventId,
+      actionId: params.requestEvent.payload.actionId,
+      operation: params.requestEvent.payload.operation,
+      status: params.status,
+      reply: params.reply
     }
   };
 }

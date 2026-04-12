@@ -1,5 +1,6 @@
+import { createEmailActionRequestedEvent, type EmailActionCompletedEvent, type EmailActionOperation } from "./events.js";
+import type { EventBus } from "./eventBus.js";
 import { createPolicyEngine } from "./policyEngine.js";
-import type { OutlookMailClient } from "./outlookMail.js";
 import type { Persistence } from "./persistence.js";
 
 const EMAIL_USAGE = [
@@ -15,12 +16,13 @@ export function isEmailCommand(content: string): boolean {
 }
 
 export async function handleEmailCommand(params: {
+  actorId: string;
+  bus: EventBus;
   content: string;
   conversationId: string;
-  mailClient: OutlookMailClient;
   persistence: Persistence;
 }): Promise<string> {
-  const { content, conversationId, mailClient, persistence } = params;
+  const { actorId, bus, content, conversationId, persistence } = params;
   const trimmed = content.trim();
   const parts = trimmed.split(/\s+/);
 
@@ -123,37 +125,25 @@ export async function handleEmailCommand(params: {
       ].join("\n");
     }
 
-    let draft;
-    try {
-      draft = await mailClient.createDraft({
-        to: recipientEmail,
-        subject: parsed.subject,
-        body: parsed.body
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      return `Unable to create the Outlook draft right now: ${detail}`;
-    }
-
     const action = persistence.createEmailAction({
       contactQuery: parsed.contactQuery,
       contactId: policyDecision.contact.contact.id,
       recipientEmail,
       subject: parsed.subject,
       body: parsed.body,
-      outlookDraftId: draft.id,
-      outlookDraftWebLink: draft.webLink,
-      status: "awaiting_approval",
+      status: "draft_requested",
       riskLevel: policyDecision.riskLevel,
       policyReason: policyDecision.reason
     });
 
-    return [
-      `Created draft email action #${action.id} for ${recipientEmail}.`,
-      policyDecision.reason,
-      draft.webLink ? `Draft: ${draft.webLink}` : "Draft created in Outlook.",
-      `Send it with: \`!email approve ${action.id}\``
-    ].join("\n");
+    return dispatchEmailAction({
+      actionId: action.id,
+      actorId,
+      bus,
+      conversationId,
+      operation: "create_draft",
+      timeoutReply: `Email action #${action.id} is queued for draft creation. Check \`!email show ${action.id}\` shortly.`
+    });
   }
 
   if (parts[1] === "approve" && parts[2]) {
@@ -212,30 +202,23 @@ export async function handleEmailCommand(params: {
       ].join("\n");
     }
 
-    try {
-      await mailClient.sendDraft(action.outlookDraftId);
-      persistence.updateEmailAction({
-        id: action.id,
-        status: "sent",
-        contactId: policyDecision.contact.contact.id,
-        recipientEmail: resolveRecipientEmail(policyDecision.contact) ?? action.recipientEmail,
-        riskLevel: policyDecision.riskLevel,
-        policyReason: policyDecision.reason,
-        sentAt: new Date().toISOString()
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      persistence.updateEmailAction({
-        id: action.id,
-        status: "send_failed",
-        riskLevel: policyDecision.riskLevel,
-        policyReason: policyDecision.reason,
-        lastError: detail
-      });
-      return `Email action #${action.id} failed to send: ${detail}`;
-    }
+    persistence.updateEmailAction({
+      id: action.id,
+      status: "send_requested",
+      contactId: policyDecision.contact.contact.id,
+      recipientEmail: resolveRecipientEmail(policyDecision.contact) ?? action.recipientEmail,
+      riskLevel: policyDecision.riskLevel,
+      policyReason: policyDecision.reason
+    });
 
-    return `Sent email action #${action.id} to ${action.recipientEmail ?? "the configured recipient"}.`;
+    return dispatchEmailAction({
+      actionId: action.id,
+      actorId,
+      bus,
+      conversationId,
+      operation: "send_draft",
+      timeoutReply: `Email action #${action.id} is queued to send. Check \`!email show ${action.id}\` shortly.`
+    });
   }
 
   return "Invalid email command. Use `!email help`.";
@@ -277,4 +260,71 @@ function formatEmailAction(action: Awaited<ReturnType<Persistence["getEmailActio
     `Policy: ${action.policyReason ?? "none"}`,
     `Error: ${action.lastError ?? "none"}`
   ].join("\n");
+}
+
+async function dispatchEmailAction(params: {
+  actionId: number;
+  actorId: string;
+  bus: EventBus;
+  conversationId: string;
+  operation: EmailActionOperation;
+  timeoutReply: string;
+}): Promise<string> {
+  const completion = waitForEmailActionCompletion({
+    actionId: params.actionId,
+    bus: params.bus,
+    operation: params.operation
+  });
+
+  await params.bus.publish(
+    createEmailActionRequestedEvent({
+      actionId: params.actionId,
+      operation: params.operation,
+      correlationId: `email-action:${params.actionId}`,
+      conversationId: params.conversationId,
+      actorId: params.actorId
+    })
+  );
+
+  return (await completion) ?? params.timeoutReply;
+}
+
+async function waitForEmailActionCompletion(params: {
+  actionId: number;
+  bus: EventBus;
+  operation: EmailActionOperation;
+  timeoutMs?: number;
+}): Promise<string | null> {
+  const { actionId, bus, operation, timeoutMs = 10_000 } = params;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeout: NodeJS.Timeout | undefined;
+    let unsubscribe: (() => void) | undefined;
+
+    const finish = (reply: string | null) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      unsubscribe?.();
+      resolve(reply);
+    };
+
+    unsubscribe = bus.subscribe<EmailActionCompletedEvent>("email.action.completed", (event) => {
+      if (event.payload.actionId !== actionId || event.payload.operation !== operation) {
+        return;
+      }
+
+      finish(event.payload.reply);
+    });
+
+    timeout = setTimeout(() => {
+      finish(null);
+    }, timeoutMs);
+  });
 }

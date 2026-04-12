@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { registerEmailActionsConsumer } from "../src/emailActions.js";
 import { createInMemoryEventBus } from "../src/eventBus.js";
 import { registerMessagePipeline } from "../src/messagePipeline.js";
 import { initializePersistence } from "../src/persistence.js";
@@ -111,7 +112,6 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
     calendarClient,
     chatService,
     logger: createLogger() as never,
-    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -163,7 +163,6 @@ test("message pipeline handles explicit owner commands before addressedness infe
     calendarClient,
     chatService,
     logger: createLogger() as never,
-    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -238,11 +237,8 @@ test("message pipeline routes explicit email draft commands through the determin
   bus.subscribeOutboundMessage(async (event) => {
     outbound.push(event);
   });
-
-  const unsubscribe = registerMessagePipeline({
+  const unregisterEmailActions = registerEmailActionsConsumer({
     bus,
-    calendarClient,
-    chatService,
     logger: createLogger() as never,
     mailClient: {
       async createDraft() {
@@ -250,6 +246,14 @@ test("message pipeline routes explicit email draft commands through the determin
       },
       async sendDraft() {}
     } as never,
+    persistence
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -283,6 +287,7 @@ test("message pipeline routes explicit email draft commands through the determin
     assert.match(outbound[0]?.payload.content ?? "", /Created draft email action #1/);
     assert.match(outbound[0]?.payload.content ?? "", /!email approve 1/);
   } finally {
+    unregisterEmailActions();
     unsubscribe();
     cleanup();
   }
@@ -319,7 +324,6 @@ test("message pipeline turns incomplete explicit tool commands into clarificatio
     calendarClient,
     chatService,
     logger: createLogger() as never,
-    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -384,7 +388,6 @@ test("message pipeline preserves transport and conversation metadata in access a
     calendarClient,
     chatService,
     logger: createLogger() as never,
-    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -440,7 +443,6 @@ test("message pipeline appends an engaged power indicator when chat uses the hos
     calendarClient,
     chatService,
     logger: createLogger() as never,
-    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -509,7 +511,6 @@ test("message pipeline lets clearly addressed non-owner messages flow through no
     calendarClient,
     chatService,
     logger: createLogger() as never,
-    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -583,7 +584,6 @@ test("message pipeline stays silent for non-owner shared-channel messages that a
     calendarClient,
     chatService,
     logger: createLogger() as never,
-    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -656,7 +656,6 @@ test("message pipeline blocks owner-only commands for non-owner users", async ()
     calendarClient,
     chatService,
     logger: createLogger() as never,
-    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -731,7 +730,6 @@ test("message pipeline routes policy commands and returns the unknown-contact cl
     calendarClient,
     chatService,
     logger: createLogger() as never,
-    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence

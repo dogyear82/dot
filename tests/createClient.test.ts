@@ -291,7 +291,6 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
         getPowerStatus: () => "standby"
       },
       logger: createLogger() as never,
-      mailClient: {} as never,
       outlookOAuthClient: {} as never,
       ownerUserId: "owner-1",
       persistence
@@ -603,7 +602,6 @@ test("Discord ingress normalizes a plain-text @Dot command before pipeline routi
         getPowerStatus: () => "standby"
       },
       logger: createLogger() as never,
-      mailClient: {} as never,
       outlookOAuthClient: {} as never,
       ownerUserId: "owner-1",
       persistence
@@ -682,7 +680,6 @@ test("Discord ingress normalizes a role mention command before pipeline routing"
         getPowerStatus: () => "standby"
       },
       logger: createLogger() as never,
-      mailClient: {} as never,
       outlookOAuthClient: {} as never,
       ownerUserId: "owner-1",
       persistence
@@ -764,7 +761,6 @@ test("Discord ingress treats the bot role mention as addressed chat", async () =
         getPowerStatus: () => "standby"
       },
       logger: createLogger() as never,
-      mailClient: {} as never,
       outlookOAuthClient: {} as never,
       ownerUserId: "owner-1",
       persistence
@@ -843,7 +839,6 @@ test("Discord ingress does not treat an unrelated same-name role as Dot", async 
         getPowerStatus: () => "standby"
       },
       logger: createLogger() as never,
-      mailClient: {} as never,
       outlookOAuthClient: {} as never,
       ownerUserId: "owner-1",
       persistence

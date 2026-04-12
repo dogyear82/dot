@@ -10,7 +10,6 @@ import { createConfiguredEventBus } from "../eventBus.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
 import { startObservability } from "../observability.js";
 import { MicrosoftGraphOutlookCalendarClient } from "../outlookCalendar.js";
-import { MicrosoftGraphOutlookMailClient } from "../outlookMail.js";
 import { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
 import { initializePersistence } from "../persistence.js";
 import { startReminderScheduler } from "../reminders.js";
@@ -32,7 +31,6 @@ export async function createDotRuntime(params: {
   const bus = await createConfiguredEventBus(config);
   const outlookOAuthClient = new MicrosoftOutlookOAuthClient(config, persistence);
   const calendarClient = new MicrosoftGraphOutlookCalendarClient(config, outlookOAuthClient);
-  const mailClient = new MicrosoftGraphOutlookMailClient(config, outlookOAuthClient);
   const chatService = createLlmService({
     config,
     settings: persistence.settings
@@ -125,7 +123,6 @@ export async function createDotRuntime(params: {
           calendarClient,
           chatService,
           logger,
-          mailClient,
           outlookOAuthClient,
           ownerUserId: config.DISCORD_OWNER_USER_ID,
           persistence

@@ -137,7 +137,7 @@ Every user-visible reply now includes a mode indicator such as `[mode: lite]`, `
 ## Podman Notes
 
 - The bot image is built from `Containerfile`.
-- The compose stack now starts `bot`, `mail-sync`, `mail-triage`, `ollama`, `nats`, `prometheus`, `loki`, `promtail`, `tempo`, and `grafana`.
+- The compose stack now starts `bot`, `mail-sync`, `mail-triage`, `email-actions`, `ollama`, `nats`, `prometheus`, `loki`, `promtail`, `tempo`, and `grafana`.
 - The Ollama service bind-mounts `${HOME}/ollama` into the container so existing local models are reused.
 - Use `podman-compose`, not `podman compose`, on this machine. `podman compose` delegates to the external Docker Compose provider here and drops the NVIDIA CDI GPU device mapping, which leaves Ollama running on CPU.
 - To start just the local model runtime with GPU support:
@@ -198,9 +198,11 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 
 - Outlook delta polling now runs in the standalone `mail-sync` service container instead of inside `dot_bot_1`.
 - Mail triage and folder routing now run in the standalone `mail-triage` service container instead of inside `dot_bot_1`.
+- Draft-first email creation and approval-driven sending now run in the standalone `email-actions` service container instead of inside `dot_bot_1`.
 - The mail-sync service uses Microsoft Graph delta sync to track inbox changes without rescanning the full mailbox on every pass.
 - Durable worker state stores the latest delta cursor and the last successful sync timestamp.
 - The mail-triage service consumes canonical `outlook.mail.message.detected` events from the bus and performs folder moves.
+- The bot now publishes email-action requests and waits for deterministic completion events instead of calling Outlook mail APIs directly.
 - The triage consumer ensures the Outlook folders named by `OUTLOOK_MAIL_APPROVED_FOLDER` and `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER` exist before use.
 - On the first baseline, only mail received within `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS` is eligible for triage; older backlog is ignored while the delta cursor is seeded.
 - The initial inbox delta request is now scoped with a `receivedDateTime` lookback so Dot does not have to walk your entire historical inbox before the first cursor is established.

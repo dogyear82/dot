@@ -4,8 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { registerEmailActionsConsumer } from "../src/emailActions.js";
 import { handleEmailCommand } from "../src/emailWorkflow.js";
-import type { OutlookMailDraft } from "../src/outlookMail.js";
+import { createInMemoryEventBus } from "../src/eventBus.js";
 import { initializePersistence } from "../src/persistence.js";
 
 function createPersistence() {
@@ -24,12 +25,14 @@ function createPersistence() {
 
 test("email draft creates a pending contact classification when the contact is unknown", async () => {
   const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
 
   try {
     const reply = await handleEmailCommand({
+      actorId: "owner-1",
+      bus,
       content: "!email draft Michelle | Hello | Checking in.",
       conversationId: "channel-1",
-      mailClient: {} as never,
       persistence
     });
 
@@ -46,6 +49,7 @@ test("email draft creates a pending contact classification when the contact is u
 
 test("email draft creates an Outlook draft for trusted contacts and awaits approval", async () => {
   const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
 
   try {
     persistence.upsertContact({
@@ -55,11 +59,11 @@ test("email draft creates an Outlook draft for trusted contacts and awaits appro
     });
 
     const createDraftCalls: Array<{ to: string; subject: string; body: string }> = [];
-    const reply = await handleEmailCommand({
-      content: "!email draft Michelle | Hello | Checking in.",
-      conversationId: "channel-1",
+    const unregisterConsumer = registerEmailActionsConsumer({
+      bus,
+      logger: { info() {}, warn() {} } as never,
       mailClient: {
-        async createDraft(params: { to: string; subject: string; body: string }): Promise<OutlookMailDraft> {
+        async createDraft(params: { to: string; subject: string; body: string }) {
           createDraftCalls.push(params);
           return { id: "draft-1", webLink: "https://outlook.example/draft-1" };
         },
@@ -67,6 +71,14 @@ test("email draft creates an Outlook draft for trusted contacts and awaits appro
           throw new Error("send should not run during draft");
         }
       } as never,
+      persistence
+    });
+
+    const reply = await handleEmailCommand({
+      actorId: "owner-1",
+      bus,
+      content: "!email draft Michelle | Hello | Checking in.",
+      conversationId: "channel-1",
       persistence
     });
 
@@ -78,6 +90,7 @@ test("email draft creates an Outlook draft for trusted contacts and awaits appro
     assert(action);
     assert.equal(action.status, "awaiting_approval");
     assert.equal(action.outlookDraftId, "draft-1");
+    unregisterConsumer();
   } finally {
     cleanup();
   }
@@ -85,6 +98,7 @@ test("email draft creates an Outlook draft for trusted contacts and awaits appro
 
 test("email approve sends the stored Outlook draft and records sent state", async () => {
   const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
 
   try {
     persistence.upsertContact({
@@ -107,9 +121,9 @@ test("email approve sends the stored Outlook draft and records sent state", asyn
     });
 
     const sendCalls: string[] = [];
-    const reply = await handleEmailCommand({
-      content: "!email approve 1",
-      conversationId: "channel-1",
+    const unregisterConsumer = registerEmailActionsConsumer({
+      bus,
+      logger: { info() {}, warn() {} } as never,
       mailClient: {
         async createDraft() {
           throw new Error("createDraft should not run during approval");
@@ -121,6 +135,14 @@ test("email approve sends the stored Outlook draft and records sent state", asyn
       persistence
     });
 
+    const reply = await handleEmailCommand({
+      actorId: "owner-1",
+      bus,
+      content: "!email approve 1",
+      conversationId: "channel-1",
+      persistence
+    });
+
     assert.deepEqual(sendCalls, ["draft-1"]);
     assert.match(reply, /Sent email action #1/i);
 
@@ -128,6 +150,7 @@ test("email approve sends the stored Outlook draft and records sent state", asyn
     assert(action);
     assert.equal(action.status, "sent");
     assert.ok(action.sentAt);
+    unregisterConsumer();
   } finally {
     cleanup();
   }

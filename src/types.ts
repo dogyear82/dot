@@ -144,8 +144,11 @@ export interface DetectedMailMessageRecord {
 
 export type EmailActionStatus =
   | "pending_contact_classification"
+  | "draft_requested"
   | "awaiting_approval"
+  | "send_requested"
   | "sent"
+  | "draft_failed"
   | "blocked"
   | "send_failed";
 

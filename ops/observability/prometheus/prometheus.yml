@@ -15,6 +15,10 @@ scrape_configs:
     static_configs:
       - targets: ["mail-triage:9464"]
 
+  - job_name: dot-email-actions
+    static_configs:
+      - targets: ["email-actions:9464"]
+
   - job_name: prometheus
     static_configs:
       - targets: ["prometheus:9090"]

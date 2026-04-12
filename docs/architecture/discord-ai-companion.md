@@ -109,8 +109,9 @@ Current mail boundaries:
 
 - the standalone `mail-sync` service owns Microsoft Graph inbox delta polling and durable delta cursor state
 - the standalone `mail-triage` service consumes canonical `outlook.mail.message.detected` events from the bus and performs folder routing
+- the standalone `email-actions` service handles Outlook draft creation and draft sending for explicit `!email` commands
 - use bounded Outlook adapters around Graph mail delta, folder ensure, and move-folder APIs
-- persist triage folder identifiers and audit state durably so follow-on service extraction can stay behavior-stable
+- persist triage folder identifiers and email action state durably so follow-on service extraction can stay behavior-stable
 
 ## Observability Substrate
 
