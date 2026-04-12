@@ -5,7 +5,6 @@ import type { Logger } from "pino";
 import { createLlmService } from "../chat/modelRouter.js";
 import type { AppConfig } from "../config.js";
 import { createDiagnosticsObserver, createHostHealthEvent } from "../diagnostics.js";
-import { createDiscordClient } from "../discord/createClient.js";
 import { createConfiguredEventBus } from "../eventBus.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
 import { startObservability } from "../observability.js";
@@ -36,7 +35,6 @@ export async function createDotRuntime(params: {
     settings: persistence.settings
   });
 
-  let discordClient: ReturnType<typeof createDiscordClient> | undefined;
   let unregisterMessagePipeline: (() => void) | undefined;
   let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
   let diagnosticsObserver: ReturnType<typeof createDiagnosticsObserver> | undefined;
@@ -134,25 +132,6 @@ export async function createDotRuntime(params: {
       }
     }),
     createServiceHost({
-      name: "discord-transport",
-      onStatusChange: emitHostHealth,
-      async start() {
-        discordClient = createDiscordClient({
-          bus,
-          logger,
-          ownerUserId: config.DISCORD_OWNER_USER_ID,
-          persistence
-        });
-        await discordClient.login(config.DISCORD_BOT_TOKEN);
-      },
-      async stop() {
-        if (discordClient) {
-          await discordClient.destroy();
-          discordClient = undefined;
-        }
-      }
-    }),
-    createServiceHost({
       name: "reminders",
       onStatusChange: emitHostHealth,
       start() {
@@ -188,7 +167,7 @@ export async function createDotRuntime(params: {
 
       logger.info(
         {
-          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders"]
+          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "reminders"]
         },
         "Initialized Dot service host topology"
       );

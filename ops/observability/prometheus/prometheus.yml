@@ -7,6 +7,10 @@ scrape_configs:
     static_configs:
       - targets: ["bot:9464"]
 
+  - job_name: dot-discord-ingress
+    static_configs:
+      - targets: ["discord-ingress:9464"]
+
   - job_name: dot-discord-egress
     static_configs:
       - targets: ["discord-egress:9464"]
