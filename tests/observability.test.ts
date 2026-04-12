@@ -125,6 +125,7 @@ test("observability exports metrics and spans for a canonical message-pipeline f
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence

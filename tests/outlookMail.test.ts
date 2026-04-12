@@ -236,6 +236,90 @@ test("Outlook mail requires reauthorization when stored OAuth scopes do not incl
   );
 });
 
+test("Outlook mail createDraft posts a draft message and returns the Outlook draft id", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; method: string; body: string | null }> = [];
+
+  globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      body: typeof init?.body === "string" ? init.body : null
+    });
+
+    return new Response(JSON.stringify({ id: "draft-1", webLink: "https://outlook.example/draft-1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  try {
+    const client = new MicrosoftGraphOutlookMailClient(createMailConfig(), undefined);
+    const draft = await client.createDraft({
+      to: "michelle@example.com",
+      subject: "Hello",
+      body: "Checking in."
+    });
+
+    assert.deepEqual(draft, {
+      id: "draft-1",
+      webLink: "https://outlook.example/draft-1"
+    });
+    assert.equal(requests[0]?.method, "POST");
+    assert.match(requests[0]?.url ?? "", /\/me\/messages$/);
+    assert.match(requests[0]?.body ?? "", /michelle@example\.com/);
+    assert.match(requests[0]?.body ?? "", /Checking in\./);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Outlook mail sendDraft posts to the draft send endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; method: string }> = [];
+
+  globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    requests.push({ url: String(input), method: init?.method ?? "GET" });
+    return new Response(null, { status: 202 });
+  }) as typeof fetch;
+
+  try {
+    const client = new MicrosoftGraphOutlookMailClient(createMailConfig(), undefined);
+    await client.sendDraft("draft-123");
+
+    assert.equal(requests[0]?.method, "POST");
+    assert.match(requests[0]?.url ?? "", /\/me\/messages\/draft-123\/send$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Outlook mail sendDraft requires reauthorization when stored OAuth scopes do not include Mail.Send", async () => {
+  const client = new MicrosoftGraphOutlookMailClient(
+    createMailConfig({
+      OUTLOOK_ACCESS_TOKEN: "",
+      OUTLOOK_CLIENT_ID: "client-id",
+      OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite Mail.Send"
+    }),
+    {
+      async getValidAccessToken() {
+        return "token";
+      },
+      hasStoredToken() {
+        return true;
+      },
+      hasStoredScopes(requiredScopes: string[]) {
+        return !requiredScopes.includes("Mail.Send");
+      }
+    } as never
+  );
+
+  await assert.rejects(
+    () => client.sendDraft("draft-123"),
+    /Mail\.Send/
+  );
+});
+
 test("Outlook mail still works with legacy OUTLOOK_ACCESS_TOKEN fallback when no OAuth token is stored", async () => {
   const originalFetch = globalThis.fetch;
 

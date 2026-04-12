@@ -34,15 +34,27 @@ interface GraphMailFolder {
   displayName?: string | null;
 }
 
+interface GraphDraftMessage {
+  id?: string | null;
+  webLink?: string | null;
+}
+
 export interface OutlookMailDeltaResult {
   messages: OutlookMailMessage[];
   deltaCursor: string | null;
+}
+
+export interface OutlookMailDraft {
+  id: string;
+  webLink: string | null;
 }
 
 export interface OutlookMailClient {
   syncInboxDelta(deltaCursor?: string | null, options?: { receivedAfter?: string | null }): Promise<OutlookMailDeltaResult>;
   ensureFolder(displayName: string): Promise<OutlookMailFolder>;
   moveMessageToFolder(messageId: string, destinationFolderId: string): Promise<void>;
+  createDraft(params: { to: string; subject: string; body: string }): Promise<OutlookMailDraft>;
+  sendDraft(messageId: string): Promise<void>;
 }
 
 export class OutlookMailConfigurationError extends Error {}
@@ -144,7 +156,7 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
   }
 
   async moveMessageToFolder(messageId: string, destinationFolderId: string): Promise<void> {
-    const accessToken = await this.resolveAccessToken();
+    const accessToken = await this.resolveAccessToken(["Mail.ReadWrite"]);
     const response = await fetch(`${this.config.OUTLOOK_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(messageId)}/move`, {
       method: "POST",
       headers: {
@@ -160,13 +172,65 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
     }
   }
 
-  private async resolveAccessToken(): Promise<string> {
+  async createDraft(params: { to: string; subject: string; body: string }): Promise<OutlookMailDraft> {
+    const accessToken = await this.resolveAccessToken(["Mail.ReadWrite"]);
+    const response = await fetch(`${this.config.OUTLOOK_GRAPH_BASE_URL}/me/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      signal: createTimeoutSignal(this.config.OUTLOOK_REQUEST_TIMEOUT_MS),
+      body: JSON.stringify({
+        subject: params.subject,
+        body: {
+          contentType: "Text",
+          content: params.body
+        },
+        toRecipients: [
+          {
+            emailAddress: {
+              address: params.to
+            }
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Outlook mail draft create request failed: ${response.status} ${await response.text()}`.trim());
+    }
+
+    const draft = mapGraphDraftMessage((await response.json()) as GraphDraftMessage);
+    if (!draft) {
+      throw new Error("Outlook mail draft create request returned an invalid draft payload");
+    }
+
+    return draft;
+  }
+
+  async sendDraft(messageId: string): Promise<void> {
+    const accessToken = await this.resolveAccessToken(["Mail.Send"]);
+    const response = await fetch(`${this.config.OUTLOOK_GRAPH_BASE_URL}/me/messages/${encodeURIComponent(messageId)}/send`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      },
+      signal: createTimeoutSignal(this.config.OUTLOOK_REQUEST_TIMEOUT_MS)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Outlook mail send request failed: ${response.status} ${await response.text()}`.trim());
+    }
+  }
+
+  private async resolveAccessToken(requiredScopes: string[] = ["Mail.ReadWrite"]): Promise<string> {
     if (this.oauthClient) {
       try {
         const token = await this.oauthClient.getValidAccessToken();
-        if (this.oauthClient.hasStoredToken() && !this.oauthClient.hasStoredScopes(["Mail.ReadWrite"])) {
+        if (this.oauthClient.hasStoredToken() && !this.oauthClient.hasStoredScopes(requiredScopes)) {
           throw new OutlookMailConfigurationError(
-            "Outlook mail access requires reauthorization with `Mail.ReadWrite`. Run `!calendar auth start` and `!calendar auth complete` again."
+            `Outlook mail access requires reauthorization with \`${requiredScopes.join("`, `")}\`. Run \`!calendar auth start\` and \`!calendar auth complete\` again.`
           );
         }
         return token;
@@ -254,5 +318,16 @@ function mapGraphMailFolder(folder: GraphMailFolder): OutlookMailFolder | null {
   return {
     id: folder.id,
     displayName: folder.displayName
+  };
+}
+
+function mapGraphDraftMessage(message: GraphDraftMessage): OutlookMailDraft | null {
+  if (!message.id) {
+    return null;
+  }
+
+  return {
+    id: message.id,
+    webLink: message.webLink ?? null
   };
 }

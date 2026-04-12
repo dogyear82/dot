@@ -82,6 +82,41 @@ test("mail triage audit persists outcome and destination metadata", () => {
   }
 });
 
+test("email actions persist draft and send state durably", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const created = persistence.createEmailAction({
+      contactQuery: "Michelle",
+      recipientEmail: "michelle@example.com",
+      subject: "Hello",
+      body: "Checking in.",
+      outlookDraftId: "draft-1",
+      outlookDraftWebLink: "https://outlook.example/draft-1",
+      status: "awaiting_approval",
+      riskLevel: "low",
+      policyReason: "Michelle is classified as trusted for email.send."
+    });
+
+    const updated = persistence.updateEmailAction({
+      id: created.id,
+      status: "sent",
+      sentAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    assert.equal(updated.status, "sent");
+    assert.equal(updated.sentAt, "2026-04-11T00:00:00.000Z");
+
+    const fetched = persistence.getEmailAction(created.id);
+    assert(fetched);
+    assert.equal(fetched.outlookDraftId, "draft-1");
+    assert.equal(fetched.status, "sent");
+    assert.equal(persistence.listEmailActions(5)[0]?.id, created.id);
+  } finally {
+    cleanup();
+  }
+});
+
 test("listRecentNormalizedMessages preserves millisecond ordering within the same second", () => {
   const { persistence, cleanup } = createPersistence();
 

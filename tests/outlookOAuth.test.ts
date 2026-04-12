@@ -171,7 +171,7 @@ test("getValidAccessToken reports a clear recovery path when OAuth is unconfigur
   }
 });
 
-test("getAuthorizationStatus reports a mail reauthorization warning when the stored token lacks Mail.ReadWrite", () => {
+test("getAuthorizationStatus reports a mail reauthorization warning when the stored token lacks required mail scopes", () => {
   const { persistence, cleanup } = createPersistence();
 
   try {
@@ -189,12 +189,14 @@ test("getAuthorizationStatus reports a mail reauthorization warning when the sto
         DISCORD_BOT_TOKEN: "token",
         DISCORD_OWNER_USER_ID: "owner",
         OUTLOOK_CLIENT_ID: "client-123",
-        OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite"
+        OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite Mail.Send"
       }),
       persistence
     );
 
-    assert.match(client.getAuthorizationStatus(new Date("2026-04-09T00:00:00.000Z")), /Mail\.ReadWrite/);
+    const status = client.getAuthorizationStatus(new Date("2026-04-09T00:00:00.000Z"));
+    assert.match(status, /Mail\.ReadWrite/);
+    assert.match(status, /Mail\.Send/);
   } finally {
     cleanup();
   }
