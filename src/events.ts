@@ -320,6 +320,7 @@ export function createSystemOutboundMessageRequestedEvent(params: {
 
 export function createOutboundMessageDeliveredEvent(params: {
   requestEvent: OutboundMessageRequestedEvent;
+  producerService?: string;
   transportMessageId?: string | null;
 }): OutboundMessageDeliveredEvent {
   const routing = toOutboundRouting(params.requestEvent.payload.delivery);
@@ -329,7 +330,7 @@ export function createOutboundMessageDeliveredEvent(params: {
     eventType: "outbound.message.delivered",
     eventVersion: DOT_EVENT_VERSION,
     occurredAt: new Date().toISOString(),
-    producer: { service: "discord-transport" },
+    producer: { service: params.producerService ?? "discord-egress-service" },
     correlation: {
       correlationId: params.requestEvent.correlation.correlationId,
       causationId: params.requestEvent.eventId,
@@ -353,6 +354,7 @@ export function createOutboundMessageDeliveredEvent(params: {
 
 export function createOutboundMessageDeliveryFailedEvent(params: {
   requestEvent: OutboundMessageRequestedEvent;
+  producerService?: string;
   reason: string;
 }): OutboundMessageDeliveryFailedEvent {
   const routing = toOutboundRouting(params.requestEvent.payload.delivery);
@@ -362,7 +364,7 @@ export function createOutboundMessageDeliveryFailedEvent(params: {
     eventType: "outbound.message.delivery_failed",
     eventVersion: DOT_EVENT_VERSION,
     occurredAt: new Date().toISOString(),
-    producer: { service: "discord-transport" },
+    producer: { service: params.producerService ?? "discord-egress-service" },
     correlation: {
       correlationId: params.requestEvent.correlation.correlationId,
       causationId: params.requestEvent.eventId,

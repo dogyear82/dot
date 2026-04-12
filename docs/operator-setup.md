@@ -121,7 +121,8 @@ For Outlook OAuth:
 For Outlook mail sync:
 
 - optionally set `OUTLOOK_MAIL_APPROVED_FOLDER`, `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER`, `OUTLOOK_MAIL_WHITELIST`, `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS`, `OUTLOOK_REQUEST_TIMEOUT_MS`, and `OUTLOOK_MAIL_SYNC_INTERVAL_MS`
-- the compose stack now includes dedicated `mail-sync`, `mail-triage`, and `email-actions` service containers
+- the compose stack now includes dedicated `discord-egress`, `mail-sync`, `mail-triage`, and `email-actions` service containers
+- the discord-egress service consumes canonical outbound Discord delivery requests and owns reply/DM delivery plus long-message chunking
 - the mail-sync service uses Microsoft Graph delta sync rather than rescanning the whole inbox every cycle
 - it persists the delta cursor for future runs and publishes canonical detected-mail events onto the bus
 - the mail-triage service consumes those events and performs triage and folder moves
@@ -161,6 +162,7 @@ podman-compose up -d --build
 Expected backend services:
 
 - `bot`
+- `discord-egress`
 - `mail-sync`
 - `mail-triage`
 - `email-actions`

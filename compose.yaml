@@ -27,6 +27,31 @@ services:
       - "9464:9464"
     restart: unless-stopped
 
+  discord-egress:
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["node", "dist/src/discordEgressService.js"]
+    env_file:
+      - .env
+    environment:
+      EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      OLLAMA_BASE_URL: http://ollama:11434
+      LOG_FILE_PATH: /app/data/logs/discord-egress.log
+      OTEL_SERVICE_NAME: ${OTEL_DISCORD_EGRESS_SERVICE_NAME:-dot-discord-egress}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318/v1/traces}
+      METRICS_HOST: 0.0.0.0
+      METRICS_PORT: 9464
+    depends_on:
+      nats:
+        condition: service_healthy
+      tempo:
+        condition: service_started
+    volumes:
+      - dot_data:/app/data
+    restart: unless-stopped
+
   mail-sync:
     build:
       context: .
