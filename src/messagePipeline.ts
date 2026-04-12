@@ -4,11 +4,13 @@ import { SpanKind } from "@opentelemetry/api";
 import { evaluateAccess } from "./auth.js";
 import { appendPowerIndicator, type ChatService, type LlmRoute } from "./chat/modelRouter.js";
 import { handleContactCommand, handlePolicyCommand, isContactCommand, isPolicyCommand } from "./contacts.js";
+import { handleEmailCommand, isEmailCommand } from "./emailWorkflow.js";
 import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "./onboarding.js";
 import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
 import type { MicrosoftOutlookOAuthClient } from "./outlookOAuth.js";
+import type { OutlookMailClient } from "./outlookMail.js";
 import { handlePersonalityCommand, isPersonalityCommand } from "./personality.js";
 import { createSpanAttributesForEvent, recordToolExecution, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
@@ -24,11 +26,12 @@ export function registerMessagePipeline(params: {
   calendarClient: OutlookCalendarClient;
   chatService: ChatService;
   logger: Logger;
+  mailClient: OutlookMailClient;
   outlookOAuthClient: MicrosoftOutlookOAuthClient;
   ownerUserId: string;
   persistence: Persistence;
 }): () => void {
-  const { bus, calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence } = params;
+  const { bus, calendarClient, chatService, logger, mailClient, outlookOAuthClient, ownerUserId, persistence } = params;
 
   return bus.subscribeInboundMessage(async (event) => {
     await withEventContext(event, async () => {
@@ -174,6 +177,20 @@ export function registerMessagePipeline(params: {
                   handlePolicyCommand({
                     content,
                     conversationId: event.correlation.conversationId ?? "",
+                    persistence
+                  }),
+                  "none"
+                );
+                return;
+              }
+
+              if (isEmailCommand(content)) {
+                pipelineOutcome = "email_command";
+                await publishReply(
+                  await handleEmailCommand({
+                    content,
+                    conversationId: event.correlation.conversationId ?? "",
+                    mailClient,
                     persistence
                   }),
                   "none"

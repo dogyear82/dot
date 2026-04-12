@@ -64,7 +64,13 @@ test("mail sync worker ensures folder and persists delta cursor", async () => {
             deltaCursor: "cursor-1"
           };
         },
-        async moveMessageToFolder() {}
+        async moveMessageToFolder() {},
+        async createDraft() {
+          throw new Error("not used");
+        },
+        async sendDraft() {
+          throw new Error("not used");
+        }
       },
       needsAttentionFolderName: "Needs Attention",
       persistence,
@@ -110,7 +116,13 @@ test("mail sync worker reuses stored folder state and previous delta cursor", as
             deltaCursor: "cursor-2"
           };
         },
-        async moveMessageToFolder() {}
+        async moveMessageToFolder() {},
+        async createDraft() {
+          throw new Error("not used");
+        },
+        async sendDraft() {
+          throw new Error("not used");
+        }
       },
       needsAttentionFolderName: "Needs Attention",
       persistence,
@@ -152,7 +164,13 @@ test("mail sync worker resets an invalid delta cursor and retries from a fresh b
             deltaCursor: "cursor-2"
           };
         },
-        async moveMessageToFolder() {}
+        async moveMessageToFolder() {},
+        async createDraft() {
+          throw new Error("not used");
+        },
+        async sendDraft() {
+          throw new Error("not used");
+        }
       },
       needsAttentionFolderName: "Needs Attention",
       persistence,
@@ -200,6 +218,12 @@ test("mail sync worker moves whitelisted mail into the approved folder and recor
         },
         async moveMessageToFolder(messageId, destinationFolderId) {
           moves.push({ messageId, destinationFolderId });
+        },
+        async createDraft() {
+          throw new Error("not used");
+        },
+        async sendDraft() {
+          throw new Error("not used");
         }
       },
       needsAttentionFolderName: "Needs Attention",
@@ -272,6 +296,12 @@ test("mail sync worker ignores already-triaged messages to avoid repeated moves"
         },
         async moveMessageToFolder() {
           moveCalls += 1;
+        },
+        async createDraft() {
+          throw new Error("not used");
+        },
+        async sendDraft() {
+          throw new Error("not used");
         }
       },
       needsAttentionFolderName: "Needs Attention",
@@ -337,7 +367,13 @@ test("mail sync worker only triages messages from the configured initial lookbac
             deltaCursor: "cursor-1"
           };
         },
-        async moveMessageToFolder() {}
+        async moveMessageToFolder() {},
+        async createDraft() {
+          throw new Error("not used");
+        },
+        async sendDraft() {
+          throw new Error("not used");
+        }
       },
       needsAttentionFolderName: "Needs Attention",
       persistence,

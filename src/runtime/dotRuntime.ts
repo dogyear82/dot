@@ -132,6 +132,7 @@ export async function createDotRuntime(params: {
           calendarClient,
           chatService,
           logger,
+          mailClient,
           outlookOAuthClient,
           ownerUserId: config.DISCORD_OWNER_USER_ID,
           persistence

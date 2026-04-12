@@ -111,6 +111,7 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -162,6 +163,7 @@ test("message pipeline handles explicit owner commands before addressedness infe
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -205,6 +207,87 @@ test("message pipeline handles explicit owner commands before addressedness infe
   }
 });
 
+test("message pipeline routes explicit email draft commands through the deterministic email workflow", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("email commands should not invoke chat");
+    },
+    async inferToolDecision() {
+      throw new Error("email commands should not invoke inference");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  persistence.upsertContact({
+    canonicalName: "Michelle",
+    trustLevel: "trusted",
+    endpoints: [{ kind: "email", value: "michelle@example.com" }]
+  });
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    mailClient: {
+      async createDraft() {
+        return { id: "draft-1", webLink: "https://outlook.example/draft-1" };
+      },
+      async sendDraft() {}
+    } as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-owner-email-draft",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "!email draft Michelle | Hello | Checking in.",
+          addressedContent: "!email draft Michelle | Hello | Checking in.",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-owner-email-draft"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /Created draft email action #1/);
+    assert.match(outbound[0]?.payload.content ?? "", /!email approve 1/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline turns incomplete explicit tool commands into clarification prompts", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
@@ -236,6 +319,7 @@ test("message pipeline turns incomplete explicit tool commands into clarificatio
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -300,6 +384,7 @@ test("message pipeline preserves transport and conversation metadata in access a
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -355,6 +440,7 @@ test("message pipeline appends an engaged power indicator when chat uses the hos
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -423,6 +509,7 @@ test("message pipeline lets clearly addressed non-owner messages flow through no
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -496,6 +583,7 @@ test("message pipeline stays silent for non-owner shared-channel messages that a
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -568,6 +656,7 @@ test("message pipeline blocks owner-only commands for non-owner users", async ()
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence
@@ -642,6 +731,7 @@ test("message pipeline routes policy commands and returns the unknown-contact cl
     calendarClient,
     chatService,
     logger: createLogger() as never,
+    mailClient: {} as never,
     outlookOAuthClient: {} as never,
     ownerUserId: "owner-1",
     persistence

@@ -118,8 +118,9 @@ export class MicrosoftOutlookOAuthClient {
   getAuthorizationStatus(now = new Date()): string {
     const token = this.persistence.getOAuthToken(MICROSOFT_GRAPH_PROVIDER);
     if (token) {
-      if (this.isMailScopeConfigured() && !this.hasStoredScopes(["Mail.ReadWrite"])) {
-        return "Outlook authorization is active for calendar use but missing `Mail.ReadWrite` for mail sync. Run `!calendar auth start` and `!calendar auth complete` again.";
+      const missingScopes = this.requiredMailScopes().filter((scope) => !this.hasStoredScopes([scope]));
+      if (missingScopes.length > 0) {
+        return `Outlook authorization is active for calendar use but missing \`${missingScopes.join("`, `")}\` for mail workflows. Run \`!calendar auth start\` and \`!calendar auth complete\` again.`;
       }
 
       return Date.parse(token.expiresAt) > now.getTime()
@@ -213,7 +214,12 @@ export class MicrosoftOutlookOAuthClient {
   }
 
   private isMailScopeConfigured(): boolean {
-    return this.config.OUTLOOK_OAUTH_SCOPES.split(/\s+/).includes("Mail.ReadWrite");
+    return this.requiredMailScopes().length > 0;
+  }
+
+  private requiredMailScopes(): string[] {
+    const configuredScopes = new Set(this.config.OUTLOOK_OAUTH_SCOPES.split(/\s+/).filter(Boolean));
+    return ["Mail.ReadWrite", "Mail.Send"].filter((scope) => configuredScopes.has(scope));
   }
 }
 

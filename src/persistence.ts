@@ -15,6 +15,8 @@ import type {
   ContactRecord,
   ContactTrustLevel,
   ConversationTurnRecord,
+  EmailActionRecord,
+  EmailActionStatus,
   IncomingMessage,
   MailTriageDecisionRecord,
   OAuthDeviceFlowRecord,
@@ -70,6 +72,37 @@ export interface Persistence {
   listPendingContactClassifications(): PendingContactClassificationRecord[];
   getPendingContactClassification(id: number): PendingContactClassificationRecord | null;
   clearPendingContactClassification(id: number): void;
+  createEmailAction(record: {
+    contactQuery: string;
+    contactId?: number | null;
+    recipientEmail?: string | null;
+    subject: string;
+    body: string;
+    outlookDraftId?: string | null;
+    outlookDraftWebLink?: string | null;
+    status: EmailActionStatus;
+    riskLevel?: "low" | "high" | null;
+    policyReason?: string | null;
+    lastError?: string | null;
+    createdAt?: string;
+    sentAt?: string | null;
+  }): EmailActionRecord;
+  getEmailAction(id: number): EmailActionRecord | null;
+  listEmailActions(limit?: number): EmailActionRecord[];
+  updateEmailAction(record: {
+    id: number;
+    contactId?: number | null;
+    recipientEmail?: string | null;
+    subject?: string;
+    body?: string;
+    outlookDraftId?: string | null;
+    outlookDraftWebLink?: string | null;
+    status?: EmailActionStatus;
+    riskLevel?: "low" | "high" | null;
+    policyReason?: string | null;
+    lastError?: string | null;
+    sentAt?: string | null;
+  }): EmailActionRecord;
   getPersonalityPreset(name: string): PersonalityPresetRecord | null;
   listPersonalityPresets(): PersonalityPresetRecord[];
   getOAuthToken(provider: string): OAuthTokenRecord | null;
@@ -262,6 +295,25 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       interval_seconds INTEGER NOT NULL,
       message TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS email_actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contact_query TEXT NOT NULL,
+      contact_id INTEGER,
+      recipient_email TEXT,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      outlook_draft_id TEXT,
+      outlook_draft_web_link TEXT,
+      status TEXT NOT NULL,
+      risk_level TEXT,
+      policy_reason TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      sent_at TEXT,
+      FOREIGN KEY(contact_id) REFERENCES contacts(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS reminders (
@@ -948,6 +1000,106 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     WHERE id = ?
   `);
 
+  const createEmailActionStatement = db.prepare(`
+    INSERT INTO email_actions (
+      contact_query,
+      contact_id,
+      recipient_email,
+      subject,
+      body,
+      outlook_draft_id,
+      outlook_draft_web_link,
+      status,
+      risk_level,
+      policy_reason,
+      last_error,
+      created_at,
+      updated_at,
+      sent_at
+    ) VALUES (
+      @contactQuery,
+      @contactId,
+      @recipientEmail,
+      @subject,
+      @body,
+      @outlookDraftId,
+      @outlookDraftWebLink,
+      @status,
+      @riskLevel,
+      @policyReason,
+      @lastError,
+      COALESCE(@createdAt, CURRENT_TIMESTAMP),
+      COALESCE(@createdAt, CURRENT_TIMESTAMP),
+      @sentAt
+    )
+  `);
+
+  const getEmailActionStatement = db.prepare<[number], EmailActionRecord>(`
+    SELECT
+      id,
+      contact_query AS contactQuery,
+      contact_id AS contactId,
+      recipient_email AS recipientEmail,
+      subject,
+      body,
+      outlook_draft_id AS outlookDraftId,
+      outlook_draft_web_link AS outlookDraftWebLink,
+      status,
+      risk_level AS riskLevel,
+      policy_reason AS policyReason,
+      last_error AS lastError,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      sent_at AS sentAt
+    FROM email_actions
+    WHERE id = ?
+  `);
+
+  const listEmailActionsStatement = db.prepare<[number], EmailActionRecord>(`
+    SELECT
+      id,
+      contact_query AS contactQuery,
+      contact_id AS contactId,
+      recipient_email AS recipientEmail,
+      subject,
+      body,
+      outlook_draft_id AS outlookDraftId,
+      outlook_draft_web_link AS outlookDraftWebLink,
+      status,
+      risk_level AS riskLevel,
+      policy_reason AS policyReason,
+      last_error AS lastError,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      sent_at AS sentAt
+    FROM email_actions
+    ORDER BY id DESC
+    LIMIT ?
+  `);
+
+  const updateEmailActionStatement = db.prepare(`
+    UPDATE email_actions
+    SET contact_id = COALESCE(@contactId, contact_id),
+        recipient_email = COALESCE(@recipientEmail, recipient_email),
+        subject = COALESCE(@subject, subject),
+        body = COALESCE(@body, body),
+        outlook_draft_id = COALESCE(@outlookDraftId, outlook_draft_id),
+        outlook_draft_web_link = COALESCE(@outlookDraftWebLink, outlook_draft_web_link),
+        status = COALESCE(@status, status),
+        risk_level = COALESCE(@riskLevel, risk_level),
+        policy_reason = COALESCE(@policyReason, policy_reason),
+        last_error = CASE
+          WHEN @lastError IS NOT NULL THEN @lastError
+          ELSE last_error
+        END,
+        sent_at = CASE
+          WHEN @sentAt IS NOT NULL THEN @sentAt
+          ELSE sent_at
+        END,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `);
+
   const settings = createSettingsStore(db);
   upsertPersonalityPresetStatement.run(
     "blue_lady",
@@ -1135,6 +1287,48 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     },
     clearPendingContactClassification(id) {
       deletePendingContactClassificationStatement.run(id);
+    },
+    createEmailAction(record) {
+      const result = createEmailActionStatement.run({
+        contactQuery: record.contactQuery,
+        contactId: record.contactId ?? null,
+        recipientEmail: record.recipientEmail ?? null,
+        subject: record.subject,
+        body: record.body,
+        outlookDraftId: record.outlookDraftId ?? null,
+        outlookDraftWebLink: record.outlookDraftWebLink ?? null,
+        status: record.status,
+        riskLevel: record.riskLevel ?? null,
+        policyReason: record.policyReason ?? null,
+        lastError: record.lastError ?? null,
+        createdAt: record.createdAt ?? null,
+        sentAt: record.sentAt ?? null
+      });
+      return getEmailActionStatement.get(Number(result.lastInsertRowid)) as EmailActionRecord;
+    },
+    getEmailAction(id) {
+      return getEmailActionStatement.get(id) ?? null;
+    },
+    listEmailActions(limit = 20) {
+      return listEmailActionsStatement.all(limit);
+    },
+    updateEmailAction(record) {
+      updateEmailActionStatement.run({
+        id: record.id,
+        contactId: record.contactId ?? null,
+        recipientEmail: record.recipientEmail ?? null,
+        subject: record.subject ?? null,
+        body: record.body ?? null,
+        outlookDraftId: record.outlookDraftId ?? null,
+        outlookDraftWebLink: record.outlookDraftWebLink ?? null,
+        status: record.status ?? null,
+        riskLevel: record.riskLevel ?? null,
+        policyReason: record.policyReason ?? null,
+        lastError: record.lastError ?? null,
+        sentAt: record.sentAt ?? null
+      });
+
+      return getEmailActionStatement.get(record.id) as EmailActionRecord;
     },
     getPersonalityPreset(name) {
       const row = getPersonalityPresetStatement.get(name);

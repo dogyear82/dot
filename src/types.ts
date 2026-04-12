@@ -135,6 +135,31 @@ export interface OAuthDeviceFlowRecord {
   message: string;
 }
 
+export type EmailActionStatus =
+  | "pending_contact_classification"
+  | "awaiting_approval"
+  | "sent"
+  | "blocked"
+  | "send_failed";
+
+export interface EmailActionRecord {
+  id: number;
+  contactQuery: string;
+  contactId: number | null;
+  recipientEmail: string | null;
+  subject: string;
+  body: string;
+  outlookDraftId: string | null;
+  outlookDraftWebLink: string | null;
+  status: EmailActionStatus;
+  riskLevel: PolicyRiskLevel | null;
+  policyReason: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  sentAt: string | null;
+}
+
 export interface ToolExecutionAuditRecord {
   messageId: string;
   toolName: string;
