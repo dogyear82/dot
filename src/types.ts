@@ -150,3 +150,47 @@ export interface PersonalityPresetRecord {
   sliderValues: Record<string, number>;
   isBuiltIn: boolean;
 }
+
+export type ContactTrustLevel = "trusted" | "approval_required" | "untrusted";
+export type ContactEndpointKind = "email" | "phone" | "discord";
+export type PolicyActionType = "email.send" | "sms.send" | "message.send";
+export type PolicyRiskLevel = "low" | "high";
+
+export interface ContactRecord {
+  id: number;
+  canonicalName: string;
+  trustLevel: ContactTrustLevel;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContactAliasRecord {
+  id: number;
+  contactId: number;
+  alias: string;
+  createdAt: string;
+}
+
+export interface ContactEndpointRecord {
+  id: number;
+  contactId: number;
+  kind: ContactEndpointKind;
+  value: string;
+  label: string | null;
+  createdAt: string;
+}
+
+export interface ContactProfile {
+  contact: ContactRecord;
+  aliases: ContactAliasRecord[];
+  endpoints: ContactEndpointRecord[];
+}
+
+export interface PendingContactClassificationRecord {
+  id: number;
+  actionType: PolicyActionType;
+  contactQuery: string;
+  conversationId: string;
+  createdAt: string;
+}

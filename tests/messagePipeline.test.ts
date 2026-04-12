@@ -541,3 +541,73 @@ test("message pipeline blocks owner-only commands for non-owner users", async ()
     cleanup();
   }
 });
+
+test("message pipeline routes policy commands and returns the unknown-contact classification prompt", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("policy command should not invoke chat");
+    },
+    async inferToolDecision() {
+      throw new Error("policy command should not invoke tool inference");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-policy-1",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "!policy check email.send Michelle",
+          addressedContent: "!policy check email.send Michelle",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-policy-1"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /contact classification required/i);
+    assert.match(outbound[0]?.payload.content ?? "", /!contact classify 1/i);
+    assert.equal(persistence.getPendingContactClassification(1)?.contactQuery, "Michelle");
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});

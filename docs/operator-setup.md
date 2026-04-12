@@ -254,6 +254,18 @@ The onboarding flow is expected to gather:
 - mention it in allowed server channels
 - use Discord commands or conversational configuration to update settings later
 
+### Contact and policy commands
+
+- `!contact list`
+- `!contact show <name>`
+- `!contact add <name> <trusted|approval_required|untrusted> [alias=...] [email=...] [phone=...] [discord=...]`
+- `!policy check <email.send|sms.send|message.send> <contact>`
+- `!policy pending`
+
+When a gated action references an unknown contact, Dot creates a pending classification and tells you to finish it with:
+
+- `!contact classify <pendingId> <trusted|approval_required|untrusted> [name=...] [alias=...] [email=...] [phone=...] [discord=...]`
+
 ### Non-owner behavior
 
 Other users in shared channels should only be able to:

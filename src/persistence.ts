@@ -8,12 +8,20 @@ import type { DotEvent } from "./events.js";
 import type {
   AccessAuditRecord,
   DiagnosticEventRecord,
+  ContactAliasRecord,
+  ContactEndpointKind,
+  ContactEndpointRecord,
+  ContactProfile,
+  ContactRecord,
+  ContactTrustLevel,
   ConversationTurnRecord,
   IncomingMessage,
   MailTriageDecisionRecord,
   OAuthDeviceFlowRecord,
   OAuthTokenRecord,
+  PendingContactClassificationRecord,
   PersonalityPresetRecord,
+  PolicyActionType,
   ReminderEvent,
   ReminderRecord,
   ServiceHealthSnapshotRecord,
@@ -45,6 +53,23 @@ export interface Persistence {
   listRecentDiagnosticEvents(limit: number): DiagnosticEventRecord[];
   upsertServiceHealthSnapshot(record: ServiceHealthSnapshotRecord): void;
   listServiceHealthSnapshots(): ServiceHealthSnapshotRecord[];
+  upsertContact(record: {
+    canonicalName: string;
+    trustLevel: ContactTrustLevel;
+    notes?: string | null;
+    aliases?: string[];
+    endpoints?: Array<{ kind: ContactEndpointKind; value: string; label?: string | null }>;
+  }): ContactProfile;
+  getContactByNameOrAlias(query: string): ContactProfile | null;
+  listContacts(): ContactProfile[];
+  createPendingContactClassification(record: {
+    actionType: PolicyActionType;
+    contactQuery: string;
+    conversationId: string;
+  }): PendingContactClassificationRecord;
+  listPendingContactClassifications(): PendingContactClassificationRecord[];
+  getPendingContactClassification(id: number): PendingContactClassificationRecord | null;
+  clearPendingContactClassification(id: number): void;
   getPersonalityPreset(name: string): PersonalityPresetRecord | null;
   listPersonalityPresets(): PersonalityPresetRecord[];
   getOAuthToken(provider: string): OAuthTokenRecord | null;
@@ -176,6 +201,45 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       slider_values TEXT NOT NULL,
       is_built_in INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      canonical_name TEXT NOT NULL,
+      canonical_name_normalized TEXT NOT NULL UNIQUE,
+      trust_level TEXT NOT NULL,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS contact_aliases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contact_id INTEGER NOT NULL,
+      alias TEXT NOT NULL,
+      alias_normalized TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS contact_endpoints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      contact_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      value TEXT NOT NULL,
+      value_normalized TEXT NOT NULL,
+      label TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(contact_id, kind, value_normalized),
+      FOREIGN KEY(contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS pending_contact_classifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action_type TEXT NOT NULL,
+      contact_query TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS oauth_tokens (
@@ -741,6 +805,149 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       updated_at = CURRENT_TIMESTAMP
   `);
 
+  const getContactByCanonicalNameStatement = db.prepare<[string], ContactRecord>(`
+    SELECT
+      id,
+      canonical_name AS canonicalName,
+      trust_level AS trustLevel,
+      notes,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM contacts
+    WHERE canonical_name_normalized = ?
+  `);
+
+  const getContactByAliasStatement = db.prepare<[string], ContactRecord>(`
+    SELECT
+      c.id,
+      c.canonical_name AS canonicalName,
+      c.trust_level AS trustLevel,
+      c.notes,
+      c.created_at AS createdAt,
+      c.updated_at AS updatedAt
+    FROM contact_aliases a
+    JOIN contacts c ON c.id = a.contact_id
+    WHERE a.alias_normalized = ?
+  `);
+
+  const listContactsStatement = db.prepare<[], ContactRecord>(`
+    SELECT
+      id,
+      canonical_name AS canonicalName,
+      trust_level AS trustLevel,
+      notes,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM contacts
+    ORDER BY canonical_name_normalized ASC
+  `);
+
+  const insertContactStatement = db.prepare(`
+    INSERT INTO contacts (
+      canonical_name,
+      canonical_name_normalized,
+      trust_level,
+      notes
+    ) VALUES (?, ?, ?, ?)
+  `);
+
+  const updateContactStatement = db.prepare(`
+    UPDATE contacts
+    SET canonical_name = ?,
+        canonical_name_normalized = ?,
+        trust_level = ?,
+        notes = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+
+  const deleteContactAliasesStatement = db.prepare(`
+    DELETE FROM contact_aliases
+    WHERE contact_id = ?
+  `);
+
+  const insertContactAliasStatement = db.prepare(`
+    INSERT INTO contact_aliases (
+      contact_id,
+      alias,
+      alias_normalized
+    ) VALUES (?, ?, ?)
+  `);
+
+  const listContactAliasesStatement = db.prepare<[number], ContactAliasRecord>(`
+    SELECT
+      id,
+      contact_id AS contactId,
+      alias,
+      created_at AS createdAt
+    FROM contact_aliases
+    WHERE contact_id = ?
+    ORDER BY alias_normalized ASC
+  `);
+
+  const deleteContactEndpointsStatement = db.prepare(`
+    DELETE FROM contact_endpoints
+    WHERE contact_id = ?
+  `);
+
+  const insertContactEndpointStatement = db.prepare(`
+    INSERT INTO contact_endpoints (
+      contact_id,
+      kind,
+      value,
+      value_normalized,
+      label
+    ) VALUES (?, ?, ?, ?, ?)
+  `);
+
+  const listContactEndpointsStatement = db.prepare<[number], ContactEndpointRecord>(`
+    SELECT
+      id,
+      contact_id AS contactId,
+      kind,
+      value,
+      label,
+      created_at AS createdAt
+    FROM contact_endpoints
+    WHERE contact_id = ?
+    ORDER BY kind ASC, value_normalized ASC
+  `);
+
+  const insertPendingContactClassificationStatement = db.prepare(`
+    INSERT INTO pending_contact_classifications (
+      action_type,
+      contact_query,
+      conversation_id
+    ) VALUES (?, ?, ?)
+  `);
+
+  const getPendingContactClassificationStatement = db.prepare<[number], PendingContactClassificationRecord>(`
+    SELECT
+      id,
+      action_type AS actionType,
+      contact_query AS contactQuery,
+      conversation_id AS conversationId,
+      created_at AS createdAt
+    FROM pending_contact_classifications
+    WHERE id = ?
+  `);
+
+  const listPendingContactClassificationsStatement = db.prepare<[], PendingContactClassificationRecord>(`
+    SELECT
+      id,
+      action_type AS actionType,
+      contact_query AS contactQuery,
+      conversation_id AS conversationId,
+      created_at AS createdAt
+    FROM pending_contact_classifications
+    ORDER BY id ASC
+  `);
+
+  const deletePendingContactClassificationStatement = db.prepare(`
+    DELETE FROM pending_contact_classifications
+    WHERE id = ?
+  `);
+
   const settings = createSettingsStore(db);
   upsertPersonalityPresetStatement.run(
     "blue_lady",
@@ -836,6 +1043,98 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     },
     listServiceHealthSnapshots() {
       return listServiceHealthSnapshotsStatement.all();
+    },
+    upsertContact(record) {
+      const transaction = db.transaction((input: {
+        canonicalName: string;
+        trustLevel: ContactTrustLevel;
+        notes?: string | null;
+        aliases?: string[];
+        endpoints?: Array<{ kind: ContactEndpointKind; value: string; label?: string | null }>;
+      }) => {
+        const normalizedCanonicalName = normalizeContactValue(input.canonicalName);
+        const existing = getContactByCanonicalNameStatement.get(normalizedCanonicalName);
+        const aliases = Array.from(
+          new Map(
+            (input.aliases ?? [])
+              .map((alias) => ({ value: alias.trim(), normalized: normalizeContactValue(alias) }))
+              .filter((alias) => alias.normalized.length > 0)
+              .map((alias) => [alias.normalized, alias])
+          ).values()
+        );
+        const endpoints = Array.from(
+          new Map(
+            (input.endpoints ?? [])
+              .map((endpoint) => ({
+                kind: endpoint.kind,
+                value: endpoint.value.trim(),
+                valueNormalized: normalizeContactValue(endpoint.value),
+                label: endpoint.label?.trim() || null
+              }))
+              .filter((endpoint) => endpoint.valueNormalized.length > 0)
+              .map((endpoint) => [`${endpoint.kind}:${endpoint.valueNormalized}`, endpoint])
+          ).values()
+        );
+
+        let contactId: number;
+        if (existing) {
+          contactId = existing.id;
+          updateContactStatement.run(input.canonicalName.trim(), normalizedCanonicalName, input.trustLevel, input.notes ?? null, contactId);
+        } else {
+          const result = insertContactStatement.run(
+            input.canonicalName.trim(),
+            normalizedCanonicalName,
+            input.trustLevel,
+            input.notes ?? null
+          );
+          contactId = Number(result.lastInsertRowid);
+        }
+
+        deleteContactAliasesStatement.run(contactId);
+        for (const alias of aliases) {
+          if (alias.normalized !== normalizedCanonicalName) {
+            insertContactAliasStatement.run(contactId, alias.value, alias.normalized);
+          }
+        }
+
+        deleteContactEndpointsStatement.run(contactId);
+        for (const endpoint of endpoints) {
+          insertContactEndpointStatement.run(contactId, endpoint.kind, endpoint.value, endpoint.valueNormalized, endpoint.label);
+        }
+
+        return loadContactProfile(contactId);
+      });
+
+      return transaction(record);
+    },
+    getContactByNameOrAlias(query) {
+      const normalizedQuery = normalizeContactValue(query);
+      if (!normalizedQuery) {
+        return null;
+      }
+
+      const contact = getContactByCanonicalNameStatement.get(normalizedQuery) ?? getContactByAliasStatement.get(normalizedQuery);
+      return contact ? loadContactProfile(contact.id) : null;
+    },
+    listContacts() {
+      return listContactsStatement.all().map((contact) => loadContactProfile(contact.id));
+    },
+    createPendingContactClassification(record) {
+      const result = insertPendingContactClassificationStatement.run(
+        record.actionType,
+        record.contactQuery.trim(),
+        record.conversationId
+      );
+      return getPendingContactClassificationStatement.get(Number(result.lastInsertRowid)) as PendingContactClassificationRecord;
+    },
+    listPendingContactClassifications() {
+      return listPendingContactClassificationsStatement.all();
+    },
+    getPendingContactClassification(id) {
+      return getPendingContactClassificationStatement.get(id) ?? null;
+    },
+    clearPendingContactClassification(id) {
+      deletePendingContactClassificationStatement.run(id);
     },
     getPersonalityPreset(name) {
       const row = getPersonalityPresetStatement.get(name);
@@ -973,6 +1272,30 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       db.close();
     }
   };
+
+  function loadContactProfile(contactId: number): ContactProfile {
+    const contact = db.prepare<[number], ContactRecord>(`
+      SELECT
+        id,
+        canonical_name AS canonicalName,
+        trust_level AS trustLevel,
+        notes,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM contacts
+      WHERE id = ?
+    `).get(contactId);
+
+    if (!contact) {
+      throw new Error(`Unknown contact id ${contactId}`);
+    }
+
+    return {
+      contact,
+      aliases: listContactAliasesStatement.all(contactId),
+      endpoints: listContactEndpointsStatement.all(contactId)
+    };
+  }
 }
 
 function ensureColumn(db: Database.Database, tableName: string, columnName: string, definition: string) {
@@ -982,4 +1305,8 @@ function ensureColumn(db: Database.Database, tableName: string, columnName: stri
   }
 
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+}
+
+function normalizeContactValue(value: string): string {
+  return value.trim().toLowerCase();
 }

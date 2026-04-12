@@ -3,6 +3,7 @@ import { SpanKind } from "@opentelemetry/api";
 
 import { evaluateAccess } from "./auth.js";
 import { appendPowerIndicator, type ChatService, type LlmRoute } from "./chat/modelRouter.js";
+import { handleContactCommand, handlePolicyCommand, isContactCommand, isPolicyCommand } from "./contacts.js";
 import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "./onboarding.js";
@@ -151,6 +152,32 @@ export function registerMessagePipeline(params: {
               if (isPersonalityCommand(content)) {
                 pipelineOutcome = "personality_command";
                 await publishReply(handlePersonalityCommand(persistence, content));
+                return;
+              }
+
+              if (isContactCommand(content)) {
+                pipelineOutcome = "contact_command";
+                await publishReply(
+                  handleContactCommand({
+                    content,
+                    conversationId: event.correlation.conversationId ?? "",
+                    persistence
+                  }),
+                  "none"
+                );
+                return;
+              }
+
+              if (isPolicyCommand(content)) {
+                pipelineOutcome = "policy_command";
+                await publishReply(
+                  handlePolicyCommand({
+                    content,
+                    conversationId: event.correlation.conversationId ?? "",
+                    persistence
+                  }),
+                  "none"
+                );
                 return;
               }
 
@@ -303,6 +330,8 @@ export function registerMessagePipeline(params: {
             if (
               isSettingsCommand(content) ||
               isPersonalityCommand(content) ||
+              isContactCommand(content) ||
+              isPolicyCommand(content) ||
               isReminderCommand(content) ||
               isCalendarCommand(content)
             ) {
@@ -387,6 +416,14 @@ function normalizeExplicitToolName(content: string): string {
 
   if (content.startsWith("!personality")) {
     return "personality";
+  }
+
+  if (content.startsWith("!contact")) {
+    return "contact";
+  }
+
+  if (content.startsWith("!policy")) {
+    return "policy";
   }
 
   return "explicit-command";
