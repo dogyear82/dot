@@ -10,6 +10,7 @@ import type {
   DiagnosticEventRecord,
   ConversationTurnRecord,
   IncomingMessage,
+  MailTriageDecisionRecord,
   OAuthDeviceFlowRecord,
   OAuthTokenRecord,
   PersonalityPresetRecord,
@@ -27,6 +28,8 @@ export interface Persistence {
   getWorkerState(key: string): string | null;
   setWorkerState(key: string, value: string): void;
   clearWorkerState(key: string): void;
+  getMailTriageDecision(messageId: string): MailTriageDecisionRecord | null;
+  saveMailTriageDecision(record: MailTriageDecisionRecord): void;
   saveConversationTurn(record: {
     conversationId: string;
     role: "user" | "assistant";
@@ -75,6 +78,19 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS mail_triage_audit (
+      message_id TEXT PRIMARY KEY,
+      sender_email TEXT,
+      outcome TEXT NOT NULL,
+      source TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      route TEXT NOT NULL,
+      source_folder_id TEXT,
+      destination_folder_id TEXT,
+      triaged_at TEXT NOT NULL,
+      moved_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS normalized_messages (
@@ -273,6 +289,58 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
   const clearWorkerStateStatement = db.prepare(`
     DELETE FROM worker_state
     WHERE key = ?
+  `);
+
+  const getMailTriageDecisionStatement = db.prepare<[string], MailTriageDecisionRecord>(`
+    SELECT
+      message_id AS messageId,
+      sender_email AS senderEmail,
+      outcome,
+      source,
+      reason,
+      route,
+      source_folder_id AS sourceFolderId,
+      destination_folder_id AS destinationFolderId,
+      triaged_at AS triagedAt,
+      moved_at AS movedAt
+    FROM mail_triage_audit
+    WHERE message_id = ?
+  `);
+
+  const saveMailTriageDecisionStatement = db.prepare(`
+    INSERT INTO mail_triage_audit (
+      message_id,
+      sender_email,
+      outcome,
+      source,
+      reason,
+      route,
+      source_folder_id,
+      destination_folder_id,
+      triaged_at,
+      moved_at
+    ) VALUES (
+      @messageId,
+      @senderEmail,
+      @outcome,
+      @source,
+      @reason,
+      @route,
+      @sourceFolderId,
+      @destinationFolderId,
+      @triagedAt,
+      @movedAt
+    )
+    ON CONFLICT(message_id) DO UPDATE SET
+      sender_email = excluded.sender_email,
+      outcome = excluded.outcome,
+      source = excluded.source,
+      reason = excluded.reason,
+      route = excluded.route,
+      source_folder_id = excluded.source_folder_id,
+      destination_folder_id = excluded.destination_folder_id,
+      triaged_at = excluded.triaged_at,
+      moved_at = excluded.moved_at
   `);
 
   const accessAuditStatement = db.prepare(`
@@ -717,6 +785,12 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     },
     clearWorkerState(key) {
       clearWorkerStateStatement.run(key);
+    },
+    getMailTriageDecision(messageId) {
+      return getMailTriageDecisionStatement.get(messageId) ?? null;
+    },
+    saveMailTriageDecision(record) {
+      saveMailTriageDecisionStatement.run(record);
     },
     saveConversationTurn(record) {
       saveConversationTurnStatement.run({

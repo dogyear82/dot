@@ -40,7 +40,7 @@ export interface OutlookMailDeltaResult {
 }
 
 export interface OutlookMailClient {
-  syncInboxDelta(deltaCursor?: string | null): Promise<OutlookMailDeltaResult>;
+  syncInboxDelta(deltaCursor?: string | null, options?: { receivedAfter?: string | null }): Promise<OutlookMailDeltaResult>;
   ensureFolder(displayName: string): Promise<OutlookMailFolder>;
   moveMessageToFolder(messageId: string, destinationFolderId: string): Promise<void>;
 }
@@ -52,24 +52,30 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
   constructor(
     private readonly config: Pick<
       AppConfig,
-      "OUTLOOK_ACCESS_TOKEN" | "OUTLOOK_GRAPH_BASE_URL" | "OUTLOOK_CLIENT_ID" | "OUTLOOK_TENANT_ID" | "OUTLOOK_OAUTH_SCOPES"
+      | "OUTLOOK_ACCESS_TOKEN"
+      | "OUTLOOK_GRAPH_BASE_URL"
+      | "OUTLOOK_CLIENT_ID"
+      | "OUTLOOK_TENANT_ID"
+      | "OUTLOOK_OAUTH_SCOPES"
+      | "OUTLOOK_REQUEST_TIMEOUT_MS"
     >,
     private readonly oauthClient?: MicrosoftOutlookOAuthClient
   ) {}
 
-  async syncInboxDelta(deltaCursor?: string | null): Promise<OutlookMailDeltaResult> {
+  async syncInboxDelta(deltaCursor?: string | null, options: { receivedAfter?: string | null } = {}): Promise<OutlookMailDeltaResult> {
     const accessToken = await this.resolveAccessToken();
     let url = deltaCursor
       ? new URL(deltaCursor)
-      : new URL(
-          `${this.config.OUTLOOK_GRAPH_BASE_URL}/me/mailFolders/inbox/messages/delta?$select=id,subject,from,receivedDateTime,bodyPreview,parentFolderId,webLink`
-        );
+      : buildInitialDeltaUrl(this.config.OUTLOOK_GRAPH_BASE_URL, options.receivedAfter ?? null);
     const messages: OutlookMailMessage[] = [];
     let deltaLink: string | null = null;
 
     while (true) {
       const payload = await this.fetchJson<GraphListResponse<GraphMessage>>(url, accessToken, {
-        deltaCursorRequest: Boolean(deltaCursor)
+        deltaCursorRequest: Boolean(deltaCursor),
+        headers: {
+          Prefer: "odata.maxpagesize=100"
+        }
       });
 
       for (const message of payload.value ?? []) {
@@ -121,6 +127,7 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json"
       },
+      signal: createTimeoutSignal(this.config.OUTLOOK_REQUEST_TIMEOUT_MS),
       body: JSON.stringify({ displayName })
     });
 
@@ -144,6 +151,7 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json"
       },
+      signal: createTimeoutSignal(this.config.OUTLOOK_REQUEST_TIMEOUT_MS),
       body: JSON.stringify({ destinationId: destinationFolderId })
     });
 
@@ -185,12 +193,14 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
   private async fetchJson<TPayload>(
     url: URL,
     accessToken: string,
-    options: { deltaCursorRequest?: boolean } = {}
+    options: { deltaCursorRequest?: boolean; headers?: Record<string, string> } = {}
   ): Promise<TPayload> {
     const response = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
+        Authorization: `Bearer ${accessToken}`,
+        ...(options.headers ?? {})
+      },
+      signal: createTimeoutSignal(this.config.OUTLOOK_REQUEST_TIMEOUT_MS)
     });
 
     if (!response.ok) {
@@ -204,6 +214,20 @@ export class MicrosoftGraphOutlookMailClient implements OutlookMailClient {
 
     return (await response.json()) as TPayload;
   }
+}
+
+function buildInitialDeltaUrl(baseUrl: string, receivedAfter: string | null): URL {
+  const url = new URL(`${baseUrl}/me/mailFolders/inbox/messages/delta`);
+  url.searchParams.set("$select", "id,subject,from,receivedDateTime,bodyPreview,parentFolderId,webLink");
+  url.searchParams.set("$orderby", "receivedDateTime desc");
+  if (receivedAfter) {
+    url.searchParams.set("$filter", `receivedDateTime ge ${receivedAfter}`);
+  }
+  return url;
+}
+
+function createTimeoutSignal(timeoutMs: number): AbortSignal {
+  return AbortSignal.timeout(timeoutMs);
 }
 
 function mapGraphMessage(message: GraphMessage): OutlookMailMessage | null {

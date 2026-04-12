@@ -48,6 +48,40 @@ test("access audit persists transport and conversation id", () => {
   }
 });
 
+test("mail triage audit persists outcome and destination metadata", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    persistence.saveMailTriageDecision({
+      messageId: "mail-1",
+      senderEmail: "trusted@example.com",
+      outcome: "dot_approved",
+      source: "whitelist",
+      reason: "Trusted sender whitelist match",
+      route: "deterministic",
+      sourceFolderId: "inbox",
+      destinationFolderId: "folder-approved",
+      triagedAt: "2026-04-11T00:00:00.000Z",
+      movedAt: "2026-04-11T00:00:01.000Z"
+    });
+
+    assert.deepEqual(persistence.getMailTriageDecision("mail-1"), {
+      messageId: "mail-1",
+      senderEmail: "trusted@example.com",
+      outcome: "dot_approved",
+      source: "whitelist",
+      reason: "Trusted sender whitelist match",
+      route: "deterministic",
+      sourceFolderId: "inbox",
+      destinationFolderId: "folder-approved",
+      triagedAt: "2026-04-11T00:00:00.000Z",
+      movedAt: "2026-04-11T00:00:01.000Z"
+    });
+  } finally {
+    cleanup();
+  }
+});
+
 test("listRecentNormalizedMessages preserves millisecond ordering within the same second", () => {
   const { persistence, cleanup } = createPersistence();
 

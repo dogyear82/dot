@@ -3,6 +3,18 @@ import assert from "node:assert/strict";
 
 import { MicrosoftGraphOutlookMailClient } from "../src/outlookMail.js";
 
+function createMailConfig(overrides: Record<string, unknown> = {}) {
+  return {
+    OUTLOOK_ACCESS_TOKEN: "token",
+    OUTLOOK_CLIENT_ID: "",
+    OUTLOOK_TENANT_ID: "common",
+    OUTLOOK_OAUTH_SCOPES: "scope",
+    OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0",
+    OUTLOOK_REQUEST_TIMEOUT_MS: 20000,
+    ...overrides
+  };
+}
+
 test("Outlook mail delta follows next links and returns only non-removed messages", async () => {
   const requests: string[] = [];
   const originalFetch = globalThis.fetch;
@@ -52,20 +64,12 @@ test("Outlook mail delta follows next links and returns only non-removed message
   }) as typeof fetch;
 
   try {
-    const client = new MicrosoftGraphOutlookMailClient(
-      {
-        OUTLOOK_ACCESS_TOKEN: "token",
-        OUTLOOK_CLIENT_ID: "",
-        OUTLOOK_TENANT_ID: "common",
-        OUTLOOK_OAUTH_SCOPES: "scope",
-        OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
-      },
-      undefined
-    );
+    const client = new MicrosoftGraphOutlookMailClient(createMailConfig(), undefined);
 
     const result = await client.syncInboxDelta();
 
     assert.equal(requests.length, 2);
+    assert.doesNotMatch(requests[0] ?? "", /\$filter=/);
     assert.equal(result.deltaCursor, "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=xyz");
     assert.deepEqual(
       result.messages.map((message) => ({ id: message.id, subject: message.subject, from: message.from })),
@@ -74,6 +78,33 @@ test("Outlook mail delta follows next links and returns only non-removed message
         { id: "m2", subject: "bye", from: "b@example.com" }
       ]
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Outlook mail delta scopes the initial baseline to the provided lookback timestamp", async () => {
+  const requests: string[] = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async (input: URL | RequestInfo) => {
+    requests.push(String(input));
+    return new Response(
+      JSON.stringify({
+        value: [],
+        "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=xyz"
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }) as typeof fetch;
+
+  try {
+    const client = new MicrosoftGraphOutlookMailClient(createMailConfig(), undefined);
+    await client.syncInboxDelta(null, { receivedAfter: "2026-04-05T00:00:00.000Z" });
+
+    assert.equal(requests.length, 1);
+    assert.match(requests[0] ?? "", /%24filter=receivedDateTime\+ge\+2026-04-05T00%3A00%3A00.000Z/);
+    assert.match(requests[0] ?? "", /%24orderby=receivedDateTime\+desc/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -94,16 +125,7 @@ test("Outlook mail ensureFolder returns an existing folder when present", async 
   }) as typeof fetch;
 
   try {
-    const client = new MicrosoftGraphOutlookMailClient(
-      {
-        OUTLOOK_ACCESS_TOKEN: "token",
-        OUTLOOK_CLIENT_ID: "",
-        OUTLOOK_TENANT_ID: "common",
-        OUTLOOK_OAUTH_SCOPES: "scope",
-        OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
-      },
-      undefined
-    );
+    const client = new MicrosoftGraphOutlookMailClient(createMailConfig(), undefined);
 
     const folder = await client.ensureFolder("Dot Approved");
     assert.deepEqual(folder, { id: "folder-1", displayName: "Dot Approved" });
@@ -135,16 +157,7 @@ test("Outlook mail ensureFolder creates the folder when missing", async () => {
   }) as typeof fetch;
 
   try {
-    const client = new MicrosoftGraphOutlookMailClient(
-      {
-        OUTLOOK_ACCESS_TOKEN: "token",
-        OUTLOOK_CLIENT_ID: "",
-        OUTLOOK_TENANT_ID: "common",
-        OUTLOOK_OAUTH_SCOPES: "scope",
-        OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
-      },
-      undefined
-    );
+    const client = new MicrosoftGraphOutlookMailClient(createMailConfig(), undefined);
 
     const folder = await client.ensureFolder("Dot Approved");
     assert.deepEqual(folder, { id: "folder-2", displayName: "Dot Approved" });
@@ -184,16 +197,7 @@ test("Outlook mail ensureFolder follows pagination before creating a folder", as
   }) as typeof fetch;
 
   try {
-    const client = new MicrosoftGraphOutlookMailClient(
-      {
-        OUTLOOK_ACCESS_TOKEN: "token",
-        OUTLOOK_CLIENT_ID: "",
-        OUTLOOK_TENANT_ID: "common",
-        OUTLOOK_OAUTH_SCOPES: "scope",
-        OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
-      },
-      undefined
-    );
+    const client = new MicrosoftGraphOutlookMailClient(createMailConfig(), undefined);
 
     const folder = await client.ensureFolder("Dot Approved");
     assert.deepEqual(folder, { id: "folder-9", displayName: "Dot Approved" });
@@ -208,13 +212,11 @@ test("Outlook mail ensureFolder follows pagination before creating a folder", as
 
 test("Outlook mail requires reauthorization when stored OAuth scopes do not include mail access", async () => {
   const client = new MicrosoftGraphOutlookMailClient(
-    {
+    createMailConfig({
       OUTLOOK_ACCESS_TOKEN: "",
       OUTLOOK_CLIENT_ID: "client-id",
-      OUTLOOK_TENANT_ID: "common",
-      OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite",
-      OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
-    },
+      OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite"
+    }),
     {
       async getValidAccessToken() {
         return "token";
@@ -248,13 +250,11 @@ test("Outlook mail still works with legacy OUTLOOK_ACCESS_TOKEN fallback when no
 
   try {
     const client = new MicrosoftGraphOutlookMailClient(
-      {
+      createMailConfig({
         OUTLOOK_ACCESS_TOKEN: "",
         OUTLOOK_CLIENT_ID: "client-id",
-        OUTLOOK_TENANT_ID: "common",
-        OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite",
-        OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
-      },
+        OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite"
+      }),
       {
         async getValidAccessToken() {
           return "legacy-token";
@@ -293,16 +293,7 @@ test("Outlook mail move sends the Graph move request", async () => {
   }) as typeof fetch;
 
   try {
-    const client = new MicrosoftGraphOutlookMailClient(
-      {
-        OUTLOOK_ACCESS_TOKEN: "token",
-        OUTLOOK_CLIENT_ID: "",
-        OUTLOOK_TENANT_ID: "common",
-        OUTLOOK_OAUTH_SCOPES: "scope",
-        OUTLOOK_GRAPH_BASE_URL: "https://graph.microsoft.com/v1.0"
-      },
-      undefined
-    );
+    const client = new MicrosoftGraphOutlookMailClient(createMailConfig(), undefined);
 
     await client.moveMessageToFolder("msg-1", "folder-1");
 
