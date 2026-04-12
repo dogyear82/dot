@@ -1,6 +1,87 @@
 import type { ConversationTurnRecord, IncomingMessage } from "../types.js";
 
-const RECENT_ASSISTANT_CONTEXT_WINDOW_MS = 5 * 60 * 1000;
+const RECENT_ASSISTANT_CONTEXT_WINDOW_MS = 2 * 60 * 1000;
+
+export interface AddressednessDecision {
+  addressed: boolean;
+  reason:
+    | "direct_message"
+    | "explicit_mention"
+    | "explicit_command"
+    | "plain_text_direct_address"
+    | "no_recent_assistant_turn"
+    | "recent_turn_not_assistant"
+    | "recent_turn_for_different_participant"
+    | "invalid_timestamp"
+    | "follow_up_context_stale"
+    | "intervening_other_participant_message"
+    | "recent_message_not_addressed_to_dot"
+    | "follow_up_context_preserved";
+}
+
+export function evaluateAddressedness(params: {
+  message: IncomingMessage;
+  defaultChannelPolicy: string | null;
+  recentConversation: ConversationTurnRecord[];
+  recentMessages: IncomingMessage[];
+}): AddressednessDecision {
+  const { message, recentConversation, recentMessages } = params;
+
+  if (message.isDirectMessage) {
+    return { addressed: true, reason: "direct_message" };
+  }
+
+  if (message.mentionedBot) {
+    return { addressed: true, reason: "explicit_mention" };
+  }
+
+  if (looksLikeExplicitCommand(message.content)) {
+    return { addressed: true, reason: "explicit_command" };
+  }
+
+  if (looksLikePlainTextDirectAddress(normalizeContent(message.content))) {
+    return { addressed: true, reason: "plain_text_direct_address" };
+  }
+
+  const mostRecentTurn = recentConversation.at(-1);
+  if (!mostRecentTurn) {
+    return { addressed: false, reason: "no_recent_assistant_turn" };
+  }
+
+  if (mostRecentTurn.role !== "assistant") {
+    return { addressed: false, reason: "recent_turn_not_assistant" };
+  }
+
+  if (mostRecentTurn.participantActorId == null || mostRecentTurn.participantActorId !== message.authorId) {
+    return { addressed: false, reason: "recent_turn_for_different_participant" };
+  }
+
+  const currentCreatedAt = Date.parse(message.createdAt);
+  const recentCreatedAt = Date.parse(mostRecentTurn.createdAt);
+  if (Number.isNaN(currentCreatedAt) || Number.isNaN(recentCreatedAt)) {
+    return { addressed: false, reason: "invalid_timestamp" };
+  }
+
+  if (currentCreatedAt - recentCreatedAt > RECENT_ASSISTANT_CONTEXT_WINDOW_MS) {
+    return { addressed: false, reason: "follow_up_context_stale" };
+  }
+
+  const priorInboundMessages = recentMessages.filter((recentMessage) => recentMessage.id !== message.id);
+  const mostRecentPriorInbound = priorInboundMessages[0];
+  if (!mostRecentPriorInbound) {
+    return { addressed: false, reason: "recent_message_not_addressed_to_dot" };
+  }
+
+  if (mostRecentPriorInbound.authorId !== message.authorId) {
+    return { addressed: false, reason: "intervening_other_participant_message" };
+  }
+
+  if (!isMessageAddressedExplicitly(mostRecentPriorInbound)) {
+    return { addressed: false, reason: "recent_message_not_addressed_to_dot" };
+  }
+
+  return { addressed: true, reason: "follow_up_context_preserved" };
+}
 
 export function shouldTreatOwnerMessageAsAddressed(params: {
   message: IncomingMessage;
@@ -8,44 +89,16 @@ export function shouldTreatOwnerMessageAsAddressed(params: {
   recentConversation: ConversationTurnRecord[];
   recentMessages: IncomingMessage[];
 }): boolean {
-  const { message, recentConversation, recentMessages } = params;
+  return evaluateAddressedness(params).addressed;
+}
 
-  if (message.isDirectMessage || message.mentionedBot) {
-    return true;
-  }
-
-  if (looksLikeExplicitCommand(message.content)) {
-    return true;
-  }
-
-  if (looksLikePlainTextDirectAddress(normalizeContent(message.content))) {
-    return true;
-  }
-
-  const mostRecentTurn = recentConversation.at(-1);
-  if (!mostRecentTurn || mostRecentTurn.role !== "assistant") {
-    return false;
-  }
-
-  if (mostRecentTurn.participantActorId == null || mostRecentTurn.participantActorId !== message.authorId) {
-    return false;
-  }
-
-  const currentCreatedAt = Date.parse(message.createdAt);
-  const recentCreatedAt = Date.parse(mostRecentTurn.createdAt);
-  if (Number.isNaN(currentCreatedAt) || Number.isNaN(recentCreatedAt)) {
-    return false;
-  }
-
-  const mostRecentPriorInbound = recentMessages.find((recentMessage) => recentMessage.id !== message.id);
-  if (mostRecentPriorInbound) {
-    const priorInboundCreatedAt = Date.parse(mostRecentPriorInbound.createdAt);
-    if (!Number.isNaN(priorInboundCreatedAt) && priorInboundCreatedAt > recentCreatedAt) {
-      return false;
-    }
-  }
-
-  return currentCreatedAt - recentCreatedAt <= RECENT_ASSISTANT_CONTEXT_WINDOW_MS;
+function isMessageAddressedExplicitly(message: IncomingMessage): boolean {
+  return (
+    message.isDirectMessage ||
+    message.mentionedBot ||
+    looksLikeExplicitCommand(message.content) ||
+    looksLikePlainTextDirectAddress(normalizeContent(message.content))
+  );
 }
 
 function looksLikePlainTextDirectAddress(content: string): boolean {

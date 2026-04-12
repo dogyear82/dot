@@ -54,6 +54,8 @@ export interface AccessAuditRecord {
   decision: "owner-allowed" | "non-owner-routed";
   transport: string;
   conversationId: string;
+  addressed: boolean;
+  addressedReason: string;
 }
 
 export interface ReminderRecord {
