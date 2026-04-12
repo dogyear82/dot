@@ -206,13 +206,23 @@ export function buildPersonalityPrompt(settingsStore: SettingsStore): string {
   const quirkInstructions = state.activeProfile.quirks
     .map((quirk) => describeQuirk(quirk.label, state.quirkRates[quirk.key] ?? quirk.defaultRate, quirk.instruction))
     .filter(Boolean);
+  const exampleInstructions = state.activeProfile.examples
+    ? [
+        `[Approved Phrases] ${state.activeProfile.examples.approvedPhrases.join(" | ")}`,
+        `[Avoided Phrases] ${state.activeProfile.examples.avoidedPhrases.join(" | ")}`,
+        `[Dialogue Examples] ${state.activeProfile.examples.dialogues
+          .map((dialogue) => `${dialogue.situation}: user="${dialogue.user}" dot="${dialogue.dot}"`)
+          .join(" || ")}`
+      ]
+    : [];
 
   return [
     `[Profile] ${state.activeProfile.name}: ${state.activeProfile.summary}`,
     `[Identity] ${state.activeProfile.identity.selfConcept} ${state.activeProfile.identity.anchors.join(" ")}`,
     `[Voice] ${state.activeProfile.voice.style.join(" ")} Do: ${state.activeProfile.voice.dos.join(" ")} Don't: ${state.activeProfile.voice.donts.join(" ")}`,
     `[Behavior] ${state.activeProfile.behavior.rules.join(" ")} ${traitInstructions.join(" ")}`,
-    quirkInstructions.length > 0 ? `[Quirks] ${quirkInstructions.join(" ")}` : ""
+    quirkInstructions.length > 0 ? `[Quirks] ${quirkInstructions.join(" ")}` : "",
+    ...exampleInstructions
   ]
     .filter(Boolean)
     .join("\n\n");
