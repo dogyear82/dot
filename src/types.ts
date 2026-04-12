@@ -223,6 +223,15 @@ export interface PersonalityProfileRecord {
     sliderValues: Record<PersonalityTraitValueKey, number>;
   };
   quirks: PersonalityQuirkDefinition[];
+  examples?: {
+    approvedPhrases: string[];
+    avoidedPhrases: string[];
+    dialogues: Array<{
+      situation: string;
+      user: string;
+      dot: string;
+    }>;
+  };
   isBuiltIn: boolean;
 }
 

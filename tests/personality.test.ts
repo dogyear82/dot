@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { applyPersonalityProfile, blueLadyPreset, buildPersonalityPrompt, handlePersonalityCommand } from "../src/personality.js";
 import { initializePersistence } from "../src/persistence.js";
+import { getBuiltInPersonalityProfile } from "../src/personalityProfiles.js";
 
 function createPersistence() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-personality-"));
@@ -28,6 +29,7 @@ test("personality profile list includes built-in profiles", () => {
     const reply = handlePersonalityCommand(persistence, "!personality profile list");
     assert.match(reply, /blue_lady/);
     assert.match(reply, /steady_hand/);
+    assert.match(reply, /auntie_dot/);
   } finally {
     cleanup();
   }
@@ -83,6 +85,59 @@ test("personality profile apply switches active profile and resets defaults", ()
     assert.match(reply, /Applied personality profile `steady_hand`/);
     assert.equal(persistence.settings.get("personality.activeProfile"), "steady_hand");
     assert.equal(persistence.settings.get("personality.warmth"), "62");
+  } finally {
+    cleanup();
+  }
+});
+
+test("auntie_dot profile encodes the agreed familial southern persona and quirk", () => {
+  const profile = getBuiltInPersonalityProfile("auntie_dot");
+
+  assert.ok(profile);
+  assert.match(profile.summary, /Southern auntie/i);
+  assert.match(profile.identity.selfConcept, /Tan Nguyen/i);
+  assert.match(profile.identity.selfConcept, /familial rather than romantic/i);
+  assert.ok(profile.voice.dos.some((entry) => /comfort first/i.test(entry)));
+  assert.ok(profile.voice.dos.some((entry) => /final decision rests with them/i.test(entry)));
+  assert.ok(profile.voice.donts.some((entry) => /baby/i.test(entry)));
+  assert.equal(profile.quirks[0]?.key, "accidental_double_entendre");
+  assert.equal(profile.quirks[0]?.defaultRate, 8);
+});
+
+test("auntie_dot prompt includes approved phrases, anti-patterns, and representative dialogues", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const reply = handlePersonalityCommand(persistence, "!personality profile apply auntie_dot");
+    assert.match(reply, /Applied personality profile `auntie_dot`/);
+
+    const prompt = buildPersonalityPrompt(persistence.settings);
+    assert.match(prompt, /\[Profile\] auntie_dot/);
+    assert.match(prompt, /gentle older Southern woman/i);
+    assert.match(prompt, /dogyear/i);
+    assert.match(prompt, /costlytoaster/i);
+    assert.match(prompt, /\[Approved Phrases\]/);
+    assert.match(prompt, /Well hey there, deary\./);
+    assert.match(prompt, /\[Avoided Phrases\]/);
+    assert.match(prompt, /How can I assist you today\?/);
+    assert.match(prompt, /\[Dialogue Examples\]/);
+    assert.match(prompt, /casual greeting/i);
+    assert.match(prompt, /accidental_double_entendre 8\/100/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("existing non-auntie profiles do not pick up auntie-specific example scaffolding", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    handlePersonalityCommand(persistence, "!personality profile apply blue_lady");
+    const prompt = buildPersonalityPrompt(persistence.settings);
+
+    assert.doesNotMatch(prompt, /\[Approved Phrases\]/);
+    assert.doesNotMatch(prompt, /\[Avoided Phrases\]/);
+    assert.doesNotMatch(prompt, /\[Dialogue Examples\]/);
   } finally {
     cleanup();
   }
