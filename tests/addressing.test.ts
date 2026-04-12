@@ -200,6 +200,121 @@ test("addressedness requires the previous inbound message to have been explicitl
   );
 });
 
+test("addressedness preserves a same-participant follow-up after an explicit kickoff", () => {
+  assert.equal(
+    shouldTreatOwnerMessageAsAddressed({
+      message: message({ id: "msg-current", createdAt: "2026-04-09T00:01:45.000Z", content: "how are you?" }),
+      defaultChannelPolicy: "mention-only",
+      recentConversation: [turn({ createdAt: "2026-04-09T00:01:00.000Z", content: "Well hey there, deary." })],
+      recentMessages: [
+        message({
+          id: "msg-current",
+          createdAt: "2026-04-09T00:01:45.000Z",
+          content: "how are you?"
+        }),
+        message({
+          id: "msg-kickoff",
+          createdAt: "2026-04-09T00:00:30.000Z",
+          content: "Dot hi"
+        })
+      ]
+    }),
+    true
+  );
+});
+
+test("addressedness can continue a conversation even if the immediately previous inbound was not explicit", () => {
+  assert.equal(
+    shouldTreatOwnerMessageAsAddressed({
+      message: message({ id: "msg-current", createdAt: "2026-04-09T00:02:30.000Z", content: "what about tomorrow?" }),
+      defaultChannelPolicy: "mention-only",
+      recentConversation: [turn({ createdAt: "2026-04-09T00:02:00.000Z", content: "I'm doing alright, sweetie." })],
+      recentMessages: [
+        message({
+          id: "msg-current",
+          createdAt: "2026-04-09T00:02:30.000Z",
+          content: "what about tomorrow?"
+        }),
+        message({
+          id: "msg-follow-up",
+          createdAt: "2026-04-09T00:01:30.000Z",
+          content: "how are you?"
+        }),
+        message({
+          id: "msg-kickoff",
+          createdAt: "2026-04-09T00:00:30.000Z",
+          content: "Dot hi"
+        })
+      ]
+    }),
+    true
+  );
+});
+
+test("addressedness can use the most recent assistant turn for the same participant", () => {
+  assert.equal(
+    shouldTreatOwnerMessageAsAddressed({
+      message: message({ id: "msg-current", createdAt: "2026-04-09T00:02:10.000Z", content: "how are you?" }),
+      defaultChannelPolicy: "mention-only",
+      recentConversation: [
+        turn({ id: 1, participantActorId: "owner-1", createdAt: "2026-04-09T00:01:00.000Z", content: "Well hey there, deary." }),
+        turn({ id: 2, participantActorId: "user-2", createdAt: "2026-04-09T00:01:45.000Z", content: "Hello there." })
+      ],
+      recentMessages: [
+        message({
+          id: "msg-current",
+          createdAt: "2026-04-09T00:02:10.000Z",
+          content: "how are you?"
+        }),
+        message({
+          id: "msg-kickoff",
+          createdAt: "2026-04-09T00:00:30.000Z",
+          content: "Dot hi"
+        })
+      ]
+    }),
+    true
+  );
+});
+
+test("addressedness ignores Dot's own reply message while preserving same-participant follow-up continuity", () => {
+  assert.equal(
+    shouldTreatOwnerMessageAsAddressed({
+      message: message({ id: "msg-current", createdAt: "2026-04-09T00:01:45.000Z", content: "how are you?" }),
+      defaultChannelPolicy: "mention-only",
+      recentConversation: [
+        turn({
+          id: 1,
+          participantActorId: "owner-1",
+          sourceMessageId: "msg-dot-reply",
+          createdAt: "2026-04-09T00:01:00.000Z",
+          content: "Well hey there, deary."
+        })
+      ],
+      recentMessages: [
+        message({
+          id: "msg-current",
+          createdAt: "2026-04-09T00:01:45.000Z",
+          content: "how are you?"
+        }),
+        message({
+          id: "msg-dot-reply",
+          authorId: "dot-1",
+          authorUsername: "Dot",
+          createdAt: "2026-04-09T00:01:00.000Z",
+          content: "Well hey there, deary."
+        }),
+        message({
+          id: "msg-kickoff",
+          createdAt: "2026-04-09T00:00:30.000Z",
+          content: "Dot hi"
+        })
+      ]
+    }),
+    true
+  );
+});
+
 test("addressedness diagnostics return a stable reason for ignored follow-ups", () => {
   const decision = evaluateAddressedness({
     message: message({ id: "msg-current", createdAt: "2026-04-09T00:01:30.000Z", content: "and tomorrow?" }),
