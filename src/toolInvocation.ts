@@ -2,7 +2,9 @@ import type { Persistence } from "./persistence.js";
 import { SpanKind } from "@opentelemetry/api";
 import { withSpan } from "./observability.js";
 import { handleCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
+import { createPolicyEngine, type PolicyDecision } from "./policyEngine.js";
 import { handleReminderCommand } from "./reminders.js";
+import type { PolicyActionType } from "./types.js";
 
 export type ExplicitToolName =
   | "reminder.add"
@@ -29,6 +31,73 @@ export type ToolDecision =
       args: Record<string, string | number>;
     };
 
+export interface ToolExecutionResult {
+  toolName: ExplicitToolName;
+  status: "executed" | "clarify" | "requires_confirmation" | "blocked";
+  reply: string;
+  policyDecision?: PolicyDecision;
+}
+
+interface ToolDefinition {
+  toolName: ExplicitToolName;
+  execute(params: {
+    calendarClient: OutlookCalendarClient;
+    args: Record<string, string | number>;
+    persistence: Persistence;
+  }): Promise<string> | string;
+  policy?: {
+    actionType: PolicyActionType;
+    getContactQuery(args: Record<string, string | number>): string | null;
+  };
+}
+
+const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
+  "reminder.add": {
+    toolName: "reminder.add",
+    execute({ args, persistence }) {
+      const duration = getRequiredStringArg(args, "duration");
+      const message = getRequiredStringArg(args, "message");
+      return handleReminderCommand(persistence, `!reminder add ${duration} ${message}`);
+    }
+  },
+  "reminder.show": {
+    toolName: "reminder.show",
+    execute({ persistence }) {
+      return handleReminderCommand(persistence, "!reminder show");
+    }
+  },
+  "reminder.ack": {
+    toolName: "reminder.ack",
+    execute({ args, persistence }) {
+      const id = getRequiredNumericLikeArg(args, "id");
+      return handleReminderCommand(persistence, `!reminder ack ${id}`);
+    }
+  },
+  "calendar.show": {
+    toolName: "calendar.show",
+    execute({ calendarClient, persistence }) {
+      return handleCalendarCommand({
+        calendarClient,
+        content: "!calendar show",
+        persistence
+      });
+    }
+  },
+  "calendar.remind": {
+    toolName: "calendar.remind",
+    execute({ calendarClient, args, persistence }) {
+      const index = getRequiredNumericLikeArg(args, "index");
+      const leadTime = getOptionalStringArg(args, "leadTime");
+      const content = leadTime ? `!calendar remind ${index} ${leadTime}` : `!calendar remind ${index}`;
+      return handleCalendarCommand({
+        calendarClient,
+        content,
+        persistence
+      });
+    }
+  }
+};
+
 export function inferDeterministicToolDecision(userMessage: string): ToolDecision | null {
   const normalized = normalizeUserMessage(userMessage);
 
@@ -39,6 +108,129 @@ export function inferDeterministicToolDecision(userMessage: string): ToolDecisio
       reason: "clear calendar-view intent from deterministic phrase matching",
       args: {}
     };
+  }
+
+  return null;
+}
+
+export function parseExplicitToolDecision(content: string): ToolDecision | null {
+  const parts = content.trim().split(/\s+/);
+
+  if (parts[0] === "!remind") {
+    if (parts.length < 3) {
+      return {
+        decision: "clarify",
+        toolName: "reminder.add",
+        reason: "owner used the reminder shorthand without both duration and message",
+        question: "When should I remind you, and what should I remind you about?"
+      };
+    }
+
+    return {
+      decision: "execute",
+      toolName: "reminder.add",
+      reason: "owner used the explicit reminder shorthand command",
+      args: {
+        duration: parts[1] ?? "",
+        message: parts.slice(2).join(" ")
+      }
+    };
+  }
+
+  if (parts[0] !== "!reminder" && parts[0] !== "!calendar") {
+    return null;
+  }
+
+  if (parts[0] === "!reminder") {
+    if (parts.length === 1 || parts[1] === "help") {
+      return null;
+    }
+
+    if (parts[1] === "show") {
+      return {
+        decision: "execute",
+        toolName: "reminder.show",
+        reason: "owner used the explicit reminder show command",
+        args: {}
+      };
+    }
+
+    if (parts[1] === "add") {
+      if (parts.length < 4) {
+        return {
+          decision: "clarify",
+          toolName: "reminder.add",
+          reason: "owner used reminder add without both duration and message",
+          question: "When should I remind you, and what should I remind you about?"
+        };
+      }
+
+      return {
+        decision: "execute",
+        toolName: "reminder.add",
+        reason: "owner used the explicit reminder add command",
+        args: {
+          duration: parts[2] ?? "",
+          message: parts.slice(3).join(" ")
+        }
+      };
+    }
+
+    if (parts[1] === "ack") {
+      if (parts.length < 3) {
+        return {
+          decision: "clarify",
+          toolName: "reminder.ack",
+          reason: "owner used reminder ack without a reminder id",
+          question: "Which reminder should I acknowledge?"
+        };
+      }
+
+      return {
+        decision: "execute",
+        toolName: "reminder.ack",
+        reason: "owner used the explicit reminder acknowledge command",
+        args: {
+          id: parts[2] ?? ""
+        }
+      };
+    }
+  }
+
+  if (parts[0] === "!calendar") {
+    if (parts.length === 1 || parts[1] === "help" || parts[1] === "auth") {
+      return null;
+    }
+
+    if (parts[1] === "show") {
+      return {
+        decision: "execute",
+        toolName: "calendar.show",
+        reason: "owner used the explicit calendar show command",
+        args: {}
+      };
+    }
+
+    if (parts[1] === "remind") {
+      if (parts.length < 3) {
+        return {
+          decision: "clarify",
+          toolName: "calendar.remind",
+          reason: "owner used calendar remind without an event index",
+          question: "Which calendar event should I create a reminder for? Use the index from `!calendar show`."
+        };
+      }
+
+      return {
+        decision: "execute",
+        toolName: "calendar.remind",
+        reason: "owner used the explicit calendar remind command",
+        args: {
+          index: parts[2] ?? "",
+          ...(parts[3] ? { leadTime: parts[3] } : {})
+        }
+      };
+    }
   }
 
   return null;
@@ -112,7 +304,8 @@ export async function executeToolDecision(params: {
   calendarClient: OutlookCalendarClient;
   decision: Extract<ToolDecision, { decision: "execute" }>;
   persistence: Persistence;
-}): Promise<string> {
+  registry?: Partial<Record<ExplicitToolName, ToolDefinition>>;
+}): Promise<ToolExecutionResult> {
   return withSpan(
     "tool.execute",
     {
@@ -123,36 +316,59 @@ export async function executeToolDecision(params: {
     },
     async () => {
       const { calendarClient, decision, persistence } = params;
+      const definition = params.registry?.[decision.toolName] ?? TOOL_DEFINITIONS[decision.toolName];
+      if (!definition) {
+        throw new Error(`Unsupported tool: ${decision.toolName}`);
+      }
 
-      switch (decision.toolName) {
-        case "reminder.add": {
-          const duration = getRequiredStringArg(decision.args, "duration");
-          const message = getRequiredStringArg(decision.args, "message");
-          return handleReminderCommand(persistence, `!reminder add ${duration} ${message}`);
-        }
-        case "reminder.show":
-          return handleReminderCommand(persistence, "!reminder show");
-        case "reminder.ack": {
-          const id = getRequiredNumericLikeArg(decision.args, "id");
-          return handleReminderCommand(persistence, `!reminder ack ${id}`);
-        }
-        case "calendar.show":
-          return handleCalendarCommand({
-            calendarClient,
-            content: "!calendar show",
-            persistence
+      if (definition.policy) {
+        const contactQuery = definition.policy.getContactQuery(decision.args);
+        if (contactQuery) {
+          const policyDecision = createPolicyEngine(persistence).evaluateOutboundAction({
+            actionType: definition.policy.actionType,
+            contactQuery
           });
-        case "calendar.remind": {
-          const index = getRequiredNumericLikeArg(decision.args, "index");
-          const leadTime = getOptionalStringArg(decision.args, "leadTime");
-          const content = leadTime ? `!calendar remind ${index} ${leadTime}` : `!calendar remind ${index}`;
-          return handleCalendarCommand({
-            calendarClient,
-            content,
-            persistence
-          });
+
+          if (policyDecision.decision === "block") {
+            return {
+              toolName: decision.toolName,
+              status: "blocked",
+              reply: `Tool execution blocked.\n${policyDecision.reason}`,
+              policyDecision
+            };
+          }
+
+          if (policyDecision.decision === "requires_confirmation") {
+            return {
+              toolName: decision.toolName,
+              status: "requires_confirmation",
+              reply: `Tool execution requires explicit approval.\n${policyDecision.reason}`,
+              policyDecision
+            };
+          }
+
+          if (policyDecision.decision === "needs_contact_classification") {
+            return {
+              toolName: decision.toolName,
+              status: "clarify",
+              reply: `Tool execution requires contact classification.\n${policyDecision.reason}`,
+              policyDecision
+            };
+          }
         }
       }
+
+      const reply = await definition.execute({
+        calendarClient,
+        args: decision.args,
+        persistence
+      });
+
+      return {
+        toolName: decision.toolName,
+        status: "executed",
+        reply
+      };
     }
   );
 }

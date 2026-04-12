@@ -139,7 +139,7 @@ export interface ToolExecutionAuditRecord {
   messageId: string;
   toolName: string;
   invocationSource: "explicit" | "inferred";
-  status: "executed" | "clarify" | "skipped" | "failed";
+  status: "executed" | "clarify" | "requires_confirmation" | "blocked" | "skipped" | "failed";
   provider: string | null;
   detail: string | null;
 }

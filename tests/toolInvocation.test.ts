@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { initializePersistence } from "../src/persistence.js";
-import { executeToolDecision, inferDeterministicToolDecision, parseToolDecision } from "../src/toolInvocation.js";
+import { executeToolDecision, inferDeterministicToolDecision, parseExplicitToolDecision, parseToolDecision } from "../src/toolInvocation.js";
 
 function createPersistence() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-tool-invoke-"));
@@ -56,6 +56,22 @@ test("inferDeterministicToolDecision catches obvious calendar-view requests", ()
   assert.equal(inferDeterministicToolDecision("how's your day going?"), null);
 });
 
+test("parseExplicitToolDecision turns incomplete tool commands into clarification prompts", () => {
+  assert.deepEqual(parseExplicitToolDecision("!reminder add"), {
+    decision: "clarify",
+    toolName: "reminder.add",
+    reason: "owner used reminder add without both duration and message",
+    question: "When should I remind you, and what should I remind you about?"
+  });
+
+  assert.deepEqual(parseExplicitToolDecision("!calendar remind"), {
+    decision: "clarify",
+    toolName: "calendar.remind",
+    reason: "owner used calendar remind without an event index",
+    question: "Which calendar event should I create a reminder for? Use the index from `!calendar show`."
+  });
+});
+
 test("executeToolDecision runs deterministic reminder and calendar handlers", async () => {
   const { persistence, cleanup } = createPersistence();
 
@@ -78,7 +94,8 @@ test("executeToolDecision runs deterministic reminder and calendar handlers", as
       persistence
     });
 
-    assert.match(reminderReply, /Saved reminder #1/);
+    assert.equal(reminderReply.status, "executed");
+    assert.match(reminderReply.reply, /Saved reminder #1/);
 
     const calendarReply = await executeToolDecision({
       calendarClient: {
@@ -106,7 +123,95 @@ test("executeToolDecision runs deterministic reminder and calendar handlers", as
       persistence
     });
 
-    assert.match(calendarReply, /Saved reminder #2/);
+    assert.equal(calendarReply.status, "executed");
+    assert.match(calendarReply.reply, /Saved reminder #2/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("executeToolDecision can defer or block a registered tool through the policy engine", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    persistence.upsertContact({
+      canonicalName: "Michelle Smith",
+      trustLevel: "approval_required",
+      aliases: ["Shelly"]
+    });
+
+    const requiresConfirmation = await executeToolDecision({
+      calendarClient: {
+        async listUpcomingEvents() {
+          return [];
+        }
+      },
+      decision: {
+        decision: "execute",
+        toolName: "reminder.show",
+        reason: "test policy hook",
+        args: {
+          contact: "Shelly"
+        }
+      },
+      persistence,
+      registry: {
+        "reminder.show": {
+          toolName: "reminder.show",
+          policy: {
+            actionType: "message.send",
+            getContactQuery(args) {
+              return typeof args.contact === "string" ? args.contact : null;
+            }
+          },
+          execute() {
+            return "should not execute";
+          }
+        }
+      }
+    });
+
+    assert.equal(requiresConfirmation.status, "requires_confirmation");
+    assert.match(requiresConfirmation.reply, /requires explicit approval/i);
+
+    persistence.upsertContact({
+      canonicalName: "Mallory",
+      trustLevel: "untrusted"
+    });
+
+    const blocked = await executeToolDecision({
+      calendarClient: {
+        async listUpcomingEvents() {
+          return [];
+        }
+      },
+      decision: {
+        decision: "execute",
+        toolName: "reminder.show",
+        reason: "test policy hook",
+        args: {
+          contact: "Mallory"
+        }
+      },
+      persistence,
+      registry: {
+        "reminder.show": {
+          toolName: "reminder.show",
+          policy: {
+            actionType: "message.send",
+            getContactQuery(args) {
+              return typeof args.contact === "string" ? args.contact : null;
+            }
+          },
+          execute() {
+            return "should not execute";
+          }
+        }
+      }
+    });
+
+    assert.equal(blocked.status, "blocked");
+    assert.match(blocked.reply, /execution blocked/i);
   } finally {
     cleanup();
   }
