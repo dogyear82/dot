@@ -140,7 +140,13 @@ export interface ReminderDeliveryContext {
   reminderId: number;
 }
 
-export type OutboundDeliveryContext = ReminderDeliveryContext;
+export interface ServiceNotificationDeliveryContext {
+  kind: "service_notification";
+  notificationType: string;
+  service: string;
+}
+
+export type OutboundDeliveryContext = ReminderDeliveryContext | ServiceNotificationDeliveryContext;
 
 export interface OutboundMessageDeliveredPayload {
   requestEventId: string;

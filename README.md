@@ -181,6 +181,7 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 ## Reminder Notes
 
 - Reminder notifications are sent through Discord.
+- Service-originated owner notifications should publish canonical outbound requests rather than importing Discord SDK logic directly.
 - `nag-only` enables repeated Discord follow-ups.
 - `discord-then-sms` is stored as a setting now, but SMS escalation is deferred until the later SMS story is implemented.
 
