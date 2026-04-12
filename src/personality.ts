@@ -1,9 +1,9 @@
 import type { Persistence } from "./persistence.js";
 import {
+  emergencyFallbackProfile,
   getBuiltInPersonalityProfile,
   listBuiltInPersonalityProfiles,
   listPersonalityBundleErrors,
-  blueLadyProfile
 } from "./personalityProfiles.js";
 import type { SettingsStore } from "./settings.js";
 import type { PersonalityPresetRecord, PersonalityProfileRecord } from "./types.js";
@@ -24,9 +24,9 @@ export const personalityTraitDefinitions = [
 type PersonalityTraitKey = (typeof personalityTraitDefinitions)[number]["key"];
 
 export const blueLadyPreset: PersonalityPresetRecord = {
-  name: blueLadyProfile.name,
-  selfConcept: blueLadyProfile.identity.selfConcept,
-  sliderValues: blueLadyProfile.behavior.sliderValues,
+  name: emergencyFallbackProfile.name,
+  selfConcept: emergencyFallbackProfile.identity.selfConcept,
+  sliderValues: emergencyFallbackProfile.behavior.sliderValues,
   isBuiltIn: true
 };
 
@@ -256,13 +256,13 @@ export function getActivePersonalityState(settingsStore: SettingsStore) {
 
 function resolveActivePersonalityProfile(settingsStore: SettingsStore): PersonalityProfileRecord {
   const configuredName =
-    settingsStore.get("personality.activeProfile") ?? settingsStore.get("personality.activePreset") ?? blueLadyProfile.name;
+    settingsStore.get("personality.activeProfile") ?? settingsStore.get("personality.activePreset") ?? emergencyFallbackProfile.name;
 
   if (configuredName === "custom") {
-    return blueLadyProfile;
+    return emergencyFallbackProfile;
   }
 
-  return getBuiltInPersonalityProfile(configuredName) ?? blueLadyProfile;
+  return getBuiltInPersonalityProfile(configuredName) ?? emergencyFallbackProfile;
 }
 
 function resolveTraitKey(input: string): PersonalityTraitKey | null {

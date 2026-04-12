@@ -35,6 +35,18 @@ test("personality profile list includes built-in profiles", () => {
   }
 });
 
+test("production profiles are loaded from bundle-backed definitions by default", () => {
+  const blueLady = getBuiltInPersonalityProfile("blue_lady");
+  const auntieDot = getBuiltInPersonalityProfile("auntie_dot");
+
+  assert.ok(blueLady);
+  assert.ok(auntieDot);
+  assert.match(blueLady.summary, /continuity-minded/i);
+  assert.match(auntieDot.summary, /Southern auntie/i);
+  assert.equal(blueLady.isBuiltIn, true);
+  assert.equal(auntieDot.isBuiltIn, true);
+});
+
 test("personality show returns current profile and quirk values", () => {
   const { persistence, cleanup } = createPersistence();
 

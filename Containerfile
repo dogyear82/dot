@@ -11,6 +11,7 @@ RUN npm install
 
 COPY tsconfig.json ./
 COPY src ./src
+COPY personalities ./personalities
 
 RUN npm run build
 
