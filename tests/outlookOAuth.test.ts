@@ -170,3 +170,32 @@ test("getValidAccessToken reports a clear recovery path when OAuth is unconfigur
     cleanup();
   }
 });
+
+test("getAuthorizationStatus reports a mail reauthorization warning when the stored token lacks Mail.ReadWrite", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    persistence.saveOAuthToken({
+      provider: "microsoft_graph",
+      accessToken: "access-123",
+      refreshToken: "refresh-123",
+      expiresAt: "2026-04-09T01:00:00.000Z",
+      scope: "offline_access openid profile User.Read Calendars.Read",
+      tokenType: "Bearer"
+    });
+
+    const client = new MicrosoftOutlookOAuthClient(
+      loadConfig({
+        DISCORD_BOT_TOKEN: "token",
+        DISCORD_OWNER_USER_ID: "owner",
+        OUTLOOK_CLIENT_ID: "client-123",
+        OUTLOOK_OAUTH_SCOPES: "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite"
+      }),
+      persistence
+    );
+
+    assert.match(client.getAuthorizationStatus(new Date("2026-04-09T00:00:00.000Z")), /Mail\.ReadWrite/);
+  } finally {
+    cleanup();
+  }
+});

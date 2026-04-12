@@ -8,9 +8,11 @@ import type { AppConfig } from "../config.js";
 import { createDiagnosticsObserver, createHostHealthEvent } from "../diagnostics.js";
 import { createDiscordClient } from "../discord/createClient.js";
 import { createConfiguredEventBus } from "../eventBus.js";
+import { startOutlookMailSyncWorker } from "../mailSyncWorker.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
 import { startObservability } from "../observability.js";
 import { MicrosoftGraphOutlookCalendarClient } from "../outlookCalendar.js";
+import { MicrosoftGraphOutlookMailClient } from "../outlookMail.js";
 import { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
 import { initializePersistence } from "../persistence.js";
 import { startReminderScheduler } from "../reminders.js";
@@ -32,6 +34,7 @@ export async function createDotRuntime(params: {
   const bus = await createConfiguredEventBus(config);
   const outlookOAuthClient = new MicrosoftOutlookOAuthClient(config, persistence);
   const calendarClient = new MicrosoftGraphOutlookCalendarClient(config, outlookOAuthClient);
+  const mailClient = new MicrosoftGraphOutlookMailClient(config, outlookOAuthClient);
   const chatService = createLlmService({
     config,
     settings: persistence.settings
@@ -40,6 +43,7 @@ export async function createDotRuntime(params: {
   let discordClient: Client | undefined;
   let unregisterMessagePipeline: (() => void) | undefined;
   let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
+  let outlookMailSyncWorker: ReturnType<typeof startOutlookMailSyncWorker> | undefined;
   let diagnosticsObserver: ReturnType<typeof createDiagnosticsObserver> | undefined;
   let observability: ReturnType<typeof startObservability> | undefined;
 
@@ -172,6 +176,23 @@ export async function createDotRuntime(params: {
         reminderScheduler?.stop();
         reminderScheduler = undefined;
       }
+    }),
+    createServiceHost({
+      name: "mail-sync",
+      onStatusChange: emitHostHealth,
+      start() {
+        outlookMailSyncWorker = startOutlookMailSyncWorker({
+          approvedFolderName: config.OUTLOOK_MAIL_APPROVED_FOLDER,
+          logger,
+          mailClient,
+          persistence,
+          pollIntervalMs: config.OUTLOOK_MAIL_SYNC_INTERVAL_MS
+        });
+      },
+      stop() {
+        outlookMailSyncWorker?.stop();
+        outlookMailSyncWorker = undefined;
+      }
     })
   ];
 
@@ -193,7 +214,7 @@ export async function createDotRuntime(params: {
 
       logger.info(
         {
-          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders"]
+          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "discord-transport", "reminders", "mail-sync"]
         },
         "Initialized Dot service host topology"
       );

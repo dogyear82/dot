@@ -62,6 +62,8 @@ Relevant environment variables:
 - `OTEL_EXPORTER_OTLP_ENDPOINT` should point to an OTLP HTTP traces endpoint such as `http://tempo:4318/v1/traces`
 - `METRICS_HOST` defaults to `0.0.0.0`
 - `METRICS_PORT` defaults to `9464`
+- `OUTLOOK_MAIL_APPROVED_FOLDER` defaults to `Dot Approved`
+- `OUTLOOK_MAIL_SYNC_INTERVAL_MS` defaults to `300000`
 
 Current Prometheus signals include:
 
@@ -182,7 +184,16 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 
 - Preferred setup is Microsoft device-code OAuth with `OUTLOOK_CLIENT_ID` and optional `OUTLOOK_TENANT_ID`.
 - Legacy `OUTLOOK_ACCESS_TOKEN` still works as a fallback, but durable OAuth is now the intended path.
+- The default OAuth scope set now includes `Mail.ReadWrite` so the Outlook mail sync substrate can reuse the same durable Microsoft token.
 - After starting Dot, run `!calendar auth start`, complete the Microsoft sign-in in a browser, then run `!calendar auth complete`.
 - `!calendar auth status` reports whether Outlook is connected, pending, or needs to be reauthorized.
 - `!calendar show` lists upcoming Outlook events from the configured default or named calendar.
 - `!calendar remind <index> [lead-time]` creates a Dot reminder from the indexed event returned by `!calendar show`.
+
+## Outlook Mail Substrate
+
+- Dot now includes a single-process `mail-sync` host in the service runtime.
+- The worker uses Microsoft Graph delta sync to track inbox changes without rescanning the full mailbox on every pass.
+- Durable worker state stores the approved-folder identifier, the latest delta cursor, and the last successful sync timestamp.
+- The worker ensures the Outlook folder named by `OUTLOOK_MAIL_APPROVED_FOLDER` exists before later triage stories move mail into it.
+- This story stops at the substrate layer: it does not classify or move mail based on content yet.

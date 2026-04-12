@@ -27,10 +27,12 @@ const envSchema = z.object({
   OUTLOOK_ACCESS_TOKEN: z.string().optional().default(""),
   OUTLOOK_CLIENT_ID: z.string().optional().default(""),
   OUTLOOK_TENANT_ID: z.string().default("common"),
-  OUTLOOK_OAUTH_SCOPES: z.string().default("offline_access openid profile User.Read Calendars.Read"),
+  OUTLOOK_OAUTH_SCOPES: z.string().default("offline_access openid profile User.Read Calendars.Read Mail.ReadWrite"),
   OUTLOOK_GRAPH_BASE_URL: z.string().url().default("https://graph.microsoft.com/v1.0"),
   OUTLOOK_CALENDAR_ID: z.string().optional().default(""),
-  OUTLOOK_LOOKAHEAD_DAYS: z.coerce.number().int().positive().default(7)
+  OUTLOOK_LOOKAHEAD_DAYS: z.coerce.number().int().positive().default(7),
+  OUTLOOK_MAIL_APPROVED_FOLDER: z.string().default("Dot Approved"),
+  OUTLOOK_MAIL_SYNC_INTERVAL_MS: z.coerce.number().int().positive().default(300000)
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
