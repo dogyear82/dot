@@ -7,6 +7,7 @@ import path from "node:path";
 import { loadPersonalityBundleCatalog } from "../src/personalityBundles.js";
 import { handlePersonalityCommand } from "../src/personality.js";
 import { initializePersistence } from "../src/persistence.js";
+import { getBuiltInPersonalityProfile } from "../src/personalityProfiles.js";
 
 function withBundleDirectory<T>(callback: (bundleDir: string) => T): T {
   const original = process.env.DOT_PERSONALITY_BUNDLE_DIR;
@@ -170,4 +171,21 @@ test("personality commands surface bundle validation warnings to operators", () 
       cleanup();
     }
   });
+});
+
+test("bundle-backed profiles fall back safely when the bundle directory is unavailable", () => {
+  const original = process.env.DOT_PERSONALITY_BUNDLE_DIR;
+  process.env.DOT_PERSONALITY_BUNDLE_DIR = path.join(os.tmpdir(), "does-not-exist", String(Date.now()));
+
+  try {
+    const profile = getBuiltInPersonalityProfile("blue_lady");
+    assert.ok(profile);
+    assert.match(profile.summary, /Emergency fallback profile/i);
+  } finally {
+    if (original == null) {
+      delete process.env.DOT_PERSONALITY_BUNDLE_DIR;
+    } else {
+      process.env.DOT_PERSONALITY_BUNDLE_DIR = original;
+    }
+  }
 });
