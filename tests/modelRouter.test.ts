@@ -47,6 +47,8 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     OUTLOOK_CALENDAR_ID: "",
     OUTLOOK_LOOKAHEAD_DAYS: 7,
     OUTLOOK_MAIL_APPROVED_FOLDER: "Dot Approved",
+    OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER: "Needs Attention",
+    OUTLOOK_MAIL_WHITELIST: "",
     OUTLOOK_MAIL_SYNC_INTERVAL_MS: 300000,
     ...overrides
   };

@@ -18,5 +18,7 @@ test("loadConfig applies defaults for optional values", () => {
   assert.equal(config.OUTLOOK_TENANT_ID, "common");
   assert.equal(config.OUTLOOK_OAUTH_SCOPES, "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite");
   assert.equal(config.OUTLOOK_MAIL_APPROVED_FOLDER, "Dot Approved");
+  assert.equal(config.OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER, "Needs Attention");
+  assert.equal(config.OUTLOOK_MAIL_WHITELIST, "");
   assert.equal(config.OUTLOOK_MAIL_SYNC_INTERVAL_MS, 300000);
 });

@@ -99,6 +99,22 @@ export interface OutlookMailFolder {
   displayName: string;
 }
 
+export type MailTriageOutcome = "dot_approved" | "needs_attention" | "ignore";
+export type MailTriageSource = "whitelist" | "heuristic" | "llm" | "fallback";
+
+export interface MailTriageDecisionRecord {
+  messageId: string;
+  senderEmail: string | null;
+  outcome: MailTriageOutcome;
+  source: MailTriageSource;
+  reason: string;
+  route: "none" | "deterministic" | "local" | "hosted";
+  sourceFolderId: string | null;
+  destinationFolderId: string | null;
+  triagedAt: string;
+  movedAt: string | null;
+}
+
 export interface OAuthTokenRecord {
   provider: string;
   accessToken: string;

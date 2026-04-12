@@ -120,11 +120,13 @@ For Outlook OAuth:
 
 For Outlook mail sync:
 
-- optionally set `OUTLOOK_MAIL_APPROVED_FOLDER` and `OUTLOOK_MAIL_SYNC_INTERVAL_MS`
+- optionally set `OUTLOOK_MAIL_APPROVED_FOLDER`, `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER`, `OUTLOOK_MAIL_WHITELIST`, and `OUTLOOK_MAIL_SYNC_INTERVAL_MS`
 - the first pass stays inside the single bot runtime as the `mail-sync` host
 - it uses Microsoft Graph delta sync rather than rescanning the whole inbox every cycle
-- it ensures the approved folder exists and persists the delta cursor for future runs
-- this story does not classify mail or move messages yet; it only establishes the durable substrate
+- it ensures both triage folders exist and persists the delta cursor for future runs
+- whitelist sender matches go directly to `Dot Approved`
+- suspicious or ambiguous mail is biased toward `Needs Attention`
+- clear marketing or newsletter mail is ignored in place
 
 ### 3. Create the Discord application
 

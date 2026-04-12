@@ -8,6 +8,7 @@ import type { AppConfig } from "../config.js";
 import { createDiagnosticsObserver, createHostHealthEvent } from "../diagnostics.js";
 import { createDiscordClient } from "../discord/createClient.js";
 import { createConfiguredEventBus } from "../eventBus.js";
+import { createMailTriageService } from "../mailTriage.js";
 import { startOutlookMailSyncWorker } from "../mailSyncWorker.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
 import { startObservability } from "../observability.js";
@@ -36,6 +37,10 @@ export async function createDotRuntime(params: {
   const calendarClient = new MicrosoftGraphOutlookCalendarClient(config, outlookOAuthClient);
   const mailClient = new MicrosoftGraphOutlookMailClient(config, outlookOAuthClient);
   const chatService = createLlmService({
+    config,
+    settings: persistence.settings
+  });
+  const mailTriageService = createMailTriageService({
     config,
     settings: persistence.settings
   });
@@ -185,8 +190,10 @@ export async function createDotRuntime(params: {
           approvedFolderName: config.OUTLOOK_MAIL_APPROVED_FOLDER,
           logger,
           mailClient,
+          needsAttentionFolderName: config.OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER,
           persistence,
-          pollIntervalMs: config.OUTLOOK_MAIL_SYNC_INTERVAL_MS
+          pollIntervalMs: config.OUTLOOK_MAIL_SYNC_INTERVAL_MS,
+          triageService: mailTriageService
         });
       },
       stop() {

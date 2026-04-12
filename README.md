@@ -63,6 +63,8 @@ Relevant environment variables:
 - `METRICS_HOST` defaults to `0.0.0.0`
 - `METRICS_PORT` defaults to `9464`
 - `OUTLOOK_MAIL_APPROVED_FOLDER` defaults to `Dot Approved`
+- `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER` defaults to `Needs Attention`
+- `OUTLOOK_MAIL_WHITELIST` accepts a comma-separated list of exact trusted sender email addresses
 - `OUTLOOK_MAIL_SYNC_INTERVAL_MS` defaults to `300000`
 
 Current Prometheus signals include:
@@ -194,6 +196,8 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 
 - Dot now includes a single-process `mail-sync` host in the service runtime.
 - The worker uses Microsoft Graph delta sync to track inbox changes without rescanning the full mailbox on every pass.
-- Durable worker state stores the approved-folder identifier, the latest delta cursor, and the last successful sync timestamp.
-- The worker ensures the Outlook folder named by `OUTLOOK_MAIL_APPROVED_FOLDER` exists before later triage stories move mail into it.
-- This story stops at the substrate layer: it does not classify or move mail based on content yet.
+- Durable worker state stores the triage folder identifiers, the latest delta cursor, and the last successful sync timestamp.
+- The worker ensures the Outlook folders named by `OUTLOOK_MAIL_APPROVED_FOLDER` and `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER` exist before use.
+- Exact sender matches from `OUTLOOK_MAIL_WHITELIST` are approved deterministically without an LLM call.
+- Deterministic spam/phishing and marketing heuristics run before any LLM classification.
+- Unresolved mail is classified into `dot_approved`, `needs_attention`, or `ignore`; `ignore` stays in place.
