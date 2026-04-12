@@ -8,6 +8,7 @@ import { Events } from "discord.js";
 
 import { createInMemoryEventBus } from "../src/eventBus.js";
 import { createDiscordClient } from "../src/discord/createClient.js";
+import { createOutboundMessageRequestedEvent } from "../src/events.js";
 import { registerMessagePipeline } from "../src/messagePipeline.js";
 import { initializePersistence } from "../src/persistence.js";
 
@@ -38,6 +39,7 @@ function createFakeMessage(params: {
   isDirectMessage?: boolean;
   createdAt?: string;
   replyLog: string[];
+  channelSendLog?: string[];
 }) {
   const {
     id,
@@ -48,7 +50,8 @@ function createFakeMessage(params: {
     botRoleIds = [],
     isDirectMessage = false,
     createdAt = "2026-04-09T00:00:00.000Z",
-    replyLog
+    replyLog,
+    channelSendLog = replyLog
   } = params;
 
   return {
@@ -117,6 +120,42 @@ function createFakeMessage(params: {
         },
         content: reply,
         createdAt: new Date(createdAt),
+        channel: {
+          async send(content: string) {
+            channelSendLog.push(content);
+            return {
+              id: `${id}-follow-up-${channelSendLog.length}`,
+              channelId: "chan-1",
+              guildId: isDirectMessage ? null : "guild-1",
+              guild: isDirectMessage
+                ? null
+                : {
+                    members: {
+                      me: {
+                        roles: {
+                          cache: {
+                            map<T>(callback: (role: { id: string }) => T) {
+                              return botRoleIds.map((roleId) => callback({ id: roleId }));
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+              author: {
+                id: "bot-1",
+                username: "Dot",
+                bot: true
+              },
+              content,
+              createdAt: new Date(createdAt),
+              mentions: {
+                users: { has() { return false; } },
+                roles: { some() { return false; } }
+              }
+            };
+          }
+        },
         mentions: {
           users: {
             has() {
@@ -274,6 +313,107 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
     } finally {
       unsubscribe();
       await client.destroy();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("Discord outbound delivery chunks oversized replies and stores one assistant conversation turn", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const sentChunks: string[] = [];
+  const bus = createInMemoryEventBus();
+
+  try {
+    const client = createDiscordClient({
+      bus,
+      logger: createLogger() as never,
+      ownerUserId: "owner-1",
+      persistence
+    });
+
+    try {
+      Object.defineProperty(client, "user", {
+        configurable: true,
+        value: {
+          id: "bot-1",
+          username: "Dot"
+        }
+      });
+
+      (client as unknown as { emit: (event: string, payload: unknown) => boolean }).emit(
+        Events.MessageCreate,
+        createFakeMessage({
+          id: "msg-long",
+          content: "hello there",
+          mentionedBot: true,
+          replyLog: sentChunks,
+          channelSendLog: sentChunks
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const inboundEvent = {
+        eventId: "discord:msg-long",
+        eventType: "inbound.message.received",
+        eventVersion: "1.0.0",
+        occurredAt: "2026-04-09T00:00:00.000Z",
+        producer: { service: "discord-transport" },
+        correlation: {
+          correlationId: "msg-long",
+          causationId: null,
+          conversationId: "chan-1",
+          actorId: "owner-1"
+        },
+        routing: {
+          transport: "discord",
+          channelId: "chan-1",
+          guildId: "guild-1",
+          replyTo: "msg-long"
+        },
+        diagnostics: {
+          severity: "info",
+          category: "transport.discord"
+        },
+        payload: {
+          messageId: "msg-long",
+          sender: {
+            actorId: "owner-1",
+            displayName: "owner",
+            actorRole: "owner"
+          },
+          content: "hello there",
+          addressedContent: "hello there",
+          isDirectMessage: false,
+          mentionedBot: true,
+          replyRoute: {
+            transport: "discord",
+            channelId: "chan-1",
+            guildId: "guild-1",
+            replyTo: "msg-long"
+          }
+        }
+      } as const;
+
+      const fullReply = `${"Paragraph one is deliberately long and should become its own chunk. ".repeat(40)}\n\n\`\`\`txt\n${"code line\n".repeat(80)}\`\`\`\n\n[mode: power]`;
+      await bus.publishOutboundMessage(
+        createOutboundMessageRequestedEvent({
+          inboundEvent,
+          content: fullReply,
+          recordConversationTurn: true
+        })
+      );
+
+      assert.ok(sentChunks.length > 1);
+      assert.equal(sentChunks.at(-1)?.includes("[mode: power]"), true);
+      assert.equal(sentChunks.slice(0, -1).some((chunk) => chunk.includes("[mode: power]")), false);
+
+      const turns = persistence.listRecentConversationTurns("chan-1", 10);
+      const assistantTurns = turns.filter((turn) => turn.role === "assistant");
+      assert.equal(assistantTurns.length, 1);
+      assert.equal(assistantTurns[0]?.content, fullReply);
+    } finally {
+      client.destroy();
     }
   } finally {
     cleanup();
