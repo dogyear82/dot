@@ -29,6 +29,7 @@ const envSchema = z.object({
   OUTLOOK_TENANT_ID: z.string().default("common"),
   OUTLOOK_OAUTH_SCOPES: z.string().default("offline_access openid profile User.Read Calendars.Read Mail.ReadWrite"),
   OUTLOOK_GRAPH_BASE_URL: z.string().url().default("https://graph.microsoft.com/v1.0"),
+  OUTLOOK_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
   OUTLOOK_CALENDAR_ID: z.string().optional().default(""),
   OUTLOOK_LOOKAHEAD_DAYS: z.coerce.number().int().positive().default(7),
   OUTLOOK_MAIL_APPROVED_FOLDER: z.string().default("Dot Approved"),

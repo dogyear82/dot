@@ -38,8 +38,11 @@ export async function syncOutlookMailOnce(params: {
 
   const deltaCursor = persistence.getWorkerState(DELTA_CURSOR_KEY);
   let result;
+  const initialReceivedAfter = shouldApplyInitialLookback(deltaCursor)
+    ? new Date(Date.now() - initialLookbackDays * 24 * 60 * 60 * 1000).toISOString()
+    : null;
   try {
-    result = await mailClient.syncInboxDelta(deltaCursor);
+    result = await mailClient.syncInboxDelta(deltaCursor, { receivedAfter: initialReceivedAfter });
   } catch (error) {
     if (!(error instanceof OutlookMailDeltaCursorError) || !deltaCursor) {
       throw error;
@@ -47,7 +50,7 @@ export async function syncOutlookMailOnce(params: {
 
     persistence.clearWorkerState(DELTA_CURSOR_KEY);
     logger.warn({ err: error }, "Resetting invalid Outlook mail delta cursor and resyncing from a fresh baseline");
-    result = await mailClient.syncInboxDelta(null);
+    result = await mailClient.syncInboxDelta(null, { receivedAfter: initialReceivedAfter });
   }
 
   if (result.deltaCursor) {

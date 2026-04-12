@@ -66,6 +66,7 @@ Relevant environment variables:
 - `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER` defaults to `Needs Attention`
 - `OUTLOOK_MAIL_WHITELIST` accepts a comma-separated list of exact trusted sender email addresses
 - `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS` defaults to `7` and limits first-run triage to recent mail only
+- `OUTLOOK_REQUEST_TIMEOUT_MS` defaults to `20000` and bounds Outlook Graph request hangs
 - `OUTLOOK_MAIL_SYNC_INTERVAL_MS` defaults to `300000`
 
 Current Prometheus signals include:
@@ -200,6 +201,7 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 - Durable worker state stores the triage folder identifiers, the latest delta cursor, and the last successful sync timestamp.
 - The worker ensures the Outlook folders named by `OUTLOOK_MAIL_APPROVED_FOLDER` and `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER` exist before use.
 - On the first baseline, only mail received within `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS` is eligible for triage; older backlog is ignored while the delta cursor is seeded.
+- The initial inbox delta request is now scoped with a `receivedDateTime` lookback so Dot does not have to walk your entire historical inbox before the first cursor is established.
 - Exact sender matches from `OUTLOOK_MAIL_WHITELIST` are approved deterministically without an LLM call.
 - Deterministic spam/phishing and marketing heuristics run before any LLM classification.
 - Unresolved mail is classified into `dot_approved`, `needs_attention`, or `ignore`; `ignore` stays in place.

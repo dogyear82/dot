@@ -120,11 +120,12 @@ For Outlook OAuth:
 
 For Outlook mail sync:
 
-- optionally set `OUTLOOK_MAIL_APPROVED_FOLDER`, `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER`, `OUTLOOK_MAIL_WHITELIST`, `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS`, and `OUTLOOK_MAIL_SYNC_INTERVAL_MS`
+- optionally set `OUTLOOK_MAIL_APPROVED_FOLDER`, `OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER`, `OUTLOOK_MAIL_WHITELIST`, `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS`, `OUTLOOK_REQUEST_TIMEOUT_MS`, and `OUTLOOK_MAIL_SYNC_INTERVAL_MS`
 - the first pass stays inside the single bot runtime as the `mail-sync` host
 - it uses Microsoft Graph delta sync rather than rescanning the whole inbox every cycle
 - it ensures both triage folders exist and persists the delta cursor for future runs
 - on the initial baseline, only mail from the last `OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS` days is eligible for triage; older inbox backlog is left alone while the cursor is seeded
+- Outlook Graph mail requests are bounded by `OUTLOOK_REQUEST_TIMEOUT_MS` so a slow delta sync fails visibly instead of hanging the worker indefinitely
 - whitelist sender matches go directly to `Dot Approved`
 - suspicious or ambiguous mail is biased toward `Needs Attention`
 - clear marketing or newsletter mail is ignored in place

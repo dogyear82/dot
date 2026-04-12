@@ -17,6 +17,7 @@ test("loadConfig applies defaults for optional values", () => {
   assert.equal(config.OLLAMA_MODEL, "llama3.1:8b");
   assert.equal(config.OUTLOOK_TENANT_ID, "common");
   assert.equal(config.OUTLOOK_OAUTH_SCOPES, "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite");
+  assert.equal(config.OUTLOOK_REQUEST_TIMEOUT_MS, 20000);
   assert.equal(config.OUTLOOK_MAIL_APPROVED_FOLDER, "Dot Approved");
   assert.equal(config.OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER, "Needs Attention");
   assert.equal(config.OUTLOOK_MAIL_WHITELIST, "");
