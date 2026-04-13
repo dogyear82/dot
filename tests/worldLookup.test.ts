@@ -55,9 +55,9 @@ test("executeWorldLookup runs selected sources in parallel and tolerates partial
             evidence: [
               createWorldLookupEvidence({
                 source: "wikimedia_current_events",
-                title: "Wikimedia current events",
+                title: "Myanmar current events",
                 url: "https://example.test/wikimedia",
-                snippet: "Recent events summary"
+                snippet: "Recent events summary for Myanmar"
               })
             ]
           };
@@ -82,6 +82,43 @@ test("executeWorldLookup runs selected sources in parallel and tolerates partial
   assert.equal(result.failures.length, 1);
   assert.equal(result.failures[0]?.source, "gdelt");
   assert.equal(result.outcome, "partial_failure");
+});
+
+test("executeWorldLookup discards irrelevant current-events evidence that does not match the topic", async () => {
+  const result = await executeWorldLookup({
+    query: "tell me what the situation is like in Myanmar right now",
+    timeoutMs: 100,
+    adapters: {
+      wikimedia_current_events: {
+        source: "wikimedia_current_events",
+        async lookup() {
+          return {
+            source: "wikimedia_current_events",
+            evidence: [
+              createWorldLookupEvidence({
+                source: "wikimedia_current_events",
+                title: "Dalai Lama representative discusses Tibet",
+                url: "https://example.test/dalai-lama",
+                snippet: "Talks about China, Tibet, Shugden and the next Dalai Lama."
+              })
+            ]
+          };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          throw new Error("gdelt unavailable");
+        }
+      }
+    }
+  });
+
+  assert.equal(result.bucket, "current_events");
+  assert.equal(result.outcome, "no_evidence");
+  assert.deepEqual(result.evidence, []);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0]?.source, "gdelt");
 });
 
 test("executeWorldLookup reports no_evidence when every selected source fails or returns nothing", async () => {

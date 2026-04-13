@@ -128,7 +128,12 @@ export async function executeWorldLookup(params: {
         })
       );
 
-      const evidence = settled.flatMap((entry) => (entry.status === "fulfilled" ? entry.result.evidence : []));
+      const rawEvidence = settled.flatMap((entry) => (entry.status === "fulfilled" ? entry.result.evidence : []));
+      const evidence = filterWorldLookupEvidence({
+        bucket,
+        query: params.query,
+        evidence: rawEvidence
+      });
       const failures = settled.flatMap((entry) =>
         entry.status === "rejected"
           ? [
@@ -159,6 +164,97 @@ export async function executeWorldLookup(params: {
         outcome
       };
     }
+  );
+}
+
+function filterWorldLookupEvidence(params: {
+  bucket: WorldLookupQueryBucket;
+  query: string;
+  evidence: WorldLookupEvidenceRecord[];
+}): WorldLookupEvidenceRecord[] {
+  if (params.evidence.length === 0) {
+    return params.evidence;
+  }
+
+  if (params.bucket === "current_events") {
+    return filterCurrentEventsEvidence(params.query, params.evidence);
+  }
+
+  if (params.bucket === "mixed") {
+    const filteredCurrentEvents = filterCurrentEventsEvidence(
+      params.query,
+      params.evidence.filter((record) => record.source === "wikimedia_current_events" || record.source === "gdelt")
+    );
+
+    const nonCurrentEvents = params.evidence.filter(
+      (record) => record.source !== "wikimedia_current_events" && record.source !== "gdelt"
+    );
+
+    return [...nonCurrentEvents, ...filteredCurrentEvents];
+  }
+
+  return params.evidence;
+}
+
+function filterCurrentEventsEvidence(query: string, evidence: WorldLookupEvidenceRecord[]): WorldLookupEvidenceRecord[] {
+  const topicTokens = extractTopicTokens(query);
+  if (topicTokens.length === 0) {
+    return evidence;
+  }
+
+  return evidence.filter((record) => {
+    const haystack = `${record.title} ${record.snippet}`.toLowerCase();
+    return topicTokens.some((token) => haystack.includes(token));
+  });
+}
+
+function extractTopicTokens(query: string): string[] {
+  const stopwords = new Set([
+    "a",
+    "an",
+    "and",
+    "are",
+    "around",
+    "at",
+    "be",
+    "current",
+    "currently",
+    "events",
+    "for",
+    "going",
+    "happening",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "latest",
+    "like",
+    "me",
+    "news",
+    "now",
+    "of",
+    "on",
+    "right",
+    "situation",
+    "tell",
+    "the",
+    "this",
+    "today",
+    "what",
+    "whats",
+    "with"
+  ]);
+
+  return Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3 && !stopwords.has(token))
+    )
   );
 }
 
