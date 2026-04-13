@@ -351,6 +351,57 @@ test("llm service can generate a grounded reply and append source links", async 
   assert.match(result.reply, /Links:\n- https:\/\/en\.wikipedia\.org\/wiki\/Zebra/);
   assert.match(capturedMessages[0]?.[0]?.content ?? "", /Use the supplied external evidence when answering/);
   assert.match(capturedMessages[0]?.[1]?.content ?? "", /Selected sources: Wikipedia/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Article extracts:\nNo article text could be extracted/);
+});
+
+test("llm service includes article extracts for grounded current-events answers", async () => {
+  const store = createStore();
+  const capturedMessages: ChatMessage[][] = [];
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", "local", true, async (messages) => {
+        capturedMessages.push(messages);
+        return "According to Reuters, Myanmar remains under military rule.";
+      })
+    ]
+  });
+
+  const result = await service.generateGroundedReply?.({
+    userMessage: "What is happening in Myanmar right now?",
+    bucket: "current_events",
+    selectedSources: ["newsdata", "gdelt"],
+    failures: [],
+    outcome: "success",
+    evidence: [
+      {
+        source: "newsdata",
+        title: "Myanmar junta extends emergency rule",
+        url: "https://example.test/myanmar",
+        snippet: "Recent reporting from Reuters.",
+        publishedAt: "2026-04-11T08:00:00Z",
+        confidence: "high"
+      }
+    ],
+    articles: [
+      {
+        source: "newsdata",
+        title: "Myanmar junta extends emergency rule",
+        url: "https://example.test/myanmar",
+        publisher: "Reuters",
+        publishedAt: "2026-04-11T08:00:00Z",
+        excerpt: "Myanmar's military government extended emergency rule while opposition groups reported continued fighting in several regions."
+      }
+    ]
+  });
+
+  assert(result);
+  assert.match(result.reply, /According to Reuters/);
+  assert.match(capturedMessages[0]?.[0]?.content ?? "", /Make it clear this information was looked up/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Article extracts:/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /publisher=Reuters/);
 });
 
 test("getLlmMode defaults to normal when unset", () => {

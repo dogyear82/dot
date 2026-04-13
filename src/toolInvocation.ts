@@ -6,6 +6,7 @@ import { createPolicyEngine, type PolicyDecision } from "./policyEngine.js";
 import { handleReminderCommand } from "./reminders.js";
 import type {
   PolicyActionType,
+  WorldLookupArticleRecord,
   WorldLookupAdapterResult,
   WorldLookupQueryBucket,
   WorldLookupResult,
@@ -13,6 +14,7 @@ import type {
   WorldLookupSourceName
 } from "./types.js";
 import { executeWorldLookup, type WorldLookupAdapter } from "./worldLookup.js";
+import { HtmlWorldLookupArticleReader, type WorldLookupArticleReader } from "./worldLookupArticles.js";
 import { createDefaultWorldLookupAdapters } from "./worldLookupAdapters.js";
 
 export type ExplicitToolName =
@@ -56,6 +58,7 @@ export interface GroundedAnswerService {
   generateGroundedReply(params: {
     userMessage: string;
     evidence: WorldLookupResult["evidence"];
+    articles?: WorldLookupArticleRecord[];
     bucket: WorldLookupQueryBucket;
     selectedSources: WorldLookupSourceName[];
     failures: WorldLookupSourceFailure[];
@@ -71,12 +74,14 @@ interface ToolDefinition {
     persistence: Persistence;
     groundedAnswerService?: GroundedAnswerService;
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
+    articleReader?: WorldLookupArticleReader;
   }): Promise<string> | string;
   executeDetailed?(params: {
     args: Record<string, string | number>;
     persistence: Persistence;
     groundedAnswerService?: GroundedAnswerService;
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
+    articleReader?: WorldLookupArticleReader;
   }): Promise<ToolExecutionResult>;
   policy?: {
     actionType: PolicyActionType;
@@ -131,14 +136,20 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
   },
   "world.lookup": {
     toolName: "world.lookup",
-    async executeDetailed({ args, groundedAnswerService, worldLookupAdapters }) {
+    async executeDetailed({ args, groundedAnswerService, worldLookupAdapters, articleReader }) {
       const query = getRequiredStringArg(args, "query");
       const lookupResult = await executeWorldLookup({
         query,
         adapters: worldLookupAdapters ?? createDefaultWorldLookupAdapters()
       });
+      const articleReadResult =
+        lookupResult.bucket === "current_events" && lookupResult.evidence.length > 0
+          ? await (articleReader ?? new HtmlWorldLookupArticleReader()).read({
+              evidence: lookupResult.evidence
+            })
+          : { articles: [], failures: [] };
 
-      const detail = buildWorldLookupAuditDetail(lookupResult);
+      const detail = buildWorldLookupAuditDetail(lookupResult, articleReadResult);
 
       if (!groundedAnswerService) {
         return {
@@ -153,6 +164,7 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
         const grounded = await groundedAnswerService.generateGroundedReply({
           userMessage: query,
           evidence: lookupResult.evidence,
+          articles: articleReadResult.articles,
           bucket: lookupResult.bucket,
           selectedSources: lookupResult.selectedSources,
           failures: lookupResult.failures,
@@ -400,6 +412,7 @@ export async function executeToolDecision(params: {
   groundedAnswerService?: GroundedAnswerService;
   registry?: Partial<Record<ExplicitToolName, ToolDefinition>>;
   worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
+  articleReader?: WorldLookupArticleReader;
 }): Promise<ToolExecutionResult> {
   return withSpan(
     "tool.execute",
@@ -458,7 +471,8 @@ export async function executeToolDecision(params: {
           args: decision.args,
           persistence,
           groundedAnswerService: params.groundedAnswerService,
-          worldLookupAdapters: params.worldLookupAdapters
+          worldLookupAdapters: params.worldLookupAdapters,
+          articleReader: params.articleReader
         });
       }
 
@@ -467,7 +481,8 @@ export async function executeToolDecision(params: {
         args: decision.args,
         persistence,
         groundedAnswerService: params.groundedAnswerService,
-        worldLookupAdapters: params.worldLookupAdapters
+        worldLookupAdapters: params.worldLookupAdapters,
+        articleReader: params.articleReader
       });
 
       return {
@@ -512,12 +527,16 @@ function isToolName(value: unknown): value is ExplicitToolName {
   );
 }
 
-function buildWorldLookupAuditDetail(result: WorldLookupResult): string {
+function buildWorldLookupAuditDetail(
+  result: WorldLookupResult,
+  articleReadResult: { articles: WorldLookupArticleRecord[]; failures: string[] } = { articles: [], failures: [] }
+): string {
   const citedSources = Array.from(new Set(result.evidence.map((record) => record.source))).join(",");
   const chosenEvidence = result.evidence
     .map((record) => `${record.source}:${record.title}`)
     .join(" | ");
-  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; retrievalStrategy=${result.retrievalStrategy}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; citedSources=${citedSources || "none"}; failureCount=${result.failures.length}`;
+  const articleTitles = articleReadResult.articles.map((article) => article.title).join(" | ");
+  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; retrievalStrategy=${result.retrievalStrategy}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; citedSources=${citedSources || "none"}; articleReadCount=${articleReadResult.articles.length}; articleTitles=${articleTitles || "none"}; articleReadFailures=${articleReadResult.failures.length}; failureCount=${result.failures.length}`;
 }
 
 function buildWorldLookupFallbackReply(result: WorldLookupResult): string {

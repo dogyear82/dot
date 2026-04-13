@@ -241,6 +241,7 @@ test("executeToolDecision executes world.lookup and returns grounded reply metad
           assert.equal(params.bucket, "reference");
           assert.equal(params.selectedSources[0], "wikipedia");
           assert.equal(params.evidence[0]?.title, "Zebra");
+          assert.deepEqual(params.articles, []);
           return {
             route: "local",
             powerStatus: "standby",
@@ -275,6 +276,97 @@ test("executeToolDecision executes world.lookup and returns grounded reply metad
     assert.match(result.reply, /According to Wikipedia/i);
     assert.match(result.detail ?? "", /selectedSources=wikipedia/);
     assert.match(result.detail ?? "", /outcome=success/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("executeToolDecision reads selected current-events articles before grounded synthesis", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const result = await executeToolDecision({
+      calendarClient: {
+        async listUpcomingEvents() {
+          return [];
+        }
+      },
+      decision: {
+        decision: "execute",
+        toolName: "world.lookup",
+        reason: "owner wants current events",
+        args: {
+          query: "What is happening in Myanmar right now?"
+        }
+      },
+      persistence,
+      groundedAnswerService: {
+        async generateGroundedReply(params) {
+          assert.equal(params.bucket, "current_events");
+          assert.equal(params.articles?.length, 1);
+          assert.equal(params.articles?.[0]?.publisher, "Reuters");
+          assert.match(params.articles?.[0]?.excerpt ?? "", /military government extended emergency rule/i);
+          return {
+            route: "local",
+            powerStatus: "standby",
+            reply: "According to Reuters, Myanmar remains under military rule.\n\nLinks:\n- https://example.test/myanmar"
+          };
+        }
+      },
+      articleReader: {
+        async read() {
+          return {
+            articles: [
+              {
+                source: "newsdata",
+                title: "Myanmar junta extends emergency rule",
+                url: "https://example.test/myanmar",
+                publisher: "Reuters",
+                publishedAt: "2026-04-11T08:00:00Z",
+                excerpt: "Myanmar's military government extended emergency rule while conflict continued across several regions."
+              }
+            ],
+            failures: []
+          };
+        }
+      },
+      worldLookupAdapters: {
+        newsdata: {
+          source: "newsdata",
+          async lookup() {
+            return {
+              source: "newsdata",
+              evidence: [
+                {
+                  source: "newsdata",
+                  title: "Myanmar junta extends emergency rule",
+                  url: "https://example.test/myanmar",
+                  snippet: "Recent reporting from Reuters.",
+                  publishedAt: "2026-04-11T08:00:00Z",
+                  confidence: "high"
+                }
+              ]
+            };
+          }
+        },
+        wikimedia_current_events: {
+          source: "wikimedia_current_events",
+          async lookup() {
+            return { source: "wikimedia_current_events", evidence: [] };
+          }
+        },
+        gdelt: {
+          source: "gdelt",
+          async lookup() {
+            return { source: "gdelt", evidence: [] };
+          }
+        }
+      }
+    });
+
+    assert.equal(result.status, "executed");
+    assert.match(result.detail ?? "", /articleReadCount=1/);
+    assert.match(result.detail ?? "", /articleTitles=Myanmar junta extends emergency rule/);
   } finally {
     cleanup();
   }
