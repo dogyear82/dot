@@ -199,6 +199,15 @@ export interface WorldLookupEvidenceRecord {
   confidence: "high" | "medium" | "low";
 }
 
+export interface WorldLookupArticleRecord {
+  source: WorldLookupSourceName;
+  title: string;
+  url: string;
+  publisher: string;
+  publishedAt: string | null;
+  excerpt: string;
+}
+
 export interface WorldLookupAdapterResult {
   source: WorldLookupSourceName;
   evidence: WorldLookupEvidenceRecord[];
