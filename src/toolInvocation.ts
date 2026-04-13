@@ -562,6 +562,8 @@ function buildWorldLookupFallbackReply(result: WorldLookupResult): string {
 
 function formatWorldLookupSource(source: WorldLookupSourceName): string {
   switch (source) {
+    case "newsdata":
+      return "NewsData.io";
     case "wikipedia":
       return "Wikipedia";
     case "wikimedia_current_events":

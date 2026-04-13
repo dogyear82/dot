@@ -184,6 +184,7 @@ export interface ToolExecutionAuditRecord {
 export type WorldLookupQueryBucket = "reference" | "current_events" | "weather" | "economics" | "mixed";
 
 export type WorldLookupSourceName =
+  | "newsdata"
   | "wikipedia"
   | "wikimedia_current_events"
   | "gdelt"
