@@ -43,17 +43,9 @@ export function evaluateAddressedness(params: {
     return { addressed: true, reason: "plain_text_direct_address" };
   }
 
-  const mostRecentTurn = recentConversation.at(-1);
+  const mostRecentTurn = findMostRecentAssistantTurnForParticipant(recentConversation, message.authorId);
   if (!mostRecentTurn) {
     return { addressed: false, reason: "no_recent_assistant_turn" };
-  }
-
-  if (mostRecentTurn.role !== "assistant") {
-    return { addressed: false, reason: "recent_turn_not_assistant" };
-  }
-
-  if (mostRecentTurn.participantActorId == null || mostRecentTurn.participantActorId !== message.authorId) {
-    return { addressed: false, reason: "recent_turn_for_different_participant" };
   }
 
   const currentCreatedAt = Date.parse(message.createdAt);
@@ -67,20 +59,27 @@ export function evaluateAddressedness(params: {
   }
 
   const priorInboundMessages = recentMessages.filter((recentMessage) => recentMessage.id !== message.id);
-  const mostRecentPriorInbound = priorInboundMessages[0];
-  if (!mostRecentPriorInbound) {
-    return { addressed: false, reason: "recent_message_not_addressed_to_dot" };
+  const assistantSourceMessageIds = new Set(
+    recentConversation
+      .filter((turn) => turn.role === "assistant" && turn.sourceMessageId != null)
+      .map((turn) => turn.sourceMessageId as string)
+  );
+
+  for (const priorInboundMessage of priorInboundMessages) {
+    if (assistantSourceMessageIds.has(priorInboundMessage.id)) {
+      continue;
+    }
+
+    if (priorInboundMessage.authorId !== message.authorId) {
+      return { addressed: false, reason: "intervening_other_participant_message" };
+    }
+
+    if (isMessageAddressedExplicitly(priorInboundMessage)) {
+      return { addressed: true, reason: "follow_up_context_preserved" };
+    }
   }
 
-  if (mostRecentPriorInbound.authorId !== message.authorId) {
-    return { addressed: false, reason: "intervening_other_participant_message" };
-  }
-
-  if (!isMessageAddressedExplicitly(mostRecentPriorInbound)) {
-    return { addressed: false, reason: "recent_message_not_addressed_to_dot" };
-  }
-
-  return { addressed: true, reason: "follow_up_context_preserved" };
+  return { addressed: false, reason: "recent_message_not_addressed_to_dot" };
 }
 
 export function shouldTreatOwnerMessageAsAddressed(params: {
@@ -99,6 +98,28 @@ function isMessageAddressedExplicitly(message: IncomingMessage): boolean {
     looksLikeExplicitCommand(message.content) ||
     looksLikePlainTextDirectAddress(normalizeContent(message.content))
   );
+}
+
+function findMostRecentAssistantTurnForParticipant(
+  recentConversation: ConversationTurnRecord[],
+  participantActorId: string
+): ConversationTurnRecord | null {
+  for (let index = recentConversation.length - 1; index >= 0; index -= 1) {
+    const turn = recentConversation[index];
+    if (turn.role !== "assistant") {
+      continue;
+    }
+
+    if (turn.participantActorId == null) {
+      continue;
+    }
+
+    if (turn.participantActorId === participantActorId) {
+      return turn;
+    }
+  }
+
+  return null;
 }
 
 function looksLikePlainTextDirectAddress(content: string): boolean {
