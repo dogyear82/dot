@@ -15,8 +15,9 @@ import { createSpanAttributesForEvent, recordToolExecution, startPipelineTimer, 
 import type { Persistence } from "./persistence.js";
 import { isReminderCommand } from "./reminders.js";
 import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
-import type { IncomingMessage } from "./types.js";
+import type { IncomingMessage, WorldLookupSourceName } from "./types.js";
 import { evaluateAddressedness } from "./discord/addressing.js";
+import type { WorldLookupAdapter } from "./worldLookup.js";
 
 const RECENT_CHAT_HISTORY_LIMIT = 10;
 
@@ -28,8 +29,9 @@ export function registerMessagePipeline(params: {
   outlookOAuthClient: MicrosoftOutlookOAuthClient;
   ownerUserId: string;
   persistence: Persistence;
+  worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
 }): () => void {
-  const { bus, calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence } = params;
+  const { bus, calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence, worldLookupAdapters } = params;
 
   return bus.subscribeInboundMessage(async (event) => {
     await withEventContext(event, async () => {
@@ -165,6 +167,12 @@ export function registerMessagePipeline(params: {
               );
             };
 
+            const groundedAnswerService = chatService.generateGroundedReply
+              ? {
+                  generateGroundedReply: chatService.generateGroundedReply.bind(chatService)
+                }
+              : undefined;
+
             if (accessDecision.canUsePrivilegedFeatures) {
               if (!persistence.settings.hasCompletedOnboarding()) {
                 const response = content
@@ -248,21 +256,24 @@ export function registerMessagePipeline(params: {
                 const result = await executeToolDecision({
                   calendarClient,
                   decision: explicitToolDecision,
-                  persistence
+                  groundedAnswerService,
+                  persistence,
+                  worldLookupAdapters
                 });
                 persistence.saveToolExecutionAudit({
                   messageId: event.payload.messageId,
                   toolName: result.toolName,
                   invocationSource: "explicit",
                   status: result.status,
-                  provider: null,
+                  provider: result.route ?? null,
                   detail:
                     result.policyDecision?.reason ??
+                    result.detail ??
                     explicitToolDecision.reason
                 });
                 recordToolExecution({ toolName: result.toolName, status: result.status });
                 pipelineOutcome = result.status === "executed" ? "tool_execute" : "tool_clarify";
-                await publishReply(result.reply);
+                await publishReply(result.reply, result.route ?? "none");
                 return;
               }
 
@@ -306,15 +317,17 @@ export function registerMessagePipeline(params: {
                     const result = await executeToolDecision({
                       calendarClient,
                       decision: inferred.decision,
-                      persistence
+                      groundedAnswerService,
+                      persistence,
+                      worldLookupAdapters
                     });
                     persistence.saveToolExecutionAudit({
                       messageId: event.payload.messageId,
                       toolName: result.toolName,
                       invocationSource: "inferred",
                       status: result.status,
-                      provider: inferred.route,
-                      detail: result.policyDecision?.reason ?? inferred.decision.reason
+                      provider: result.route ?? inferred.route,
+                      detail: result.policyDecision?.reason ?? result.detail ?? inferred.decision.reason
                     });
                     recordToolExecution({ toolName: result.toolName, status: result.status });
                     logger.info(
@@ -322,7 +335,7 @@ export function registerMessagePipeline(params: {
                       "Executed inferred tool decision"
                     );
                     pipelineOutcome = result.status === "executed" ? "tool_execute" : "tool_clarify";
-                    await publishReply(result.reply, inferred.route);
+                    await publishReply(result.reply, result.route ?? inferred.route);
                     return;
                   }
 

@@ -129,7 +129,7 @@ test("auntie_dot prompt includes approved phrases, anti-patterns, and representa
     assert.match(prompt, /dogyear/i);
     assert.match(prompt, /costlytoaster/i);
     assert.match(prompt, /\[Approved Phrases\]/);
-    assert.match(prompt, /Well hey there, deary\./);
+    assert.match(prompt, /Well hey there, cupcake\./);
     assert.match(prompt, /\[Avoided Phrases\]/);
     assert.match(prompt, /How can I assist you today\?/);
     assert.match(prompt, /\[Dialogue Examples\]/);

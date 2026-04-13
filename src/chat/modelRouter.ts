@@ -2,7 +2,13 @@ import type { AppConfig } from "../config.js";
 import { SpanKind } from "@opentelemetry/api";
 import { startLlmTimer, withSpan } from "../observability.js";
 import type { SettingsStore } from "../settings.js";
-import type { ConversationTurnRecord } from "../types.js";
+import type {
+  ConversationTurnRecord,
+  WorldLookupEvidenceRecord,
+  WorldLookupQueryBucket,
+  WorldLookupSourceFailure,
+  WorldLookupSourceName
+} from "../types.js";
 import { buildToolInferencePrompt, inferDeterministicToolDecision, parseToolDecision, type ToolDecision } from "../toolInvocation.js";
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
 import { OllamaChatProvider, OneMinAiChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
@@ -14,6 +20,15 @@ export type LlmPowerStatus = "off" | "standby" | "engaged";
 export interface LlmService {
   generateOwnerReply(params: {
     userMessage: string;
+    recentConversation?: ConversationTurnRecord[];
+  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
+  generateGroundedReply?(params: {
+    userMessage: string;
+    evidence: WorldLookupEvidenceRecord[];
+    bucket: WorldLookupQueryBucket;
+    selectedSources: WorldLookupSourceName[];
+    failures: WorldLookupSourceFailure[];
+    outcome: "success" | "partial_failure" | "no_evidence";
     recentConversation?: ConversationTurnRecord[];
   }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
   inferToolDecision(userMessage: string): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ToolDecision }>;
@@ -71,6 +86,33 @@ export function createLlmService(params: {
       });
 
       return { route, powerStatus: getPowerStatus(route), reply };
+    },
+    async generateGroundedReply({ userMessage, evidence, bucket, selectedSources, failures, outcome, recentConversation }) {
+      const messages = buildGroundedMessages({
+        userMessage,
+        evidence,
+        bucket,
+        selectedSources,
+        failures,
+        outcome,
+        recentConversation,
+        mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
+        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
+        settings: params.settings
+      });
+      const { route, reply } = await executeProviderRequest({
+        mode: getLlmMode(params.settings),
+        providers,
+        operation: "world_lookup.answer",
+        invoke: (provider) => provider.generate(messages),
+        failurePrefix: "No LLM provider could generate a grounded response."
+      });
+
+      return {
+        route,
+        powerStatus: getPowerStatus(route),
+        reply: appendGroundedLinks(reply, evidence)
+      };
     },
     async inferToolDecision(userMessage) {
       const deterministicDecision = inferDeterministicToolDecision(userMessage);
@@ -218,6 +260,94 @@ function buildMessages(params: {
       content: params.userMessage
     }
   ];
+}
+
+function buildGroundedMessages(params: {
+  userMessage: string;
+  evidence: WorldLookupEvidenceRecord[];
+  bucket: WorldLookupQueryBucket;
+  selectedSources: WorldLookupSourceName[];
+  failures: WorldLookupSourceFailure[];
+  outcome: "success" | "partial_failure" | "no_evidence";
+  recentConversation?: ConversationTurnRecord[];
+  mode: PersonaMode;
+  balance: PersonaBalance;
+  settings: SettingsStore;
+}): ChatMessage[] {
+  const evidenceLines =
+    params.evidence.length > 0
+      ? params.evidence
+          .slice(0, 6)
+          .map(
+            (record, index) =>
+              `${index + 1}. source=${formatWorldLookupSource(record.source)} | title=${record.title} | snippet=${record.snippet} | url=${record.url ?? "none"} | publishedAt=${record.publishedAt ?? "unknown"}`
+          )
+          .join("\n")
+      : "No public evidence was found.";
+
+  const failureLines =
+    params.failures.length > 0
+      ? params.failures.map((failure) => `${formatWorldLookupSource(failure.source)}: ${failure.reason}`).join("; ")
+      : "none";
+
+  return [
+    {
+      role: "system",
+      content: `${buildSystemPrompt({
+        mode: params.mode,
+        balance: params.balance,
+        settings: params.settings
+      })} ${buildCurrentDateTimeInstruction()} Use the supplied external evidence when answering. Stay in the active personality profile. Answer only the user's question. Cite sources naturally in prose, such as 'According to Wikipedia...'. Summarize in your own words. Do not quote long passages or regurgitate article paragraphs. If the evidence is missing or too weak, say you couldn't verify it from the available public sources and do not guess.`
+    },
+    ...(params.recentConversation ?? []).map((turn) => ({
+      role: turn.role,
+      content: turn.content
+    })),
+    {
+      role: "user",
+      content: [
+        `User question: ${params.userMessage}`,
+        `Lookup bucket: ${params.bucket}`,
+        `Lookup outcome: ${params.outcome}`,
+        `Selected sources: ${params.selectedSources.map((source) => formatWorldLookupSource(source)).join(", ")}`,
+        `Source failures: ${failureLines}`,
+        "Evidence:",
+        evidenceLines,
+        "Answer in Dot's normal voice. Mention the source naturally in the sentence when you rely on it. Keep the answer tight."
+      ].join("\n")
+    }
+  ];
+}
+
+function appendGroundedLinks(reply: string, evidence: WorldLookupEvidenceRecord[]): string {
+  const uniqueLinks = Array.from(
+    new Map(
+      evidence
+        .filter((record): record is WorldLookupEvidenceRecord & { url: string } => typeof record.url === "string" && record.url.length > 0)
+        .map((record) => [record.url, record])
+    ).values()
+  ).slice(0, 3);
+
+  if (uniqueLinks.length === 0) {
+    return reply;
+  }
+
+  return `${reply.trimEnd()}\n\nLinks:\n${uniqueLinks.map((record) => `- ${record.url}`).join("\n")}`;
+}
+
+function formatWorldLookupSource(source: WorldLookupSourceName): string {
+  switch (source) {
+    case "wikipedia":
+      return "Wikipedia";
+    case "wikimedia_current_events":
+      return "Wikinews";
+    case "gdelt":
+      return "GDELT";
+    case "open_meteo":
+      return "Open-Meteo";
+    case "world_bank":
+      return "World Bank";
+  }
 }
 
 function formatError(error: unknown): string {
