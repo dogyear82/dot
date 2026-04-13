@@ -404,7 +404,7 @@ test("message pipeline preserves the full owner wording for inferred world.looku
     },
     async generateGroundedReply(params) {
       assert.equal(params.bucket, "current_events");
-      assert.deepEqual(params.selectedSources, ["wikimedia_current_events", "gdelt"]);
+      assert.deepEqual(params.selectedSources, ["newsdata", "wikimedia_current_events", "gdelt"]);
       return {
         route: "hosted",
         powerStatus: "engaged",
@@ -511,6 +511,7 @@ test("message pipeline preserves the full owner wording for inferred world.looku
     assert.equal(audit.provider, "hosted");
     assert.match(audit.detail ?? "", /bucket=current_events/);
     assert.match(audit.detail ?? "", /selectedSources=newsdata,wikimedia_current_events,gdelt/);
+    assert.match(audit.detail ?? "", /retrievalStrategy=current_events_topic_ranked/);
   } finally {
     unsubscribe();
     cleanup();

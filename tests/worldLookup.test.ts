@@ -78,6 +78,8 @@ test("executeWorldLookup runs selected sources in parallel and tolerates partial
   assert.deepEqual(completed, ["wikimedia_current_events"]);
   assert.equal(result.bucket, "current_events");
   assert.deepEqual(result.selectedSources, ["newsdata", "wikimedia_current_events", "gdelt"]);
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.retrievalStrategy, "current_events_topic_ranked");
   assert.equal(result.evidence.length, 1);
   assert.equal(result.failures.length, 2);
   assert.equal(result.failures[0]?.source, "newsdata");
@@ -120,6 +122,8 @@ test("executeWorldLookup tolerates an unconfigured NewsData adapter while using 
 
   assert.equal(result.bucket, "current_events");
   assert.deepEqual(result.selectedSources, ["newsdata", "wikimedia_current_events", "gdelt"]);
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.retrievalStrategy, "current_events_topic_ranked");
   assert.equal(result.evidence.length, 1);
   assert.equal(result.failures.length, 1);
   assert.equal(result.failures[0]?.source, "newsdata");
@@ -157,11 +161,85 @@ test("executeWorldLookup discards irrelevant current-events evidence that does n
   });
 
   assert.equal(result.bucket, "current_events");
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.retrievalStrategy, "current_events_topic_ranked");
   assert.equal(result.outcome, "no_evidence");
   assert.deepEqual(result.evidence, []);
   assert.equal(result.failures.length, 2);
   assert.equal(result.failures[0]?.source, "newsdata");
   assert.equal(result.failures[1]?.source, "gdelt");
+});
+
+test("executeWorldLookup ranks generic headlines queries by source quality and recency instead of keyword literal matches", async () => {
+  const result = await executeWorldLookup({
+    query: "give me the latest headlines",
+    timeoutMs: 100,
+    adapters: {
+      newsdata: {
+        source: "newsdata",
+        async lookup() {
+          return {
+            source: "newsdata",
+            evidence: [
+              createWorldLookupEvidence({
+                source: "newsdata",
+                title: "Global markets react to new tariff threat",
+                url: "https://example.test/newsdata-1",
+                snippet: "Investors reacted sharply across Asia and Europe.",
+                publishedAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+                confidence: "high"
+              }),
+              createWorldLookupEvidence({
+                source: "newsdata",
+                title: "Flood warnings spread across northern Italy",
+                url: "https://example.test/newsdata-2",
+                snippet: "Authorities expanded evacuations after overnight rain.",
+                publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
+                confidence: "high"
+              })
+            ]
+          };
+        }
+      },
+      wikimedia_current_events: {
+        source: "wikimedia_current_events",
+        async lookup() {
+          return {
+            source: "wikimedia_current_events",
+            evidence: [
+              createWorldLookupEvidence({
+                source: "wikimedia_current_events",
+                title: "Old interview mentions headlines",
+                url: "https://example.test/wikinews-old",
+                snippet: "This old feature mentions headlines in passing.",
+                publishedAt: "2024-12-18T10:55:42Z",
+                confidence: "medium"
+              })
+            ]
+          };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          return {
+            source: "gdelt",
+            evidence: []
+          };
+        }
+      }
+    }
+  });
+
+  assert.equal(result.bucket, "current_events");
+  assert.equal(result.retrievalStrategy, "current_events_generic_ranked");
+  assert.equal(result.candidateCount, 3);
+  assert.equal(result.outcome, "success");
+  assert.equal(result.evidence.length, 2);
+  assert.deepEqual(
+    result.evidence.map((record) => record.source),
+    ["newsdata", "newsdata"]
+  );
 });
 
 test("executeWorldLookup reports no_evidence when every selected source fails or returns nothing", async () => {
@@ -183,6 +261,8 @@ test("executeWorldLookup reports no_evidence when every selected source fails or
 
   assert.equal(result.bucket, "weather");
   assert.equal(result.outcome, "no_evidence");
+  assert.equal(result.candidateCount, 0);
+  assert.equal(result.retrievalStrategy, "default");
   assert.deepEqual(result.failures, []);
   assert.deepEqual(result.evidence, []);
 });
@@ -234,8 +314,10 @@ test("executeWorldLookup emits observability attributes for selected sources and
     assert.equal(lookupSpan.attributes["dot.world_lookup.bucket"], "reference");
     assert.equal(lookupSpan.attributes["dot.world_lookup.sources"], "wikipedia");
     assert.equal(lookupSpan.attributes["dot.world_lookup.outcome"], "success");
+    assert.equal(lookupSpan.attributes["dot.world_lookup.candidate_count"], 1);
     assert.equal(lookupSpan.attributes["dot.world_lookup.evidence_count"], 1);
     assert.equal(lookupSpan.attributes["dot.world_lookup.failure_count"], 0);
+    assert.equal(lookupSpan.attributes["dot.world_lookup.retrieval_strategy"], "default");
   } finally {
     await observability.stop();
   }
