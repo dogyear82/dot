@@ -221,6 +221,8 @@ export interface WorldLookupResult {
   evidence: WorldLookupEvidenceRecord[];
   failures: WorldLookupSourceFailure[];
   outcome: "success" | "partial_failure" | "no_evidence";
+  candidateCount: number;
+  retrievalStrategy: "default" | "current_events_topic_ranked" | "current_events_generic_ranked";
 }
 
 export interface PersonalityPresetRecord {

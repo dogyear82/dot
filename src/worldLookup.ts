@@ -129,7 +129,8 @@ export async function executeWorldLookup(params: {
       );
 
       const rawEvidence = settled.flatMap((entry) => (entry.status === "fulfilled" ? entry.result.evidence : []));
-      const evidence = filterWorldLookupEvidence({
+      const candidateCount = rawEvidence.length;
+      const { evidence, retrievalStrategy } = filterWorldLookupEvidence({
         bucket,
         query: params.query,
         evidence: rawEvidence
@@ -149,11 +150,16 @@ export async function executeWorldLookup(params: {
         evidence.length === 0 ? "no_evidence" : failures.length > 0 ? "partial_failure" : "success";
 
       span.setAttribute("dot.world_lookup.selected_source_count", selectedSources.length);
+      span.setAttribute("dot.world_lookup.candidate_count", candidateCount);
       span.setAttribute("dot.world_lookup.evidence_count", evidence.length);
       span.setAttribute("dot.world_lookup.failure_count", failures.length);
       span.setAttribute("dot.world_lookup.outcome", outcome);
+      span.setAttribute("dot.world_lookup.retrieval_strategy", retrievalStrategy);
       if (failures.length > 0) {
         span.setAttribute("dot.world_lookup.failed_sources", failures.map((failure) => failure.source).join(","));
+      }
+      if (evidence.length > 0) {
+        span.setAttribute("dot.world_lookup.selected_evidence_sources", evidence.map((record) => record.source).join(","));
       }
 
       return {
@@ -161,7 +167,9 @@ export async function executeWorldLookup(params: {
         selectedSources,
         evidence,
         failures,
-        outcome
+        outcome,
+        candidateCount,
+        retrievalStrategy
       };
     }
   );
@@ -171,9 +179,12 @@ function filterWorldLookupEvidence(params: {
   bucket: WorldLookupQueryBucket;
   query: string;
   evidence: WorldLookupEvidenceRecord[];
-}): WorldLookupEvidenceRecord[] {
+}): Pick<WorldLookupResult, "evidence" | "retrievalStrategy"> {
   if (params.evidence.length === 0) {
-    return params.evidence;
+    return {
+      evidence: params.evidence,
+      retrievalStrategy: "default"
+    };
   }
 
   if (params.bucket === "current_events") {
@@ -181,7 +192,7 @@ function filterWorldLookupEvidence(params: {
   }
 
   if (params.bucket === "mixed") {
-    const filteredCurrentEvents = filterCurrentEventsEvidence(
+    const { evidence: filteredCurrentEvents } = filterCurrentEventsEvidence(
       params.query,
       params.evidence.filter((record) => record.source === "wikimedia_current_events" || record.source === "gdelt")
     );
@@ -190,22 +201,57 @@ function filterWorldLookupEvidence(params: {
       (record) => record.source !== "wikimedia_current_events" && record.source !== "gdelt"
     );
 
-    return [...nonCurrentEvents, ...filteredCurrentEvents];
+    return {
+      evidence: [...nonCurrentEvents, ...filteredCurrentEvents],
+      retrievalStrategy: "default"
+    };
   }
 
-  return params.evidence;
+  return {
+    evidence: params.evidence,
+    retrievalStrategy: "default"
+  };
 }
 
-function filterCurrentEventsEvidence(query: string, evidence: WorldLookupEvidenceRecord[]): WorldLookupEvidenceRecord[] {
+function filterCurrentEventsEvidence(
+  query: string,
+  evidence: WorldLookupEvidenceRecord[]
+): Pick<WorldLookupResult, "evidence" | "retrievalStrategy"> {
+  const normalizedQuery = normalizeQuery(query);
   const topicTokens = extractTopicTokens(query);
-  if (topicTokens.length === 0) {
-    return evidence;
+  const genericHeadlinesIntent = looksLikeGenericHeadlinesQuery(normalizedQuery);
+  const strategy = genericHeadlinesIntent ? "current_events_generic_ranked" : "current_events_topic_ranked";
+
+  const ranked = evidence
+    .map((record) => ({
+      record,
+      score: scoreCurrentEventsEvidence({
+        query: normalizedQuery,
+        topicTokens,
+        genericHeadlinesIntent,
+        record
+      })
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  if (ranked.length === 0) {
+    return {
+      evidence: [],
+      retrievalStrategy: strategy
+    };
   }
 
-  return evidence.filter((record) => {
-    const haystack = `${record.title} ${record.snippet}`.toLowerCase();
-    return topicTokens.some((token) => haystack.includes(token));
-  });
+  const bestScore = ranked[0]?.score ?? 0;
+  const selected = ranked
+    .filter(({ score }, index) => index === 0 || (index < 3 && score >= bestScore - 2))
+    .slice(0, genericHeadlinesIntent ? 3 : 3)
+    .map(({ record }) => record);
+
+  return {
+    evidence: selected,
+    retrievalStrategy: strategy
+  };
 }
 
 function extractTopicTokens(query: string): string[] {
@@ -278,6 +324,13 @@ function looksLikeCurrentEventsQuery(normalized: string): boolean {
   );
 }
 
+function looksLikeGenericHeadlinesQuery(normalized: string): boolean {
+  return (
+    /\b(latest headlines|top headlines|headline|headlines|top news|news today|today('?s)? news)\b/.test(normalized) ||
+    /\bwhat('?s| is) in the news\b/.test(normalized)
+  );
+}
+
 function looksLikeMixedQuery(normalized: string): boolean {
   const categoryMatches = [
     looksLikeWeatherQuery(normalized),
@@ -327,4 +380,68 @@ export function createWorldLookupEvidence(params: {
     publishedAt: params.publishedAt ?? null,
     confidence: params.confidence ?? "medium"
   };
+}
+
+function scoreCurrentEventsEvidence(params: {
+  query: string;
+  topicTokens: string[];
+  genericHeadlinesIntent: boolean;
+  record: WorldLookupEvidenceRecord;
+}): number {
+  const haystack = normalizeQuery(`${params.record.title} ${params.record.snippet}`);
+  const recencyScore = scoreEvidenceRecency(params.record.publishedAt);
+  const sourceScore = scoreCurrentEventsSource(params.record.source);
+  const confidenceScore = params.record.confidence === "high" ? 2 : params.record.confidence === "medium" ? 1 : 0;
+  const overlapCount = params.topicTokens.filter((token) => haystack.includes(token)).length;
+
+  if (params.genericHeadlinesIntent) {
+    return sourceScore + recencyScore + confidenceScore + (params.record.url ? 1 : 0);
+  }
+
+  if (params.topicTokens.length > 0 && overlapCount === 0) {
+    return -1;
+  }
+
+  return sourceScore + recencyScore + confidenceScore + overlapCount * 3;
+}
+
+function scoreCurrentEventsSource(source: WorldLookupSourceName): number {
+  switch (source) {
+    case "newsdata":
+      return 5;
+    case "gdelt":
+      return 3;
+    case "wikimedia_current_events":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function scoreEvidenceRecency(publishedAt: string | null): number {
+  if (!publishedAt) {
+    return 0;
+  }
+
+  const publishedTime = Date.parse(publishedAt);
+  if (Number.isNaN(publishedTime)) {
+    return 0;
+  }
+
+  const ageMs = Date.now() - publishedTime;
+  if (ageMs < 0) {
+    return 2;
+  }
+
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  if (ageDays <= 2) {
+    return 5;
+  }
+  if (ageDays <= 7) {
+    return 3;
+  }
+  if (ageDays <= 30) {
+    return 1;
+  }
+  return -4;
 }

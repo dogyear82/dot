@@ -514,7 +514,10 @@ function isToolName(value: unknown): value is ExplicitToolName {
 
 function buildWorldLookupAuditDetail(result: WorldLookupResult): string {
   const citedSources = Array.from(new Set(result.evidence.map((record) => record.source))).join(",");
-  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; evidenceCount=${result.evidence.length}; citedSources=${citedSources || "none"}; failureCount=${result.failures.length}`;
+  const chosenEvidence = result.evidence
+    .map((record) => `${record.source}:${record.title}`)
+    .join(" | ");
+  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; retrievalStrategy=${result.retrievalStrategy}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; citedSources=${citedSources || "none"}; failureCount=${result.failures.length}`;
 }
 
 function buildWorldLookupFallbackReply(result: WorldLookupResult): string {

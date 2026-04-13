@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createWorldLookupEvidence, type WorldLookupAdapter } from "./worldLookup.js";
 import type { WorldLookupAdapterResult, WorldLookupEvidenceRecord, WorldLookupSourceName } from "./types.js";
 
+const NEWSDATA_LATEST_URL = "https://newsdata.io/api/1/latest";
 const WIKIPEDIA_SEARCH_URL = "https://en.wikipedia.org/w/api.php";
 const WIKINEWS_SEARCH_URL = "https://en.wikinews.org/w/api.php";
 const GDELT_DOC_API_URL = "https://api.gdeltproject.org/api/v2/doc/doc";
@@ -38,6 +39,24 @@ const gdeltResponseSchema = z.object({
         seendate: z.string().optional().nullable(),
         socialimage: z.string().optional().nullable(),
         domain: z.string().optional().nullable()
+      })
+    )
+    .optional()
+    .default([])
+});
+
+const newsDataResponseSchema = z.object({
+  results: z
+    .array(
+      z.object({
+        article_id: z.string().optional().nullable(),
+        title: z.string().optional().default(""),
+        link: z.string().optional().nullable(),
+        description: z.string().optional().nullable(),
+        content: z.string().optional().nullable(),
+        pubDate: z.string().optional().nullable(),
+        source_name: z.string().optional().nullable(),
+        source_url: z.string().optional().nullable()
       })
     )
     .optional()
@@ -130,6 +149,47 @@ export class WikipediaReferenceAdapter implements WorldLookupAdapter {
   }
 }
 
+export class NewsDataCurrentEventsAdapter implements WorldLookupAdapter {
+  readonly source = "newsdata" as const;
+
+  constructor(
+    private readonly apiKey: string,
+    private readonly fetchImpl: FetchLike = fetch
+  ) {}
+
+  async lookup(params: { query: string; timeoutMs: number }): Promise<WorldLookupAdapterResult> {
+    if (!this.apiKey.trim()) {
+      throw new Error("newsdata adapter not configured");
+    }
+
+    const url = new URL(NEWSDATA_LATEST_URL);
+    url.searchParams.set("apikey", this.apiKey);
+    url.searchParams.set("q", params.query);
+    url.searchParams.set("size", "6");
+    url.searchParams.set("language", "en");
+
+    const payload = newsDataResponseSchema.parse(await fetchJson(this.fetchImpl, url, params.timeoutMs));
+
+    return {
+      source: this.source,
+      evidence: payload.results
+        .filter((article) => article.title.trim().length > 0)
+        .map((article) =>
+          createWorldLookupEvidence({
+            source: this.source,
+            title: article.title,
+            url: article.link ?? article.source_url ?? null,
+            snippet: [article.description, article.content]
+              .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+              ?.trim() ?? (article.source_name ? `Recent reporting from ${article.source_name}.` : "Recent news coverage."),
+            publishedAt: article.pubDate ?? null,
+            confidence: "high"
+          })
+        )
+    };
+  }
+}
+
 export class WikimediaCurrentEventsAdapter implements WorldLookupAdapter {
   readonly source = "wikimedia_current_events" as const;
 
@@ -142,7 +202,7 @@ export class WikimediaCurrentEventsAdapter implements WorldLookupAdapter {
     url.searchParams.set("list", "search");
     url.searchParams.set("srsearch", params.query);
     url.searchParams.set("utf8", "1");
-    url.searchParams.set("srlimit", "3");
+    url.searchParams.set("srlimit", "6");
 
     const payload = wikipediaSearchResponseSchema.parse(await fetchJson(this.fetchImpl, url, params.timeoutMs));
 
@@ -172,7 +232,7 @@ export class GdeltCurrentEventsAdapter implements WorldLookupAdapter {
     url.searchParams.set("query", params.query);
     url.searchParams.set("mode", "artlist");
     url.searchParams.set("format", "json");
-    url.searchParams.set("maxrecords", "3");
+    url.searchParams.set("maxrecords", "6");
     url.searchParams.set("sort", "datedesc");
 
     const payload = gdeltResponseSchema.parse(await fetchJson(this.fetchImpl, url, params.timeoutMs));
@@ -329,8 +389,15 @@ export class WorldBankEconomicsAdapter implements WorldLookupAdapter {
   }
 }
 
-export function createDefaultWorldLookupAdapters(fetchImpl: FetchLike = fetch): Partial<Record<WorldLookupSourceName, WorldLookupAdapter>> {
+export function createDefaultWorldLookupAdapters(params: {
+  fetchImpl?: FetchLike;
+  newsDataApiKey?: string;
+} = {}): Partial<Record<WorldLookupSourceName, WorldLookupAdapter>> {
+  const fetchImpl = params.fetchImpl ?? fetch;
   return {
+    ...(params.newsDataApiKey && params.newsDataApiKey.trim().length > 0
+      ? { newsdata: new NewsDataCurrentEventsAdapter(params.newsDataApiKey, fetchImpl) }
+      : {}),
     wikipedia: new WikipediaReferenceAdapter(fetchImpl),
     wikimedia_current_events: new WikimediaCurrentEventsAdapter(fetchImpl),
     gdelt: new GdeltCurrentEventsAdapter(fetchImpl),
