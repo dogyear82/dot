@@ -84,6 +84,7 @@ function extractArticleRecord(
     extractMetaContent(html, "meta[property=\"og:description\"]");
   const publisher =
     extractMetaContent(html, "meta[property=\"og:site_name\"]") ??
+    record.publisher ??
     extractPublisherFromUrl(record.url) ??
     formatSourceName(record.source);
 

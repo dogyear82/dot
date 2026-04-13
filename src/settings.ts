@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 export type SettingKey =
   | "persona.mode"
   | "persona.balance"
+  | "news.preferences"
   | "personality.activeProfile"
   | "personality.activePreset"
   | "personality.quirkOverrides"
@@ -57,6 +58,13 @@ const settingDefinitions: SettingDefinition[] = [
     allowedValues: ["companion", "balanced", "assistant"],
     defaultValue: "balanced",
     userEditable: true
+  },
+  {
+    key: "news.preferences",
+    label: "News preferences",
+    description: "Stored news interests and outlet preferences",
+    defaultValue: "{\"interestedTopics\":[],\"uninterestedTopics\":[],\"preferredOutlets\":[],\"blockedOutlets\":[]}",
+    userEditable: false
   },
   {
     key: "personality.activeProfile",
