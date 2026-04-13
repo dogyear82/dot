@@ -185,6 +185,12 @@ Messages without a leading `!` are treated as normal conversation and can flow t
 - `nag-only` enables repeated Discord follow-ups.
 - `discord-then-sms` is stored as a setting now, but SMS escalation is deferred until the later SMS story is implemented.
 
+## World Lookup Notes
+
+- `world.lookup` is the grounded external-awareness tool Dot uses for reference, current-events, weather, and economics questions.
+- Current-events lookups can optionally include NewsData.io when `NEWSDATA_API_KEY` is set in the runtime environment.
+- Search-backed answers should cite sources naturally in prose and append supporting links at the bottom instead of dumping long source passages.
+
 ## Outlook Calendar Notes
 
 - Preferred setup is Microsoft device-code OAuth with `OUTLOOK_CLIENT_ID` and optional `OUTLOOK_TENANT_ID`.

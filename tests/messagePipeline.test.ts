@@ -510,7 +510,7 @@ test("message pipeline preserves the full owner wording for inferred world.looku
     assert.equal(audit.status, "executed");
     assert.equal(audit.provider, "hosted");
     assert.match(audit.detail ?? "", /bucket=current_events/);
-    assert.match(audit.detail ?? "", /selectedSources=wikimedia_current_events,gdelt/);
+    assert.match(audit.detail ?? "", /selectedSources=newsdata,wikimedia_current_events,gdelt/);
   } finally {
     unsubscribe();
     cleanup();

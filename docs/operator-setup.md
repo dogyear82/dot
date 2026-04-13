@@ -66,6 +66,7 @@ Recommended additional values:
 - `ONEMINAI_API_KEY`
 - `ONEMINAI_BASE_URL`
 - `ONEMINAI_MODEL`
+- `NEWSDATA_API_KEY` if you want NewsData.io included in current-events lookups
 - `OUTLOOK_CLIENT_ID` if you want Outlook calendar support
 - `OUTLOOK_TENANT_ID` if you want to target a specific Microsoft tenant instead of `common`
 
@@ -79,6 +80,11 @@ For 1minAI chat:
 - `ONEMINAI_BASE_URL=https://api.1min.ai`
 - `ONEMINAI_API_KEY=<your 1minAI API key>`
 - `ONEMINAI_MODEL=<a valid 1minAI chat model>`
+
+For NewsData-backed current-events lookup:
+
+- `NEWSDATA_API_KEY=<your NewsData.io API key>`
+- when unset, Dot falls back to the free/public current-events sources already configured in `world.lookup`
 
 Current implementation note:
 

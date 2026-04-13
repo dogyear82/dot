@@ -21,7 +21,7 @@ const SOURCE_PLANS: Record<WorldLookupQueryBucket, WorldLookupSourcePlan> = {
   },
   current_events: {
     bucket: "current_events",
-    sources: ["wikimedia_current_events", "gdelt"],
+    sources: ["newsdata", "wikimedia_current_events", "gdelt"],
     timeoutMs: DEFAULT_WORLD_LOOKUP_TIMEOUT_MS
   },
   weather: {
@@ -36,7 +36,7 @@ const SOURCE_PLANS: Record<WorldLookupQueryBucket, WorldLookupSourcePlan> = {
   },
   mixed: {
     bucket: "mixed",
-    sources: ["wikipedia", "wikimedia_current_events", "gdelt", "open_meteo", "world_bank"],
+    sources: ["wikipedia", "newsdata", "wikimedia_current_events", "gdelt", "open_meteo", "world_bank"],
     timeoutMs: DEFAULT_WORLD_LOOKUP_TIMEOUT_MS
   }
 };
@@ -183,11 +183,15 @@ function filterWorldLookupEvidence(params: {
   if (params.bucket === "mixed") {
     const filteredCurrentEvents = filterCurrentEventsEvidence(
       params.query,
-      params.evidence.filter((record) => record.source === "wikimedia_current_events" || record.source === "gdelt")
+      params.evidence.filter(
+        (record) =>
+          record.source === "newsdata" || record.source === "wikimedia_current_events" || record.source === "gdelt"
+      )
     );
 
     const nonCurrentEvents = params.evidence.filter(
-      (record) => record.source !== "wikimedia_current_events" && record.source !== "gdelt"
+      (record) =>
+        record.source !== "newsdata" && record.source !== "wikimedia_current_events" && record.source !== "gdelt"
     );
 
     return [...nonCurrentEvents, ...filteredCurrentEvents];

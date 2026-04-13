@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createDefaultWorldLookupAdapters,
   GdeltCurrentEventsAdapter,
+  NewsDataCurrentEventsAdapter,
   OpenMeteoWeatherAdapter,
   WikipediaReferenceAdapter,
   WikimediaCurrentEventsAdapter,
@@ -72,6 +73,52 @@ test("WikimediaCurrentEventsAdapter normalizes current-events search results", a
 
   assert.equal(result.source, "wikimedia_current_events");
   assert.equal(result.evidence[0]?.snippet, "Fresh updates from Myanmar.");
+});
+
+test("NewsDataCurrentEventsAdapter normalizes latest-news results", async () => {
+  const adapter = new NewsDataCurrentEventsAdapter("test-key", async (input) => {
+    const url = String(input);
+    assert.match(url, /newsdata\.io\/api\/1\/latest/);
+    assert.match(url, /apikey=test-key/);
+    assert.match(url, /q=Myanmar/);
+    return createJsonResponse({
+      results: [
+        {
+          article_id: "abc",
+          title: "Myanmar junta extends emergency rule",
+          link: "https://news.example/myanmar",
+          description: "The military government extended emergency measures.",
+          pubDate: "2026-04-12 12:00:00",
+          source_name: "Example News"
+        }
+      ]
+    });
+  });
+
+  const result = await adapter.lookup({
+    query: "Myanmar",
+    timeoutMs: 100
+  });
+
+  assert.equal(result.source, "newsdata");
+  assert.equal(result.evidence[0]?.title, "Myanmar junta extends emergency rule");
+  assert.equal(result.evidence[0]?.url, "https://news.example/myanmar");
+  assert.equal(result.evidence[0]?.snippet, "The military government extended emergency measures.");
+  assert.equal(result.evidence[0]?.publishedAt, "2026-04-12 12:00:00");
+});
+
+test("NewsDataCurrentEventsAdapter rejects lookup when unconfigured", async () => {
+  const adapter = new NewsDataCurrentEventsAdapter("", async () => {
+    throw new Error("fetch should not be called");
+  });
+
+  await assert.rejects(
+    adapter.lookup({
+      query: "Myanmar",
+      timeoutMs: 100
+    }),
+    /not configured/
+  );
 });
 
 test("GdeltCurrentEventsAdapter normalizes article-list results", async () => {
@@ -186,11 +233,23 @@ test("WorldBankEconomicsAdapter resolves a country and normalizes indicator fact
 });
 
 test("createDefaultWorldLookupAdapters exposes the expected public-source registry", () => {
-  const adapters = createDefaultWorldLookupAdapters(async () => createJsonResponse({}));
+  const adapters = createDefaultWorldLookupAdapters({
+    fetchImpl: async () => createJsonResponse({}),
+    newsDataApiKey: "test-key"
+  });
 
+  assert.ok(adapters.newsdata);
   assert.ok(adapters.wikipedia);
   assert.ok(adapters.wikimedia_current_events);
   assert.ok(adapters.gdelt);
   assert.ok(adapters.open_meteo);
   assert.ok(adapters.world_bank);
+});
+
+test("createDefaultWorldLookupAdapters omits NewsData when no API key is configured", () => {
+  const adapters = createDefaultWorldLookupAdapters({
+    fetchImpl: async () => createJsonResponse({})
+  });
+
+  assert.equal(adapters.newsdata, undefined);
 });

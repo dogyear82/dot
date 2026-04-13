@@ -532,6 +532,8 @@ function formatWorldLookupSource(source: WorldLookupSourceName): string {
   switch (source) {
     case "wikipedia":
       return "Wikipedia";
+    case "newsdata":
+      return "NewsData.io";
     case "wikimedia_current_events":
       return "Wikinews";
     case "gdelt":
