@@ -53,6 +53,7 @@ test("WikimediaCurrentEventsAdapter normalizes current-events search results", a
   const adapter = new WikimediaCurrentEventsAdapter(async (input) => {
     const url = String(input);
     assert.match(url, /en\.wikinews\.org/);
+    assert.match(url, /srlimit=6/);
     return createJsonResponse({
       query: {
         search: [
@@ -81,6 +82,7 @@ test("NewsDataCurrentEventsAdapter normalizes latest-news results", async () => 
     assert.match(url, /newsdata\.io\/api\/1\/latest/);
     assert.match(url, /apikey=test-key/);
     assert.match(url, /q=Myanmar/);
+    assert.match(url, /size=6/);
     return createJsonResponse({
       results: [
         {
@@ -125,6 +127,7 @@ test("GdeltCurrentEventsAdapter normalizes article-list results", async () => {
   const adapter = new GdeltCurrentEventsAdapter(async (input) => {
     const url = String(input);
     assert.match(url, /gdeltproject/);
+    assert.match(url, /maxrecords=6/);
     return createJsonResponse({
       articles: [
         {

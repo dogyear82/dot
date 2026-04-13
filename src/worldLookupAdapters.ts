@@ -165,7 +165,7 @@ export class NewsDataCurrentEventsAdapter implements WorldLookupAdapter {
     const url = new URL(NEWSDATA_LATEST_URL);
     url.searchParams.set("apikey", this.apiKey);
     url.searchParams.set("q", params.query);
-    url.searchParams.set("size", "3");
+    url.searchParams.set("size", "6");
     url.searchParams.set("language", "en");
 
     const payload = newsDataResponseSchema.parse(await fetchJson(this.fetchImpl, url, params.timeoutMs));
@@ -202,7 +202,7 @@ export class WikimediaCurrentEventsAdapter implements WorldLookupAdapter {
     url.searchParams.set("list", "search");
     url.searchParams.set("srsearch", params.query);
     url.searchParams.set("utf8", "1");
-    url.searchParams.set("srlimit", "3");
+    url.searchParams.set("srlimit", "6");
 
     const payload = wikipediaSearchResponseSchema.parse(await fetchJson(this.fetchImpl, url, params.timeoutMs));
 
@@ -232,7 +232,7 @@ export class GdeltCurrentEventsAdapter implements WorldLookupAdapter {
     url.searchParams.set("query", params.query);
     url.searchParams.set("mode", "artlist");
     url.searchParams.set("format", "json");
-    url.searchParams.set("maxrecords", "3");
+    url.searchParams.set("maxrecords", "6");
     url.searchParams.set("sort", "datedesc");
 
     const payload = gdeltResponseSchema.parse(await fetchJson(this.fetchImpl, url, params.timeoutMs));
