@@ -518,6 +518,220 @@ test("message pipeline preserves the full owner wording for inferred world.looku
   }
 });
 
+test("message pipeline saves topical current-events lookups for later follow-up in the same conversation", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  let inferenceCount = 0;
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("topic news flow should not fall back to normal chat");
+    },
+    async generateGroundedReply(params) {
+      if (params.userMessage.includes("OpenAI")) {
+        return {
+          route: "hosted",
+          powerStatus: "engaged",
+          reply: "According to Reuters, OpenAI is expanding its enterprise push.\n\nLinks:\n- https://example.test/openai-1"
+        };
+      }
+
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        reply: "According to AP, the follow-up story says OpenAI also signed new government customers.\n\nLinks:\n- https://example.test/openai-2"
+      };
+    },
+    async generateStoryFollowUpReply(params) {
+      assert.equal(params.selectedItem.ordinal, 2);
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        reply: "According to AP, OpenAI also signed new government customers.\n\nLinks:\n- https://example.test/openai-2"
+      };
+    },
+    async inferToolDecision() {
+      inferenceCount += 1;
+      if (inferenceCount === 1) {
+        return {
+          route: "hosted",
+          powerStatus: "engaged",
+          decision: {
+            decision: "execute",
+            toolName: "world.lookup",
+            reason: "owner wants recent topic news",
+            args: {
+              query: "OpenAI"
+            }
+          }
+        };
+      }
+
+      return {
+        route: "local",
+        powerStatus: "standby",
+        decision: {
+          decision: "execute",
+          toolName: "news.follow_up",
+          reason: "owner is following up on a saved topic story",
+          args: {
+            query: "tell me more about the second one"
+          }
+        }
+      };
+    },
+    getPowerStatus(route) {
+      return route === "hosted" ? "engaged" : "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence,
+    worldLookupAdapters: {
+      newsdata: {
+        source: "newsdata",
+        async lookup({ query }) {
+          assert.match(query, /openai/i);
+          return {
+            source: "newsdata",
+            evidence: [
+              {
+                source: "newsdata",
+                title: "OpenAI expands enterprise sales",
+                url: "https://example.test/openai-1",
+                snippet: "Reuters reports OpenAI expanded its enterprise push.",
+                publishedAt: "2026-04-13T09:00:00Z",
+                publisher: "Reuters",
+                confidence: "high"
+              },
+              {
+                source: "newsdata",
+                title: "OpenAI signs new government customers",
+                url: "https://example.test/openai-2",
+                snippet: "AP reports OpenAI signed additional government customers.",
+                publishedAt: "2026-04-13T08:00:00Z",
+                publisher: "AP",
+                confidence: "medium"
+              }
+            ]
+          };
+        }
+      },
+      wikimedia_current_events: {
+        source: "wikimedia_current_events",
+        async lookup() {
+          return {
+            source: "wikimedia_current_events",
+            evidence: []
+          };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          return {
+            source: "gdelt",
+            evidence: []
+          };
+        }
+      }
+    }
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        correlation: {
+          correlationId: "corr-topic-news",
+          causationId: null,
+          conversationId: "channel-topic",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-topic-news",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "what's the latest on OpenAI?",
+          addressedContent: "what's the latest on OpenAI?",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-topic",
+            guildId: null,
+            replyTo: "msg-topic-news"
+          }
+        }
+      })
+    );
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        correlation: {
+          correlationId: "corr-follow-up",
+          causationId: null,
+          conversationId: "channel-topic",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-topic-follow-up",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "tell me more about the second one",
+          addressedContent: "tell me more about the second one",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-topic",
+            guildId: null,
+            replyTo: "msg-topic-follow-up"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 2);
+    assert.match(outbound[0]?.payload.content ?? "", /According to Reuters/i);
+    assert.match(outbound[1]?.payload.content ?? "", /According to AP/i);
+
+    const session = persistence.getLatestNewsBrowseSession("channel-topic");
+    assert.equal(session?.kind, "topic_lookup");
+
+    const audit = persistence.db
+      .prepare("SELECT tool_name, status, provider, detail FROM tool_execution_audit WHERE message_id = ?")
+      .get("msg-topic-news") as { tool_name: string; status: string; provider: string | null; detail: string | null };
+
+    assert.equal(audit.tool_name, "world.lookup");
+    assert.match(audit.detail ?? "", /topicSessionSaved=yes/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline turns incomplete explicit tool commands into clarification prompts", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();

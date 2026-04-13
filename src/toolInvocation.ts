@@ -292,7 +292,7 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
   },
   "world.lookup": {
     toolName: "world.lookup",
-    async executeDetailed({ args, persistence, groundedAnswerService, worldLookupAdapters, articleReader }) {
+    async executeDetailed({ args, persistence, conversationId, groundedAnswerService, worldLookupAdapters, articleReader }) {
       const query = getRequiredStringArg(args, "query");
       const newsPreferences = getNewsPreferences(persistence.settings);
       const lookupResult = await executeWorldLookup({
@@ -307,7 +307,33 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
             })
           : { articles: [], failures: [] };
 
-      const detail = buildWorldLookupAuditDetail(lookupResult, articleReadResult, newsPreferences);
+      const topicSessionSaved =
+        Boolean(conversationId) &&
+        lookupResult.bucket === "current_events" &&
+        lookupResult.retrievalStrategy === "current_events_topic_ranked" &&
+        lookupResult.evidence.length > 0;
+
+      if (topicSessionSaved && conversationId) {
+        persistence.saveNewsBrowseSession({
+          kind: "topic_lookup",
+          conversationId,
+          query,
+          savedAt: new Date().toISOString(),
+          items: lookupResult.evidence.map((record, index) => ({
+            ordinal: index + 1,
+            title: record.title,
+            url: record.url,
+            source: record.source,
+            publisher: record.publisher ?? null,
+            snippet: record.snippet,
+            publishedAt: record.publishedAt
+          }))
+        });
+      }
+
+      const detail = buildWorldLookupAuditDetail(lookupResult, articleReadResult, newsPreferences, {
+        topicSessionSaved
+      });
 
       if (!groundedAnswerService) {
         return {
@@ -763,14 +789,17 @@ function buildWorldLookupAuditDetail(
     uninterestedTopics: [],
     preferredOutlets: [],
     blockedOutlets: []
-  }
+  },
+  options: {
+    topicSessionSaved?: boolean;
+  } = {}
 ): string {
   const citedSources = Array.from(new Set(result.evidence.map((record) => record.source))).join(",");
   const chosenEvidence = result.evidence
     .map((record) => `${record.source}:${record.title}${record.rankingSignals?.length ? `[${record.rankingSignals.join(",")}]` : ""}`)
     .join(" | ");
   const articleTitles = articleReadResult.articles.map((article) => article.title).join(" | ");
-  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; retrievalStrategy=${result.retrievalStrategy}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; citedSources=${citedSources || "none"}; articleReadCount=${articleReadResult.articles.length}; articleTitles=${articleTitles || "none"}; articleReadFailures=${articleReadResult.failures.length}; preferenceCounts=interested:${preferences.interestedTopics.length},uninterested:${preferences.uninterestedTopics.length},preferred:${preferences.preferredOutlets.length},blocked:${preferences.blockedOutlets.length}; failureCount=${result.failures.length}`;
+  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; retrievalStrategy=${result.retrievalStrategy}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; citedSources=${citedSources || "none"}; articleReadCount=${articleReadResult.articles.length}; articleTitles=${articleTitles || "none"}; articleReadFailures=${articleReadResult.failures.length}; topicSessionSaved=${options.topicSessionSaved ? "yes" : "no"}; preferenceCounts=interested:${preferences.interestedTopics.length},uninterested:${preferences.uninterestedTopics.length},preferred:${preferences.preferredOutlets.length},blocked:${preferences.blockedOutlets.length}; failureCount=${result.failures.length}`;
 }
 
 function buildWorldLookupFallbackReply(result: WorldLookupResult): string {
