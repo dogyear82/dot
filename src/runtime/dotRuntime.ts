@@ -12,6 +12,7 @@ import { MicrosoftGraphOutlookCalendarClient } from "../outlookCalendar.js";
 import { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
 import { initializePersistence } from "../persistence.js";
 import { startReminderScheduler } from "../reminders.js";
+import { createDefaultWorldLookupAdapters } from "../worldLookupAdapters.js";
 import type { ServiceHost, ServiceStatus } from "./serviceHost.js";
 import { createServiceCoordinator, createServiceHost } from "./serviceHost.js";
 
@@ -33,6 +34,9 @@ export async function createDotRuntime(params: {
   const chatService = createLlmService({
     config,
     settings: persistence.settings
+  });
+  const worldLookupAdapters = createDefaultWorldLookupAdapters({
+    newsDataApiKey: config.NEWSDATA_API_KEY
   });
 
   let unregisterMessagePipeline: (() => void) | undefined;
@@ -123,7 +127,8 @@ export async function createDotRuntime(params: {
           logger,
           outlookOAuthClient,
           ownerUserId: config.DISCORD_OWNER_USER_ID,
-          persistence
+          persistence,
+          worldLookupAdapters
         });
       },
       stop() {

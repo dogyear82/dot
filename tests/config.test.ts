@@ -15,6 +15,7 @@ test("loadConfig applies defaults for optional values", () => {
   assert.equal(config.NATS_URL, "nats://localhost:4222");
   assert.equal(config.OLLAMA_BASE_URL, "http://ollama:11434");
   assert.equal(config.OLLAMA_MODEL, "llama3.1:8b");
+  assert.equal(config.NEWSDATA_API_KEY, "");
   assert.equal(config.OUTLOOK_TENANT_ID, "common");
   assert.equal(config.OUTLOOK_OAUTH_SCOPES, "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite Mail.Send");
   assert.equal(config.OUTLOOK_REQUEST_TIMEOUT_MS, 20000);

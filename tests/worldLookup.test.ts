@@ -31,7 +31,7 @@ test("selectWorldLookupSourcePlan returns explicit source plans per bucket", () 
 
   assert.deepEqual(selectWorldLookupSourcePlan("current_events"), {
     bucket: "current_events",
-    sources: ["wikimedia_current_events", "gdelt"],
+    sources: ["newsdata", "wikimedia_current_events", "gdelt"],
     timeoutMs: 4000
   });
 });
@@ -77,10 +77,52 @@ test("executeWorldLookup runs selected sources in parallel and tolerates partial
   assert.deepEqual(started.sort(), ["gdelt", "wikimedia_current_events"]);
   assert.deepEqual(completed, ["wikimedia_current_events"]);
   assert.equal(result.bucket, "current_events");
-  assert.deepEqual(result.selectedSources, ["wikimedia_current_events", "gdelt"]);
+  assert.deepEqual(result.selectedSources, ["newsdata", "wikimedia_current_events", "gdelt"]);
+  assert.equal(result.evidence.length, 1);
+  assert.equal(result.failures.length, 2);
+  assert.equal(result.failures[0]?.source, "newsdata");
+  assert.equal(result.failures[1]?.source, "gdelt");
+  assert.equal(result.outcome, "partial_failure");
+});
+
+test("executeWorldLookup tolerates an unconfigured NewsData adapter while using the remaining current-events sources", async () => {
+  const result = await executeWorldLookup({
+    query: "What is happening in Myanmar right now?",
+    timeoutMs: 100,
+    adapters: {
+      wikimedia_current_events: {
+        source: "wikimedia_current_events",
+        async lookup() {
+          return {
+            source: "wikimedia_current_events",
+            evidence: [
+              createWorldLookupEvidence({
+                source: "wikimedia_current_events",
+                title: "Myanmar current events",
+                url: "https://example.test/wikimedia",
+                snippet: "Recent events summary for Myanmar"
+              })
+            ]
+          };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          return {
+            source: "gdelt",
+            evidence: []
+          };
+        }
+      }
+    }
+  });
+
+  assert.equal(result.bucket, "current_events");
+  assert.deepEqual(result.selectedSources, ["newsdata", "wikimedia_current_events", "gdelt"]);
   assert.equal(result.evidence.length, 1);
   assert.equal(result.failures.length, 1);
-  assert.equal(result.failures[0]?.source, "gdelt");
+  assert.equal(result.failures[0]?.source, "newsdata");
   assert.equal(result.outcome, "partial_failure");
 });
 
@@ -117,8 +159,9 @@ test("executeWorldLookup discards irrelevant current-events evidence that does n
   assert.equal(result.bucket, "current_events");
   assert.equal(result.outcome, "no_evidence");
   assert.deepEqual(result.evidence, []);
-  assert.equal(result.failures.length, 1);
-  assert.equal(result.failures[0]?.source, "gdelt");
+  assert.equal(result.failures.length, 2);
+  assert.equal(result.failures[0]?.source, "newsdata");
+  assert.equal(result.failures[1]?.source, "gdelt");
 });
 
 test("executeWorldLookup reports no_evidence when every selected source fails or returns nothing", async () => {

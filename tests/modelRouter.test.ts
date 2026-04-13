@@ -38,6 +38,7 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     ONEMINAI_API_KEY: "",
     ONEMINAI_BASE_URL: "",
     ONEMINAI_MODEL: "",
+    NEWSDATA_API_KEY: "",
     MODEL_REQUEST_TIMEOUT_MS: 20000,
     OUTLOOK_ACCESS_TOKEN: "",
     OUTLOOK_CLIENT_ID: "",
