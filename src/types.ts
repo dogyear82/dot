@@ -181,6 +181,48 @@ export interface ToolExecutionAuditRecord {
   detail: string | null;
 }
 
+export type WorldLookupQueryBucket = "reference" | "current_events" | "weather" | "economics" | "mixed";
+
+export type WorldLookupSourceName =
+  | "wikipedia"
+  | "wikimedia_current_events"
+  | "gdelt"
+  | "open_meteo"
+  | "world_bank";
+
+export interface WorldLookupEvidenceRecord {
+  source: WorldLookupSourceName;
+  title: string;
+  url: string | null;
+  snippet: string;
+  publishedAt: string | null;
+  confidence: "high" | "medium" | "low";
+}
+
+export interface WorldLookupAdapterResult {
+  source: WorldLookupSourceName;
+  evidence: WorldLookupEvidenceRecord[];
+}
+
+export interface WorldLookupSourceFailure {
+  source: WorldLookupSourceName;
+  reason: string;
+}
+
+export interface WorldLookupSourcePlan {
+  bucket: WorldLookupQueryBucket;
+  sources: WorldLookupSourceName[];
+  timeoutMs: number;
+}
+
+export interface WorldLookupResult {
+  bucket: WorldLookupQueryBucket;
+  selectedSources: WorldLookupSourceName[];
+  evidence: WorldLookupEvidenceRecord[];
+  failures: WorldLookupSourceFailure[];
+  outcome: "success" | "partial_failure" | "no_evidence";
+}
+
 export interface PersonalityPresetRecord {
   name: string;
   selfConcept: string;
