@@ -297,6 +297,115 @@ test("executeToolDecision executes world.lookup and returns grounded reply metad
   }
 });
 
+test("executeToolDecision saves topical current-events lookups for follow-up exploration", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const result = await executeToolDecision({
+      calendarClient: {
+        async listUpcomingEvents() {
+          return [];
+        }
+      },
+      conversationId: "channel-topic",
+      decision: {
+        decision: "execute",
+        toolName: "world.lookup",
+        reason: "owner wants topic news",
+        args: {
+          query: "what's the latest on OpenAI?"
+        }
+      },
+      persistence,
+      groundedAnswerService: {
+        async generateGroundedReply() {
+          return {
+            route: "hosted",
+            powerStatus: "engaged",
+            reply: "According to Reuters and AP, OpenAI is expanding its enterprise push.\n\nLinks:\n- https://example.test/openai-1"
+          };
+        }
+      },
+      articleReader: {
+        async read() {
+          return {
+            articles: [
+              {
+                source: "newsdata",
+                title: "OpenAI expands enterprise sales",
+                url: "https://example.test/openai-1",
+                publisher: "Reuters",
+                publishedAt: "2026-04-13T09:00:00Z",
+                excerpt: "OpenAI expanded its enterprise sales effort and signed new platform customers."
+              }
+            ],
+            failures: []
+          };
+        }
+      },
+      worldLookupAdapters: {
+        newsdata: {
+          source: "newsdata",
+          async lookup() {
+            return {
+              source: "newsdata",
+              evidence: [
+                {
+                  source: "newsdata",
+                  title: "OpenAI expands enterprise sales",
+                  url: "https://example.test/openai-1",
+                  snippet: "Reuters reports OpenAI expanded its enterprise push.",
+                  publishedAt: "2026-04-13T09:00:00Z",
+                  publisher: "Reuters",
+                  confidence: "high"
+                },
+                {
+                  source: "newsdata",
+                  title: "OpenAI signs new government customers",
+                  url: "https://example.test/openai-2",
+                  snippet: "AP reports OpenAI signed additional government customers.",
+                  publishedAt: "2026-04-13T08:00:00Z",
+                  publisher: "AP",
+                  confidence: "medium"
+                }
+              ]
+            };
+          }
+        },
+        wikimedia_current_events: {
+          source: "wikimedia_current_events",
+          async lookup() {
+            return {
+              source: "wikimedia_current_events",
+              evidence: []
+            };
+          }
+        },
+        gdelt: {
+          source: "gdelt",
+          async lookup() {
+            return {
+              source: "gdelt",
+              evidence: []
+            };
+          }
+        }
+      }
+    });
+
+    const session = persistence.getLatestNewsBrowseSession("channel-topic");
+    assert.equal(result.status, "executed");
+    assert.equal(session?.kind, "topic_lookup");
+    assert.equal(session?.query, "what's the latest on OpenAI?");
+    assert.equal(session?.items.length, 2);
+    assert.equal(session?.items[0]?.publisher, "Reuters");
+    assert.match(result.detail ?? "", /topicSessionSaved=yes/);
+    assert.match(result.detail ?? "", /retrievalStrategy=current_events_topic_ranked/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("executeToolDecision reads selected current-events articles before grounded synthesis", async () => {
   const { persistence, cleanup } = createPersistence();
 
