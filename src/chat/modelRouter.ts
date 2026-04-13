@@ -33,6 +33,14 @@ export interface LlmService {
     outcome: "success" | "partial_failure" | "no_evidence";
     recentConversation?: ConversationTurnRecord[];
   }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
+  generateNewsBriefingReply?(params: {
+    userMessage: string;
+    evidence: WorldLookupEvidenceRecord[];
+    selectedSources: WorldLookupSourceName[];
+    failures: WorldLookupSourceFailure[];
+    outcome: "success" | "partial_failure" | "no_evidence";
+    recentConversation?: ConversationTurnRecord[];
+  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
   inferToolDecision(userMessage: string): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ToolDecision }>;
   getPowerStatus(route?: LlmRoute): LlmPowerStatus;
 }
@@ -109,6 +117,32 @@ export function createLlmService(params: {
         operation: "world_lookup.answer",
         invoke: (provider) => provider.generate(messages),
         failurePrefix: "No LLM provider could generate a grounded response."
+      });
+
+      return {
+        route,
+        powerStatus: getPowerStatus(route),
+        reply: appendGroundedLinks(reply, evidence)
+      };
+    },
+    async generateNewsBriefingReply({ userMessage, evidence, selectedSources, failures, outcome, recentConversation }) {
+      const messages = buildNewsBriefingMessages({
+        userMessage,
+        evidence,
+        selectedSources,
+        failures,
+        outcome,
+        recentConversation,
+        mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
+        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
+        settings: params.settings
+      });
+      const { route, reply } = await executeProviderRequest({
+        mode: getLlmMode(params.settings),
+        providers,
+        operation: "news_briefing.answer",
+        invoke: (provider) => provider.generate(messages),
+        failurePrefix: "No LLM provider could generate a news briefing."
       });
 
       return {
@@ -330,6 +364,61 @@ function buildGroundedMessages(params: {
         "Article extracts:",
         articleLines,
         "Answer in Dot's normal voice. Mention the source naturally in the sentence when you rely on it. Keep the answer tight."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildNewsBriefingMessages(params: {
+  userMessage: string;
+  evidence: WorldLookupEvidenceRecord[];
+  selectedSources: WorldLookupSourceName[];
+  failures: WorldLookupSourceFailure[];
+  outcome: "success" | "partial_failure" | "no_evidence";
+  recentConversation?: ConversationTurnRecord[];
+  mode: PersonaMode;
+  balance: PersonaBalance;
+  settings: SettingsStore;
+}): ChatMessage[] {
+  const evidenceLines =
+    params.evidence.length > 0
+      ? params.evidence
+          .slice(0, 6)
+          .map(
+            (record, index) =>
+              `${index + 1}. title=${record.title} | publisher=${record.publisher ?? formatWorldLookupSource(record.source)} | snippet=${record.snippet} | rankingSignals=${record.rankingSignals?.join(",") ?? "none"} | url=${record.url ?? "none"} | publishedAt=${record.publishedAt ?? "unknown"}`
+          )
+          .join("\n")
+      : "No briefing evidence was found.";
+
+  const failureLines =
+    params.failures.length > 0
+      ? params.failures.map((failure) => `${formatWorldLookupSource(failure.source)}: ${failure.reason}`).join("; ")
+      : "none";
+
+  return [
+    {
+      role: "system",
+      content: `${buildSystemPrompt({
+        mode: params.mode,
+        balance: params.balance,
+        settings: params.settings
+      })} ${buildCurrentDateTimeInstruction()} You are preparing a concise news briefing. Stay in the active personality profile. Use the supplied external evidence only. Make it clear this information was looked up, not remembered. Give a short list of 4 to 5 headlines when enough evidence exists. Blend major world news with stories that seem especially relevant to the owner's stored interests when the evidence supports that mix. Keep each item brief. Cite the outlet naturally in each item. Do not dump raw articles or long summaries. If the evidence is weak, say you could not assemble a reliable briefing from the available sources.`
+    },
+    ...(params.recentConversation ?? []).map((turn) => ({
+      role: turn.role,
+      content: turn.content
+    })),
+    {
+      role: "user",
+      content: [
+        `Owner request: ${params.userMessage}`,
+        `Lookup outcome: ${params.outcome}`,
+        `Selected sources: ${params.selectedSources.map((source) => formatWorldLookupSource(source)).join(", ")}`,
+        `Source failures: ${failureLines}`,
+        "Briefing evidence:",
+        evidenceLines,
+        "Answer as a compact shortlist in Dot's normal voice."
       ].join("\n")
     }
   ];

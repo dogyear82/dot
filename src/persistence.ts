@@ -20,6 +20,7 @@ import type {
   EmailActionStatus,
   IncomingMessage,
   MailTriageDecisionRecord,
+  NewsBrowseSessionRecord,
   OAuthDeviceFlowRecord,
   OAuthTokenRecord,
   PendingContactClassificationRecord,
@@ -81,6 +82,8 @@ export interface Persistence {
   }): void;
   listDetectedMailMessages(limit?: number): DetectedMailMessageRecord[];
   clearDetectedMailMessage(messageId: string): void;
+  getLatestNewsBrowseSession(conversationId: string): NewsBrowseSessionRecord | null;
+  saveNewsBrowseSession(record: NewsBrowseSessionRecord): void;
   createEmailAction(record: {
     contactQuery: string;
     contactId?: number | null;
@@ -1204,6 +1207,21 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     clearWorkerState(key) {
       clearWorkerStateStatement.run(key);
     },
+    getLatestNewsBrowseSession(conversationId) {
+      const raw = getWorkerStateStatement.get(newsBrowseSessionKey(conversationId))?.value ?? null;
+      if (!raw) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(raw) as NewsBrowseSessionRecord;
+      } catch {
+        return null;
+      }
+    },
+    saveNewsBrowseSession(record) {
+      upsertWorkerStateStatement.run(newsBrowseSessionKey(record.conversationId), JSON.stringify(record));
+    },
     getMailTriageDecision(messageId) {
       return getMailTriageDecisionStatement.get(messageId) ?? null;
     },
@@ -1578,6 +1596,10 @@ function ensureColumn(db: Database.Database, tableName: string, columnName: stri
   }
 
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+}
+
+function newsBrowseSessionKey(conversationId: string): string {
+  return `newsBrowseSession:${conversationId}`;
 }
 
 function normalizeContactValue(value: string): string {

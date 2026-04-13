@@ -237,11 +237,37 @@ export interface WorldLookupResult {
   retrievalStrategy: "default" | "current_events_topic_ranked" | "current_events_generic_ranked";
 }
 
+export interface NewsBriefingResult {
+  selectedSources: WorldLookupSourceName[];
+  evidence: WorldLookupEvidenceRecord[];
+  failures: WorldLookupSourceFailure[];
+  outcome: "success" | "partial_failure" | "no_evidence";
+  candidateCount: number;
+}
+
 export interface NewsPreferences {
   interestedTopics: string[];
   uninterestedTopics: string[];
   preferredOutlets: string[];
   blockedOutlets: string[];
+}
+
+export interface NewsBrowseSessionItemRecord {
+  ordinal: number;
+  title: string;
+  url: string | null;
+  source: WorldLookupSourceName;
+  publisher: string | null;
+  snippet: string;
+  publishedAt: string | null;
+}
+
+export interface NewsBrowseSessionRecord {
+  kind: "briefing" | "topic_lookup";
+  conversationId: string;
+  query: string;
+  savedAt: string;
+  items: NewsBrowseSessionItemRecord[];
 }
 
 export interface PersonalityPresetRecord {

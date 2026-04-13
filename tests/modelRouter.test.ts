@@ -403,6 +403,48 @@ test("llm service includes article extracts for grounded current-events answers"
   assert.match(capturedMessages[0]?.[1]?.content ?? "", /publisher=Reuters/);
 });
 
+test("llm service can generate a news briefing in the active voice", async () => {
+  const store = createStore();
+  const capturedMessages: ChatMessage[][] = [];
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", "local", true, async (messages) => {
+        capturedMessages.push(messages);
+        return "Well, deary, here are the main headlines.\n1. According to Reuters, Myanmar's junta extended emergency rule.";
+      })
+    ]
+  });
+
+  const result = await service.generateNewsBriefingReply?.({
+    userMessage: "give me the latest headlines",
+    selectedSources: ["newsdata", "gdelt"],
+    failures: [],
+    outcome: "success",
+    evidence: [
+      {
+        source: "newsdata",
+        title: "Myanmar junta extends emergency rule",
+        url: "https://example.test/myanmar",
+        snippet: "Reuters reports the military government extended emergency rule.",
+        publishedAt: "2026-04-11T08:00:00Z",
+        publisher: "Reuters",
+        rankingSignals: ["interested:myanmar"],
+        confidence: "high"
+      }
+    ]
+  });
+
+  assert(result);
+  assert.match(result.reply, /main headlines/i);
+  assert.match(result.reply, /Links:\n- https:\/\/example\.test\/myanmar/);
+  assert.match(capturedMessages[0]?.[0]?.content ?? "", /preparing a concise news briefing/i);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Briefing evidence:/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /rankingSignals=interested:myanmar/);
+});
+
 test("getLlmMode defaults to normal when unset", () => {
   const store = createStore();
   assert.equal(getLlmMode(store), "normal");

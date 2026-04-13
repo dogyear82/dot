@@ -1069,3 +1069,141 @@ test("message pipeline routes news preference commands deterministically", async
     cleanup();
   }
 });
+
+test("message pipeline executes inferred news.briefing and records briefing audit detail", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("news briefing should not fall back to normal chat");
+    },
+    async generateGroundedReply() {
+      throw new Error("news briefing should not use grounded reply");
+    },
+    async generateNewsBriefingReply(params) {
+      assert.equal(params.selectedSources[0], "newsdata");
+      return {
+        route: "local",
+        powerStatus: "standby",
+        reply: "Well, deary, here are the main headlines.\n1. According to Reuters, Myanmar's junta extended emergency rule.\n\nLinks:\n- https://example.test/myanmar"
+      };
+    },
+    async inferToolDecision() {
+      return {
+        route: "local",
+        powerStatus: "standby",
+        decision: {
+          decision: "execute",
+          toolName: "news.briefing",
+          reason: "owner asked for a briefing",
+          args: {
+            query: "give me the latest headlines"
+          }
+        }
+      };
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  persistence.settings.set(
+    "news.preferences",
+    JSON.stringify({
+      interestedTopics: ["myanmar"],
+      uninterestedTopics: [],
+      preferredOutlets: ["reuters"],
+      blockedOutlets: []
+    })
+  );
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence,
+    worldLookupAdapters: {
+      newsdata: {
+        source: "newsdata",
+        async lookup() {
+          return {
+            source: "newsdata",
+            evidence: [
+              {
+                source: "newsdata",
+                title: "Myanmar junta extends emergency rule",
+                url: "https://example.test/myanmar",
+                snippet: "Reuters reports the military government extended emergency rule.",
+                publishedAt: "2026-04-11T08:00:00Z",
+                publisher: "Reuters",
+                confidence: "high"
+              }
+            ]
+          };
+        }
+      },
+      wikimedia_current_events: {
+        source: "wikimedia_current_events",
+        async lookup() {
+          return { source: "wikimedia_current_events", evidence: [] };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          return { source: "gdelt", evidence: [] };
+        }
+      }
+    }
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-news-briefing",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "give me the latest headlines",
+          addressedContent: "give me the latest headlines",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-news-briefing"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /main headlines/i);
+    const audit = persistence.db
+      .prepare("SELECT tool_name, detail FROM tool_execution_audit WHERE message_id = ?")
+      .get("msg-news-briefing") as { tool_name: string; detail: string | null };
+    assert.equal(audit.tool_name, "news.briefing");
+    assert.match(audit.detail ?? "", /candidateCount=/);
+    assert.match(audit.detail ?? "", /preferenceCounts=interested:1/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
