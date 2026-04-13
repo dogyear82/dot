@@ -7,6 +7,7 @@ import { getNewsPreferences } from "./newsPreferences.js";
 import { handleReminderCommand } from "./reminders.js";
 import type {
   NewsPreferences,
+  NewsBrowseSessionItemRecord,
   PolicyActionType,
   WorldLookupArticleRecord,
   WorldLookupQueryBucket,
@@ -25,6 +26,7 @@ export type ExplicitToolName =
   | "calendar.show"
   | "calendar.remind"
   | "news.briefing"
+  | "news.follow_up"
   | "world.lookup";
 
 export type ToolDecision =
@@ -72,6 +74,12 @@ export interface GroundedAnswerService {
     selectedSources: WorldLookupSourceName[];
     failures: WorldLookupSourceFailure[];
     outcome: WorldLookupResult["outcome"];
+  }): Promise<{ route: ToolExecutionRoute; powerStatus: "off" | "standby" | "engaged"; reply: string }>;
+  generateStoryFollowUpReply?(params: {
+    userMessage: string;
+    selectedItem: NewsBrowseSessionItemRecord;
+    evidence: WorldLookupResult["evidence"];
+    articles?: WorldLookupArticleRecord[];
   }): Promise<{ route: ToolExecutionRoute; powerStatus: "off" | "standby" | "engaged"; reply: string }>;
 }
 
@@ -147,7 +155,7 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
   },
   "news.briefing": {
     toolName: "news.briefing",
-    async executeDetailed({ args, persistence, groundedAnswerService, worldLookupAdapters }) {
+    async executeDetailed({ args, persistence, conversationId, groundedAnswerService, worldLookupAdapters }) {
       const query = getRequiredStringArg(args, "query");
       const newsPreferences = getNewsPreferences(persistence.settings);
       const lookupResult = await executeWorldLookup({
@@ -158,6 +166,23 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
       });
 
       const detail = buildNewsBriefingAuditDetail(lookupResult, newsPreferences);
+      if (conversationId) {
+        persistence.saveNewsBrowseSession({
+          kind: "briefing",
+          conversationId,
+          query,
+          savedAt: new Date().toISOString(),
+          items: lookupResult.evidence.map((record, index) => ({
+            ordinal: index + 1,
+            title: record.title,
+            url: record.url,
+            source: record.source,
+            publisher: record.publisher ?? null,
+            snippet: record.snippet,
+            publishedAt: record.publishedAt
+          }))
+        });
+      }
 
       if (!groundedAnswerService?.generateNewsBriefingReply) {
         return {
@@ -195,6 +220,74 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
     },
     execute() {
       throw new Error("news.briefing requires detailed execution");
+    }
+  },
+  "news.follow_up": {
+    toolName: "news.follow_up",
+    async executeDetailed({ args, persistence, conversationId, groundedAnswerService, articleReader }) {
+      const query = getRequiredStringArg(args, "query");
+      const session = conversationId ? persistence.getLatestNewsBrowseSession(conversationId) : null;
+      if (!session) {
+        return {
+          toolName: "news.follow_up",
+          status: "clarify",
+          reply: "I don't have a recent news list in this conversation to follow up on yet.",
+          detail: "newsSession=missing"
+        };
+      }
+
+      const selectedItem = resolveNewsSessionItem(session.items, query);
+      if (!selectedItem) {
+        return {
+          toolName: "news.follow_up",
+          status: "clarify",
+          reply: "I couldn't tell which story you meant from the last news list. Give me the number or the outlet name.",
+          detail: "newsSession=unresolved"
+        };
+      }
+
+      const evidence = [
+        {
+          source: selectedItem.source,
+          title: selectedItem.title,
+          url: selectedItem.url,
+          snippet: selectedItem.snippet,
+          publishedAt: selectedItem.publishedAt,
+          publisher: selectedItem.publisher,
+          confidence: "high" as const
+        }
+      ];
+      const articleReadResult =
+        selectedItem.url && groundedAnswerService?.generateStoryFollowUpReply
+          ? await (articleReader ?? new HtmlWorldLookupArticleReader()).read({ evidence })
+          : { articles: [], failures: [] };
+
+      if (!groundedAnswerService?.generateStoryFollowUpReply) {
+        return {
+          toolName: "news.follow_up",
+          status: "executed",
+          reply: buildNewsFollowUpFallbackReply(selectedItem),
+          detail: `newsSession=resolved; ordinal=${selectedItem.ordinal}; title=${selectedItem.title}; source=${selectedItem.source}`
+        };
+      }
+
+      const grounded = await groundedAnswerService.generateStoryFollowUpReply({
+        userMessage: query,
+        selectedItem,
+        evidence,
+        articles: articleReadResult.articles
+      });
+
+      return {
+        toolName: "news.follow_up",
+        status: "executed",
+        reply: grounded.reply,
+        route: grounded.route,
+        detail: `newsSession=resolved; ordinal=${selectedItem.ordinal}; title=${selectedItem.title}; source=${selectedItem.source}; articleReadCount=${articleReadResult.articles.length}`
+      };
+    },
+    execute() {
+      throw new Error("news.follow_up requires detailed execution");
     }
   },
   "world.lookup": {
@@ -266,6 +359,17 @@ export function inferDeterministicToolDecision(userMessage: string): ToolDecisio
       decision: "execute",
       toolName: "news.briefing",
       reason: "clear news briefing intent from deterministic phrase matching",
+      args: {
+        query: userMessage.trim()
+      }
+    };
+  }
+
+  if (looksLikeNewsFollowUpIntent(normalized)) {
+    return {
+      decision: "execute",
+      toolName: "news.follow_up",
+      reason: "clear follow-up reference to a previously listed news story",
       args: {
         query: userMessage.trim()
       }
@@ -420,8 +524,10 @@ export function buildToolInferencePrompt(userMessage: string): string {
     "- calendar.show: no args",
     "- calendar.remind: index, optional leadTime",
     "- news.briefing: query",
+    "- news.follow_up: query",
     "- world.lookup: query",
     "Use news.briefing for generic requests like latest headlines, what's in the news today, or brief me on the news.",
+    "Use news.follow_up when the owner is clearly referring back to a story from the latest news list.",
     "Use world.lookup for questions that need public factual grounding, current events, weather, economics, or information that may be outdated in-model.",
     "When you choose world.lookup, preserve the owner's original wording as closely as possible in args.query.",
     "Do not collapse current-events phrasing like 'right now', 'latest', 'today', or 'what is happening' into a generic topic label.",
@@ -432,6 +538,7 @@ export function buildToolInferencePrompt(userMessage: string): string {
     '{"decision":"execute","toolName":"reminder.add","reason":"...","args":{"duration":"10m","message":"stretch"}}',
     '{"decision":"execute","toolName":"calendar.show","reason":"owner is asking to see upcoming calendar items","args":{}}',
     '{"decision":"execute","toolName":"news.briefing","reason":"owner is asking for a news briefing","args":{"query":"give me the latest headlines"}}',
+    '{"decision":"execute","toolName":"news.follow_up","reason":"owner is referring back to a story from the latest news list","args":{"query":"tell me more about the second one"}}',
     '{"decision":"execute","toolName":"world.lookup","reason":"owner is asking for public factual or current information","args":{"query":"when is zebra mating season"}}',
     'Examples that should usually map to calendar.show:',
     '- "what\'s my calendar looking like this week?"',
@@ -441,6 +548,9 @@ export function buildToolInferencePrompt(userMessage: string): string {
     '- "give me the latest headlines"',
     '- "what is in the news today?"',
     '- "brief me on the news"',
+    'Examples that should usually map to news.follow_up:',
+    '- "tell me more about the second one"',
+    '- "what about the Reuters one?"',
     'Examples that should usually map to world.lookup:',
     '- "when are zebras mating season?"',
     '- "what is happening in Myanmar right now?"',
@@ -610,6 +720,7 @@ function isToolName(value: unknown): value is ExplicitToolName {
     value === "calendar.show" ||
     value === "calendar.remind" ||
     value === "news.briefing" ||
+    value === "news.follow_up" ||
     value === "world.lookup"
   );
 }
@@ -636,6 +747,12 @@ function buildNewsBriefingFallbackReply(result: WorldLookupResult): string {
     .map((record) => `- ${record.url}`)
     .join("\n");
   return `Here are the main headlines I found:\n${lines.join("\n")}${links ? `\n\nLinks:\n${links}` : ""}`;
+}
+
+function buildNewsFollowUpFallbackReply(item: NewsBrowseSessionItemRecord): string {
+  const sourceLabel = item.publisher ?? formatWorldLookupSource(item.source);
+  const linkBlock = item.url ? `\n\nLinks:\n- ${item.url}` : "";
+  return `From ${sourceLabel}, ${item.snippet}${linkBlock}`;
 }
 
 function buildWorldLookupAuditDetail(
@@ -732,6 +849,57 @@ function looksLikeNewsBriefingIntent(normalized: string): boolean {
   );
 }
 
+function looksLikeNewsFollowUpIntent(normalized: string): boolean {
+  return (
+    ((/\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\b/.test(normalized) &&
+      /\b(one|story|headline|article)\b/.test(normalized)) ||
+      (/\b(reuters|ap|cnn|bbc|fox|guardian|nyt|new york times)\b/.test(normalized) &&
+        /\b(one|story|headline|article)\b/.test(normalized)))
+  );
+}
+
 function normalizeUserMessage(userMessage: string): string {
   return userMessage.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function resolveNewsSessionItem(
+  items: NewsBrowseSessionItemRecord[],
+  query: string
+): NewsBrowseSessionItemRecord | null {
+  const normalized = normalizeUserMessage(query);
+  const ordinal = parseOrdinalReference(normalized);
+  if (ordinal != null) {
+    return items.find((item) => item.ordinal === ordinal) ?? null;
+  }
+
+  return (
+    items.find((item) => {
+      const publisher = item.publisher ? normalizeUserMessage(item.publisher) : "";
+      const title = normalizeUserMessage(item.title);
+      return (publisher.length > 0 && normalized.includes(publisher)) || normalized.includes(title);
+    }) ?? null
+  );
+}
+
+function parseOrdinalReference(normalized: string): number | null {
+  const mapping: Record<string, number> = {
+    first: 1,
+    "1st": 1,
+    second: 2,
+    "2nd": 2,
+    third: 3,
+    "3rd": 3,
+    fourth: 4,
+    "4th": 4,
+    fifth: 5,
+    "5th": 5
+  };
+
+  for (const [label, ordinal] of Object.entries(mapping)) {
+    if (normalized.includes(label)) {
+      return ordinal;
+    }
+  }
+
+  return null;
 }

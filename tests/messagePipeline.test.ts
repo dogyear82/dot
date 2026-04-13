@@ -1207,3 +1207,186 @@ test("message pipeline executes inferred news.briefing and records briefing audi
     cleanup();
   }
 });
+
+test("message pipeline resolves an inferred news follow-up against the latest saved briefing session", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("news follow-up should not fall back to normal chat");
+    },
+    async generateGroundedReply() {
+      throw new Error("news follow-up should not use grounded reply");
+    },
+    async generateNewsBriefingReply(params) {
+      return {
+        route: "local",
+        powerStatus: "standby",
+        reply: `Here are the headlines.\n1. According to AP, ${params.evidence[0]?.title}\n2. According to Reuters, ${params.evidence[1]?.title}`
+      };
+    },
+    async generateStoryFollowUpReply(params) {
+      assert.equal(params.selectedItem.ordinal, 2);
+      return {
+        route: "local",
+        powerStatus: "standby",
+        reply: "According to Reuters, Myanmar's military government extended emergency rule.\n\nLinks:\n- https://example.test/myanmar"
+      };
+    },
+    async inferToolDecision(userMessage) {
+      if (/latest headlines/i.test(userMessage)) {
+        return {
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "execute",
+            toolName: "news.briefing",
+            reason: "owner asked for a briefing",
+            args: {
+              query: userMessage
+            }
+          }
+        };
+      }
+
+      return {
+        route: "local",
+        powerStatus: "standby",
+        decision: {
+          decision: "execute",
+          toolName: "news.follow_up",
+          reason: "owner is referring back to a story from the latest news list",
+          args: {
+            query: userMessage
+          }
+        }
+      };
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence,
+    worldLookupAdapters: {
+      newsdata: {
+        source: "newsdata",
+        async lookup() {
+          return {
+            source: "newsdata",
+            evidence: [
+              {
+                source: "newsdata",
+                title: "Global markets react to tariff threat",
+                url: "https://example.test/markets",
+                snippet: "Investors reacted sharply across Asia and Europe.",
+                publishedAt: "2026-04-11T06:00:00Z",
+                publisher: "AP",
+                confidence: "high"
+              },
+              {
+                source: "newsdata",
+                title: "Myanmar junta extends emergency rule",
+                url: "https://example.test/myanmar",
+                snippet: "Reuters reports the military government extended emergency rule.",
+                publishedAt: "2026-04-11T08:00:00Z",
+                publisher: "Reuters",
+                confidence: "high"
+              }
+            ]
+          };
+        }
+      },
+      wikimedia_current_events: {
+        source: "wikimedia_current_events",
+        async lookup() {
+          return { source: "wikimedia_current_events", evidence: [] };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          return { source: "gdelt", evidence: [] };
+        }
+      }
+    }
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-news-briefing-seed",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "give me the latest headlines",
+          addressedContent: "give me the latest headlines",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-news-briefing-seed"
+          }
+        }
+      })
+    );
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-news-follow-up",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "tell me more about the second one",
+          addressedContent: "tell me more about the second one",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-news-follow-up"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 2);
+    assert.match(outbound[1]?.payload.content ?? "", /According to Reuters/i);
+    const audit = persistence.db
+      .prepare("SELECT tool_name, detail FROM tool_execution_audit WHERE message_id = ?")
+      .get("msg-news-follow-up") as { tool_name: string; detail: string | null };
+    assert.equal(audit.tool_name, "news.follow_up");
+    assert.match(audit.detail ?? "", /newsSession=resolved/);
+    assert.match(audit.detail ?? "", /ordinal=2/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});

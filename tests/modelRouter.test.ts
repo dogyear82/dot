@@ -445,6 +445,62 @@ test("llm service can generate a news briefing in the active voice", async () =>
   assert.match(capturedMessages[0]?.[1]?.content ?? "", /rankingSignals=interested:myanmar/);
 });
 
+test("llm service can generate a sourced news follow-up in the active voice", async () => {
+  const store = createStore();
+  const capturedMessages: ChatMessage[][] = [];
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", "local", true, async (messages) => {
+        capturedMessages.push(messages);
+        return "According to Reuters, Myanmar's military government extended emergency rule again.";
+      })
+    ]
+  });
+
+  const result = await service.generateStoryFollowUpReply?.({
+    userMessage: "tell me more about the second one",
+    selectedItem: {
+      ordinal: 2,
+      title: "Myanmar junta extends emergency rule",
+      url: "https://example.test/myanmar",
+      source: "newsdata",
+      publisher: "Reuters",
+      snippet: "Reuters reports the military government extended emergency rule.",
+      publishedAt: "2026-04-13T01:00:00Z"
+    },
+    evidence: [
+      {
+        source: "newsdata",
+        title: "Myanmar junta extends emergency rule",
+        url: "https://example.test/myanmar",
+        snippet: "Reuters reports the military government extended emergency rule.",
+        publishedAt: "2026-04-13T01:00:00Z",
+        publisher: "Reuters",
+        confidence: "high"
+      }
+    ],
+    articles: [
+      {
+        source: "newsdata",
+        title: "Myanmar junta extends emergency rule",
+        url: "https://example.test/myanmar",
+        publisher: "Reuters",
+        publishedAt: "2026-04-13T01:00:00Z",
+        excerpt: "Myanmar's military government extended emergency rule again while fighting persisted."
+      }
+    ]
+  });
+
+  assert(result);
+  assert.match(result.reply, /According to Reuters/i);
+  assert.match(result.reply, /Links:\n- https:\/\/example\.test\/myanmar/);
+  assert.match(capturedMessages[0]?.[0]?.content ?? "", /following up on a previously shown news story/i);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Selected story: Myanmar junta extends emergency rule/);
+});
+
 test("getLlmMode defaults to normal when unset", () => {
   const store = createStore();
   assert.equal(getLlmMode(store), "normal");

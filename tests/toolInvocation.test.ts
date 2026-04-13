@@ -62,6 +62,14 @@ test("inferDeterministicToolDecision catches obvious calendar-view requests", ()
       query: "give me the latest headlines"
     }
   });
+  assert.deepEqual(inferDeterministicToolDecision("tell me more about the second one"), {
+    decision: "execute",
+    toolName: "news.follow_up",
+    reason: "clear follow-up reference to a previously listed news story",
+    args: {
+      query: "tell me more about the second one"
+    }
+  });
 });
 
 test("parseExplicitToolDecision turns incomplete tool commands into clarification prompts", () => {
@@ -471,6 +479,96 @@ test("executeToolDecision executes news.briefing and returns briefing metadata",
     assert.equal(result.route, "local");
     assert.match(result.detail ?? "", /preferenceCounts=interested:1/);
     assert.match(result.detail ?? "", /chosenEvidence=/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("executeToolDecision resolves a saved news session and follows up on an ordinal reference", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    persistence.saveNewsBrowseSession({
+      kind: "briefing",
+      conversationId: "channel-1",
+      query: "give me the latest headlines",
+      savedAt: "2026-04-13T00:00:00Z",
+      items: [
+        {
+          ordinal: 1,
+          title: "Global markets react to tariff threat",
+          url: "https://example.test/markets",
+          source: "newsdata",
+          publisher: "AP",
+          snippet: "Investors reacted sharply across Asia and Europe.",
+          publishedAt: "2026-04-13T00:00:00Z"
+        },
+        {
+          ordinal: 2,
+          title: "Myanmar junta extends emergency rule",
+          url: "https://example.test/myanmar",
+          source: "newsdata",
+          publisher: "Reuters",
+          snippet: "Reuters reports the military government extended emergency rule.",
+          publishedAt: "2026-04-13T01:00:00Z"
+        }
+      ]
+    });
+
+    const result = await executeToolDecision({
+      calendarClient: {
+        async listUpcomingEvents() {
+          return [];
+        }
+      },
+      conversationId: "channel-1",
+      decision: {
+        decision: "execute",
+        toolName: "news.follow_up",
+        reason: "owner is referring back to a story from the latest news list",
+        args: {
+          query: "tell me more about the second one"
+        }
+      },
+      persistence,
+      groundedAnswerService: {
+        async generateGroundedReply() {
+          throw new Error("news follow-up should not use grounded QA");
+        },
+        async generateStoryFollowUpReply(params) {
+          assert.equal(params.selectedItem.ordinal, 2);
+          assert.equal(params.selectedItem.publisher, "Reuters");
+          assert.match(params.articles?.[0]?.excerpt ?? "", /military government extended emergency rule/i);
+          return {
+            route: "local",
+            powerStatus: "standby",
+            reply: "According to Reuters, Myanmar's military government extended emergency rule again.\n\nLinks:\n- https://example.test/myanmar"
+          };
+        }
+      },
+      articleReader: {
+        async read() {
+          return {
+            articles: [
+              {
+                source: "newsdata",
+                title: "Myanmar junta extends emergency rule",
+                url: "https://example.test/myanmar",
+                publisher: "Reuters",
+                publishedAt: "2026-04-13T01:00:00Z",
+                excerpt: "Myanmar's military government extended emergency rule again while fighting persisted."
+              }
+            ],
+            failures: []
+          };
+        }
+      }
+    });
+
+    assert.equal(result.status, "executed");
+    assert.equal(result.route, "local");
+    assert.match(result.detail ?? "", /newsSession=resolved/);
+    assert.match(result.detail ?? "", /ordinal=2/);
   } finally {
     cleanup();
   }
