@@ -184,6 +184,7 @@ export interface ToolExecutionAuditRecord {
 export type WorldLookupQueryBucket = "reference" | "current_events" | "weather" | "economics" | "mixed";
 
 export type WorldLookupSourceName =
+  | "newsdata"
   | "wikipedia"
   | "wikimedia_current_events"
   | "gdelt"
@@ -197,6 +198,17 @@ export interface WorldLookupEvidenceRecord {
   snippet: string;
   publishedAt: string | null;
   confidence: "high" | "medium" | "low";
+  publisher?: string | null;
+  rankingSignals?: string[];
+}
+
+export interface WorldLookupArticleRecord {
+  source: WorldLookupSourceName;
+  title: string;
+  url: string;
+  publisher: string;
+  publishedAt: string | null;
+  excerpt: string;
 }
 
 export interface WorldLookupAdapterResult {
@@ -221,6 +233,15 @@ export interface WorldLookupResult {
   evidence: WorldLookupEvidenceRecord[];
   failures: WorldLookupSourceFailure[];
   outcome: "success" | "partial_failure" | "no_evidence";
+  candidateCount: number;
+  retrievalStrategy: "default" | "current_events_topic_ranked" | "current_events_generic_ranked";
+}
+
+export interface NewsPreferences {
+  interestedTopics: string[];
+  uninterestedTopics: string[];
+  preferredOutlets: string[];
+  blockedOutlets: string[];
 }
 
 export interface PersonalityPresetRecord {

@@ -7,6 +7,7 @@ import { handleContactCommand, handlePolicyCommand, isContactCommand, isPolicyCo
 import { handleEmailCommand, isEmailCommand } from "./emailWorkflow.js";
 import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
+import { handleNewsPreferencesCommand, isNewsPreferencesCommand } from "./newsPreferences.js";
 import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "./onboarding.js";
 import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
 import type { MicrosoftOutlookOAuthClient } from "./outlookOAuth.js";
@@ -201,6 +202,12 @@ export function registerMessagePipeline(params: {
               if (isSettingsCommand(content)) {
                 pipelineOutcome = "settings_command";
                 await publishReply(handleSettingsCommand(persistence.settings, content));
+                return;
+              }
+
+              if (isNewsPreferencesCommand(content)) {
+                pipelineOutcome = "news_preferences_command";
+                await publishReply(handleNewsPreferencesCommand(persistence, content));
                 return;
               }
 
