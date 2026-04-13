@@ -4,6 +4,7 @@ import { startLlmTimer, withSpan } from "../observability.js";
 import type { SettingsStore } from "../settings.js";
 import type {
   ConversationTurnRecord,
+  WorldLookupArticleRecord,
   WorldLookupEvidenceRecord,
   WorldLookupQueryBucket,
   WorldLookupSourceFailure,
@@ -25,6 +26,7 @@ export interface LlmService {
   generateGroundedReply?(params: {
     userMessage: string;
     evidence: WorldLookupEvidenceRecord[];
+    articles?: WorldLookupArticleRecord[];
     bucket: WorldLookupQueryBucket;
     selectedSources: WorldLookupSourceName[];
     failures: WorldLookupSourceFailure[];
@@ -87,10 +89,11 @@ export function createLlmService(params: {
 
       return { route, powerStatus: getPowerStatus(route), reply };
     },
-    async generateGroundedReply({ userMessage, evidence, bucket, selectedSources, failures, outcome, recentConversation }) {
+    async generateGroundedReply({ userMessage, evidence, articles, bucket, selectedSources, failures, outcome, recentConversation }) {
       const messages = buildGroundedMessages({
         userMessage,
         evidence,
+        articles,
         bucket,
         selectedSources,
         failures,
@@ -265,6 +268,7 @@ function buildMessages(params: {
 function buildGroundedMessages(params: {
   userMessage: string;
   evidence: WorldLookupEvidenceRecord[];
+  articles?: WorldLookupArticleRecord[];
   bucket: WorldLookupQueryBucket;
   selectedSources: WorldLookupSourceName[];
   failures: WorldLookupSourceFailure[];
@@ -289,6 +293,16 @@ function buildGroundedMessages(params: {
     params.failures.length > 0
       ? params.failures.map((failure) => `${formatWorldLookupSource(failure.source)}: ${failure.reason}`).join("; ")
       : "none";
+  const articleLines =
+    (params.articles?.length ?? 0) > 0
+      ? params.articles
+          ?.slice(0, 3)
+          .map(
+            (article, index) =>
+              `${index + 1}. publisher=${article.publisher} | title=${article.title} | publishedAt=${article.publishedAt ?? "unknown"} | url=${article.url} | excerpt=${article.excerpt}`
+          )
+          .join("\n")
+      : "No article text could be extracted from the selected sources.";
 
   return [
     {
@@ -297,7 +311,7 @@ function buildGroundedMessages(params: {
         mode: params.mode,
         balance: params.balance,
         settings: params.settings
-      })} ${buildCurrentDateTimeInstruction()} Use the supplied external evidence when answering. Stay in the active personality profile. Answer only the user's question. Cite sources naturally in prose, such as 'According to Wikipedia...'. Summarize in your own words. Do not quote long passages or regurgitate article paragraphs. If the evidence is missing or too weak, say you couldn't verify it from the available public sources and do not guess.`
+      })} ${buildCurrentDateTimeInstruction()} Use the supplied external evidence when answering. Stay in the active personality profile. Answer only the user's question. Make it clear this information was looked up, not remembered. Cite sources naturally in prose, such as 'According to Reuters...' or 'I'm seeing from CNN...'. Prefer the supplied article extracts over bare snippets whenever article text is available. Summarize in your own words. Do not quote long passages or regurgitate article paragraphs. If the evidence is missing, conflicting, or too weak, say you couldn't verify it from the available public sources and do not guess.`
     },
     ...(params.recentConversation ?? []).map((turn) => ({
       role: turn.role,
@@ -313,6 +327,8 @@ function buildGroundedMessages(params: {
         `Source failures: ${failureLines}`,
         "Evidence:",
         evidenceLines,
+        "Article extracts:",
+        articleLines,
         "Answer in Dot's normal voice. Mention the source naturally in the sentence when you rely on it. Keep the answer tight."
       ].join("\n")
     }
