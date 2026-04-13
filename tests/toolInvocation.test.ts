@@ -216,3 +216,66 @@ test("executeToolDecision can defer or block a registered tool through the polic
     cleanup();
   }
 });
+
+test("executeToolDecision executes world.lookup and returns grounded reply metadata", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const result = await executeToolDecision({
+      calendarClient: {
+        async listUpcomingEvents() {
+          return [];
+        }
+      },
+      decision: {
+        decision: "execute",
+        toolName: "world.lookup",
+        reason: "owner wants public facts",
+        args: {
+          query: "When is zebra mating season?"
+        }
+      },
+      persistence,
+      groundedAnswerService: {
+        async generateGroundedReply(params) {
+          assert.equal(params.bucket, "reference");
+          assert.equal(params.selectedSources[0], "wikipedia");
+          assert.equal(params.evidence[0]?.title, "Zebra");
+          return {
+            route: "local",
+            powerStatus: "standby",
+            reply: "According to Wikipedia, zebras breed seasonally.\n\nLinks:\n- https://en.wikipedia.org/wiki/Zebra"
+          };
+        }
+      },
+      worldLookupAdapters: {
+        wikipedia: {
+          source: "wikipedia",
+          async lookup() {
+            return {
+              source: "wikipedia",
+              evidence: [
+                {
+                  source: "wikipedia",
+                  title: "Zebra",
+                  url: "https://en.wikipedia.org/wiki/Zebra",
+                  snippet: "Zebras breed seasonally.",
+                  publishedAt: null,
+                  confidence: "high"
+                }
+              ]
+            };
+          }
+        }
+      }
+    });
+
+    assert.equal(result.status, "executed");
+    assert.equal(result.route, "local");
+    assert.match(result.reply, /According to Wikipedia/i);
+    assert.match(result.detail ?? "", /selectedSources=wikipedia/);
+    assert.match(result.detail ?? "", /outcome=success/);
+  } finally {
+    cleanup();
+  }
+});

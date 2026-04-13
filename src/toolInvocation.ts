@@ -4,14 +4,24 @@ import { withSpan } from "./observability.js";
 import { handleCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
 import { createPolicyEngine, type PolicyDecision } from "./policyEngine.js";
 import { handleReminderCommand } from "./reminders.js";
-import type { PolicyActionType } from "./types.js";
+import type {
+  PolicyActionType,
+  WorldLookupAdapterResult,
+  WorldLookupQueryBucket,
+  WorldLookupResult,
+  WorldLookupSourceFailure,
+  WorldLookupSourceName
+} from "./types.js";
+import { executeWorldLookup, type WorldLookupAdapter } from "./worldLookup.js";
+import { createDefaultWorldLookupAdapters } from "./worldLookupAdapters.js";
 
 export type ExplicitToolName =
   | "reminder.add"
   | "reminder.show"
   | "reminder.ack"
   | "calendar.show"
-  | "calendar.remind";
+  | "calendar.remind"
+  | "world.lookup";
 
 export type ToolDecision =
   | {
@@ -35,7 +45,22 @@ export interface ToolExecutionResult {
   toolName: ExplicitToolName;
   status: "executed" | "clarify" | "requires_confirmation" | "blocked";
   reply: string;
+  detail?: string;
   policyDecision?: PolicyDecision;
+  route?: ToolExecutionRoute;
+}
+
+export type ToolExecutionRoute = "none" | "deterministic" | "local" | "hosted";
+
+export interface GroundedAnswerService {
+  generateGroundedReply(params: {
+    userMessage: string;
+    evidence: WorldLookupResult["evidence"];
+    bucket: WorldLookupQueryBucket;
+    selectedSources: WorldLookupSourceName[];
+    failures: WorldLookupSourceFailure[];
+    outcome: WorldLookupResult["outcome"];
+  }): Promise<{ route: ToolExecutionRoute; powerStatus: "off" | "standby" | "engaged"; reply: string }>;
 }
 
 interface ToolDefinition {
@@ -44,7 +69,15 @@ interface ToolDefinition {
     calendarClient: OutlookCalendarClient;
     args: Record<string, string | number>;
     persistence: Persistence;
+    groundedAnswerService?: GroundedAnswerService;
+    worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
   }): Promise<string> | string;
+  executeDetailed?(params: {
+    args: Record<string, string | number>;
+    persistence: Persistence;
+    groundedAnswerService?: GroundedAnswerService;
+    worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
+  }): Promise<ToolExecutionResult>;
   policy?: {
     actionType: PolicyActionType;
     getContactQuery(args: Record<string, string | number>): string | null;
@@ -94,6 +127,56 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
         content,
         persistence
       });
+    }
+  },
+  "world.lookup": {
+    toolName: "world.lookup",
+    async executeDetailed({ args, groundedAnswerService, worldLookupAdapters }) {
+      const query = getRequiredStringArg(args, "query");
+      const lookupResult = await executeWorldLookup({
+        query,
+        adapters: worldLookupAdapters ?? createDefaultWorldLookupAdapters()
+      });
+
+      const detail = buildWorldLookupAuditDetail(lookupResult);
+
+      if (!groundedAnswerService) {
+        return {
+          toolName: "world.lookup",
+          status: "executed",
+          reply: buildWorldLookupFallbackReply(lookupResult),
+          detail
+        };
+      }
+
+      try {
+        const grounded = await groundedAnswerService.generateGroundedReply({
+          userMessage: query,
+          evidence: lookupResult.evidence,
+          bucket: lookupResult.bucket,
+          selectedSources: lookupResult.selectedSources,
+          failures: lookupResult.failures,
+          outcome: lookupResult.outcome
+        });
+
+        return {
+          toolName: "world.lookup",
+          status: "executed",
+          reply: grounded.reply,
+          detail,
+          route: grounded.route
+        };
+      } catch {
+        return {
+          toolName: "world.lookup",
+          status: "executed",
+          reply: buildWorldLookupFallbackReply(lookupResult),
+          detail
+        };
+      }
+    },
+    execute() {
+      throw new Error("world.lookup requires detailed execution");
     }
   }
 };
@@ -248,16 +331,26 @@ export function buildToolInferencePrompt(userMessage: string): string {
     "- reminder.ack: id",
     "- calendar.show: no args",
     "- calendar.remind: index, optional leadTime",
+    "- world.lookup: query",
+    "Use world.lookup for questions that need public factual grounding, current events, weather, economics, or information that may be outdated in-model.",
+    "When you choose world.lookup, preserve the owner's original wording as closely as possible in args.query.",
+    "Do not collapse current-events phrasing like 'right now', 'latest', 'today', or 'what is happening' into a generic topic label.",
     "Never invent unsupported tools or free-form side effects.",
     "Return strict JSON only in one of these shapes:",
     '{"decision":"none","reason":"..."}',
     '{"decision":"clarify","toolName":"reminder.add","reason":"...","question":"When should I remind you?"}',
     '{"decision":"execute","toolName":"reminder.add","reason":"...","args":{"duration":"10m","message":"stretch"}}',
     '{"decision":"execute","toolName":"calendar.show","reason":"owner is asking to see upcoming calendar items","args":{}}',
+    '{"decision":"execute","toolName":"world.lookup","reason":"owner is asking for public factual or current information","args":{"query":"when is zebra mating season"}}',
     'Examples that should usually map to calendar.show:',
     '- "what\'s my calendar looking like this week?"',
     '- "do i have any meetings or appointments today?"',
     '- "what is on my schedule tomorrow?"',
+    'Examples that should usually map to world.lookup:',
+    '- "when are zebras mating season?"',
+    '- "what is happening in Myanmar right now?"',
+    '- "what\'s the weather in Phoenix tomorrow?"',
+    '- "how is Argentina\'s economy doing?"',
     `Owner message: ${JSON.stringify(userMessage)}`
   ].join("\n");
 }
@@ -304,7 +397,9 @@ export async function executeToolDecision(params: {
   calendarClient: OutlookCalendarClient;
   decision: Extract<ToolDecision, { decision: "execute" }>;
   persistence: Persistence;
+  groundedAnswerService?: GroundedAnswerService;
   registry?: Partial<Record<ExplicitToolName, ToolDefinition>>;
+  worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
 }): Promise<ToolExecutionResult> {
   return withSpan(
     "tool.execute",
@@ -358,10 +453,21 @@ export async function executeToolDecision(params: {
         }
       }
 
+      if (definition.executeDetailed) {
+        return definition.executeDetailed({
+          args: decision.args,
+          persistence,
+          groundedAnswerService: params.groundedAnswerService,
+          worldLookupAdapters: params.worldLookupAdapters
+        });
+      }
+
       const reply = await definition.execute({
         calendarClient,
         args: decision.args,
-        persistence
+        persistence,
+        groundedAnswerService: params.groundedAnswerService,
+        worldLookupAdapters: params.worldLookupAdapters
       });
 
       return {
@@ -401,8 +507,40 @@ function isToolName(value: unknown): value is ExplicitToolName {
     value === "reminder.show" ||
     value === "reminder.ack" ||
     value === "calendar.show" ||
-    value === "calendar.remind"
+    value === "calendar.remind" ||
+    value === "world.lookup"
   );
+}
+
+function buildWorldLookupAuditDetail(result: WorldLookupResult): string {
+  const citedSources = Array.from(new Set(result.evidence.map((record) => record.source))).join(",");
+  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; evidenceCount=${result.evidence.length}; citedSources=${citedSources || "none"}; failureCount=${result.failures.length}`;
+}
+
+function buildWorldLookupFallbackReply(result: WorldLookupResult): string {
+  if (result.evidence.length === 0) {
+    return "I couldn't verify that from the public sources I checked just now.";
+  }
+
+  const first = result.evidence[0];
+  const sourceLabel = formatWorldLookupSource(first.source);
+  const linkBlock = first.url ? `\n\nLinks:\n- ${first.url}` : "";
+  return `According to ${sourceLabel}, ${first.snippet}${linkBlock}`;
+}
+
+function formatWorldLookupSource(source: WorldLookupSourceName): string {
+  switch (source) {
+    case "wikipedia":
+      return "Wikipedia";
+    case "wikimedia_current_events":
+      return "Wikinews";
+    case "gdelt":
+      return "GDELT";
+    case "open_meteo":
+      return "Open-Meteo";
+    case "world_bank":
+      return "World Bank";
+  }
 }
 
 function extractJsonObject(payload: string): string {

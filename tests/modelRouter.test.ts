@@ -311,6 +311,47 @@ test("llm service uses deterministic calendar inference for obvious schedule que
   });
 });
 
+test("llm service can generate a grounded reply and append source links", async () => {
+  const store = createStore();
+  const capturedMessages: ChatMessage[][] = [];
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", "local", true, async (messages) => {
+        capturedMessages.push(messages);
+        return "According to Wikipedia, zebras breed seasonally.";
+      })
+    ]
+  });
+
+  const result = await service.generateGroundedReply?.({
+    userMessage: "When is zebra mating season?",
+    bucket: "reference",
+    selectedSources: ["wikipedia"],
+    failures: [],
+    outcome: "success",
+    evidence: [
+      {
+        source: "wikipedia",
+        title: "Zebra",
+        url: "https://en.wikipedia.org/wiki/Zebra",
+        snippet: "Zebras breed seasonally.",
+        publishedAt: null,
+        confidence: "high"
+      }
+    ]
+  });
+
+  assert(result);
+  assert.equal(result.route, "local");
+  assert.match(result.reply, /According to Wikipedia, zebras breed seasonally\./);
+  assert.match(result.reply, /Links:\n- https:\/\/en\.wikipedia\.org\/wiki\/Zebra/);
+  assert.match(capturedMessages[0]?.[0]?.content ?? "", /Use the supplied external evidence when answering/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Selected sources: Wikipedia/);
+});
+
 test("getLlmMode defaults to normal when unset", () => {
   const store = createStore();
   assert.equal(getLlmMode(store), "normal");
