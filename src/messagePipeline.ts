@@ -170,12 +170,13 @@ export function registerMessagePipeline(params: {
 
             const groundedAnswerService = chatService.generateGroundedReply
               ? {
-                  generateGroundedReply: chatService.generateGroundedReply.bind(chatService)
+                  generateGroundedReply: chatService.generateGroundedReply.bind(chatService),
+                  generateNewsBriefingReply: chatService.generateNewsBriefingReply?.bind(chatService)
                 }
               : undefined;
 
             const normalizeInferredExecuteDecision = (decision: Extract<ToolDecision, { decision: "execute" }>) => {
-              if (decision.toolName !== "world.lookup") {
+              if (decision.toolName !== "world.lookup" && decision.toolName !== "news.briefing") {
                 return decision;
               }
 

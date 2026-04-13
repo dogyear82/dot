@@ -54,6 +54,14 @@ test("inferDeterministicToolDecision catches obvious calendar-view requests", ()
   });
 
   assert.equal(inferDeterministicToolDecision("how's your day going?"), null);
+  assert.deepEqual(inferDeterministicToolDecision("give me the latest headlines"), {
+    decision: "execute",
+    toolName: "news.briefing",
+    reason: "clear news briefing intent from deterministic phrase matching",
+    args: {
+      query: "give me the latest headlines"
+    }
+  });
 });
 
 test("parseExplicitToolDecision turns incomplete tool commands into clarification prompts", () => {
@@ -367,6 +375,102 @@ test("executeToolDecision reads selected current-events articles before grounded
     assert.equal(result.status, "executed");
     assert.match(result.detail ?? "", /articleReadCount=1/);
     assert.match(result.detail ?? "", /articleTitles=Myanmar junta extends emergency rule/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("executeToolDecision executes news.briefing and returns briefing metadata", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    persistence.settings.set(
+      "news.preferences",
+      JSON.stringify({
+        interestedTopics: ["myanmar"],
+        uninterestedTopics: [],
+        preferredOutlets: ["reuters"],
+        blockedOutlets: []
+      })
+    );
+
+    const result = await executeToolDecision({
+      calendarClient: {
+        async listUpcomingEvents() {
+          return [];
+        }
+      },
+      decision: {
+        decision: "execute",
+        toolName: "news.briefing",
+        reason: "owner wants a briefing",
+        args: {
+          query: "give me the latest headlines"
+        }
+      },
+      persistence,
+      groundedAnswerService: {
+        async generateGroundedReply() {
+          throw new Error("news briefing should not use grounded QA");
+        },
+        async generateNewsBriefingReply(params) {
+          assert.equal(params.evidence.length, 2);
+          assert.match(params.evidence[0]?.rankingSignals?.join(",") ?? "", /interested:myanmar/);
+          return {
+            route: "local",
+            powerStatus: "standby",
+            reply: "Well, deary, here are the main headlines.\n1. According to Reuters, Myanmar's junta extended emergency rule.\n\nLinks:\n- https://example.test/myanmar"
+          };
+        }
+      },
+      worldLookupAdapters: {
+        newsdata: {
+          source: "newsdata",
+          async lookup() {
+            return {
+              source: "newsdata",
+              evidence: [
+                {
+                  source: "newsdata",
+                  title: "Myanmar junta extends emergency rule",
+                  url: "https://example.test/myanmar",
+                  snippet: "Reuters reports the military government extended emergency rule.",
+                  publishedAt: "2026-04-11T08:00:00Z",
+                  publisher: "Reuters",
+                  confidence: "high"
+                },
+                {
+                  source: "newsdata",
+                  title: "Global markets react to tariff threat",
+                  url: "https://example.test/markets",
+                  snippet: "Investors reacted sharply across Asia and Europe.",
+                  publishedAt: "2026-04-11T06:00:00Z",
+                  publisher: "AP",
+                  confidence: "high"
+                }
+              ]
+            };
+          }
+        },
+        wikimedia_current_events: {
+          source: "wikimedia_current_events",
+          async lookup() {
+            return { source: "wikimedia_current_events", evidence: [] };
+          }
+        },
+        gdelt: {
+          source: "gdelt",
+          async lookup() {
+            return { source: "gdelt", evidence: [] };
+          }
+        }
+      }
+    });
+
+    assert.equal(result.status, "executed");
+    assert.equal(result.route, "local");
+    assert.match(result.detail ?? "", /preferenceCounts=interested:1/);
+    assert.match(result.detail ?? "", /chosenEvidence=/);
   } finally {
     cleanup();
   }

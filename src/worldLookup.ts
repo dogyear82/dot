@@ -78,6 +78,7 @@ export async function executeWorldLookup(params: {
   adapters: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
   timeoutMs?: number;
   preferences?: NewsPreferences;
+  maxEvidenceCount?: number;
 }): Promise<WorldLookupResult> {
   const bucket = classifyWorldLookupQuery(params.query);
   const basePlan = selectWorldLookupSourcePlan(bucket);
@@ -136,7 +137,8 @@ export async function executeWorldLookup(params: {
         bucket,
         query: params.query,
         evidence: rawEvidence,
-        preferences: params.preferences
+        preferences: params.preferences,
+        maxEvidenceCount: params.maxEvidenceCount
       });
       const failures = settled.flatMap((entry) =>
         entry.status === "rejected"
@@ -183,6 +185,7 @@ function filterWorldLookupEvidence(params: {
   query: string;
   evidence: WorldLookupEvidenceRecord[];
   preferences?: NewsPreferences;
+  maxEvidenceCount?: number;
 }): Pick<WorldLookupResult, "evidence" | "retrievalStrategy"> {
   if (params.evidence.length === 0) {
     return {
@@ -192,7 +195,7 @@ function filterWorldLookupEvidence(params: {
   }
 
   if (params.bucket === "current_events") {
-    return filterCurrentEventsEvidence(params.query, params.evidence, params.preferences);
+    return filterCurrentEventsEvidence(params.query, params.evidence, params.preferences, params.maxEvidenceCount);
   }
 
   if (params.bucket === "mixed") {
@@ -202,7 +205,8 @@ function filterWorldLookupEvidence(params: {
         (record) =>
           record.source === "newsdata" || record.source === "wikimedia_current_events" || record.source === "gdelt"
       ),
-      params.preferences
+      params.preferences,
+      params.maxEvidenceCount
     );
 
     const nonCurrentEvents = params.evidence.filter(
@@ -225,7 +229,8 @@ function filterWorldLookupEvidence(params: {
 function filterCurrentEventsEvidence(
   query: string,
   evidence: WorldLookupEvidenceRecord[],
-  preferences?: NewsPreferences
+  preferences?: NewsPreferences,
+  maxEvidenceCount = 3
 ): Pick<WorldLookupResult, "evidence" | "retrievalStrategy"> {
   const normalizedQuery = normalizeQuery(query);
   const topicTokens = extractTopicTokens(query);
@@ -254,19 +259,57 @@ function filterCurrentEventsEvidence(
   }
 
   const bestScore = ranked[0]?.ranking.score ?? 0;
-  const selected = (
-    genericHeadlinesIntent
-      ? ranked.slice(0, 3)
-      : ranked.filter(({ ranking }, index) => index === 0 || (index < 3 && ranking.score >= bestScore - 2)).slice(0, 3)
-  ).map(({ record, ranking }) => ({
-    ...record,
-    rankingSignals: ranking.signals.length > 0 ? ranking.signals : undefined
-  }));
+  const selectedRanked = genericHeadlinesIntent
+    ? selectGenericCurrentEventsBriefing(ranked, maxEvidenceCount)
+    : ranked.filter(({ ranking }, index) => index === 0 || (index < maxEvidenceCount && ranking.score >= bestScore - 2)).slice(0, maxEvidenceCount);
+  const selected = selectedRanked.map(({ record, ranking }) => ({
+      ...record,
+      rankingSignals: ranking.signals.length > 0 ? ranking.signals : undefined
+    }));
 
   return {
     evidence: selected,
     retrievalStrategy: strategy
   };
+}
+
+function selectGenericCurrentEventsBriefing(
+  ranked: Array<{
+    record: WorldLookupEvidenceRecord;
+    ranking: { score: number; signals: string[] };
+  }>,
+  maxEvidenceCount: number
+) {
+  const preferenceBoosted = ranked.filter(({ ranking }) =>
+    ranking.signals.some((signal) => signal.startsWith("interested:") || signal.startsWith("preferred_outlet:"))
+  );
+  const general = ranked.filter(
+    ({ ranking }) =>
+      !ranking.signals.some((signal) => signal.startsWith("interested:") || signal.startsWith("preferred_outlet:"))
+  );
+
+  const selected: typeof ranked = [];
+  const seen = new Set<string>();
+  const append = (entries: typeof ranked, limit: number) => {
+    for (const entry of entries) {
+      const key = entry.record.url ?? entry.record.title;
+      if (seen.has(key)) {
+        continue;
+      }
+      selected.push(entry);
+      seen.add(key);
+      if (selected.length >= limit) {
+        break;
+      }
+    }
+  };
+
+  append(ranked, 1);
+  append(general, Math.min(2, maxEvidenceCount));
+  append(preferenceBoosted, Math.min(4, maxEvidenceCount));
+  append(ranked, maxEvidenceCount);
+
+  return selected.slice(0, maxEvidenceCount);
 }
 
 function extractTopicTokens(query: string): string[] {

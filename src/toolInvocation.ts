@@ -9,7 +9,6 @@ import type {
   NewsPreferences,
   PolicyActionType,
   WorldLookupArticleRecord,
-  WorldLookupAdapterResult,
   WorldLookupQueryBucket,
   WorldLookupResult,
   WorldLookupSourceFailure,
@@ -25,6 +24,7 @@ export type ExplicitToolName =
   | "reminder.ack"
   | "calendar.show"
   | "calendar.remind"
+  | "news.briefing"
   | "world.lookup";
 
 export type ToolDecision =
@@ -66,6 +66,13 @@ export interface GroundedAnswerService {
     failures: WorldLookupSourceFailure[];
     outcome: WorldLookupResult["outcome"];
   }): Promise<{ route: ToolExecutionRoute; powerStatus: "off" | "standby" | "engaged"; reply: string }>;
+  generateNewsBriefingReply?(params: {
+    userMessage: string;
+    evidence: WorldLookupResult["evidence"];
+    selectedSources: WorldLookupSourceName[];
+    failures: WorldLookupSourceFailure[];
+    outcome: WorldLookupResult["outcome"];
+  }): Promise<{ route: ToolExecutionRoute; powerStatus: "off" | "standby" | "engaged"; reply: string }>;
 }
 
 interface ToolDefinition {
@@ -74,6 +81,7 @@ interface ToolDefinition {
     calendarClient: OutlookCalendarClient;
     args: Record<string, string | number>;
     persistence: Persistence;
+    conversationId?: string;
     groundedAnswerService?: GroundedAnswerService;
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
     articleReader?: WorldLookupArticleReader;
@@ -81,6 +89,7 @@ interface ToolDefinition {
   executeDetailed?(params: {
     args: Record<string, string | number>;
     persistence: Persistence;
+    conversationId?: string;
     groundedAnswerService?: GroundedAnswerService;
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
     articleReader?: WorldLookupArticleReader;
@@ -134,6 +143,58 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
         content,
         persistence
       });
+    }
+  },
+  "news.briefing": {
+    toolName: "news.briefing",
+    async executeDetailed({ args, persistence, groundedAnswerService, worldLookupAdapters }) {
+      const query = getRequiredStringArg(args, "query");
+      const newsPreferences = getNewsPreferences(persistence.settings);
+      const lookupResult = await executeWorldLookup({
+        query,
+        adapters: worldLookupAdapters ?? createDefaultWorldLookupAdapters(),
+        preferences: newsPreferences,
+        maxEvidenceCount: 5
+      });
+
+      const detail = buildNewsBriefingAuditDetail(lookupResult, newsPreferences);
+
+      if (!groundedAnswerService?.generateNewsBriefingReply) {
+        return {
+          toolName: "news.briefing",
+          status: "executed",
+          reply: buildNewsBriefingFallbackReply(lookupResult),
+          detail
+        };
+      }
+
+      try {
+        const grounded = await groundedAnswerService.generateNewsBriefingReply({
+          userMessage: query,
+          evidence: lookupResult.evidence,
+          selectedSources: lookupResult.selectedSources,
+          failures: lookupResult.failures,
+          outcome: lookupResult.outcome
+        });
+
+        return {
+          toolName: "news.briefing",
+          status: "executed",
+          reply: grounded.reply,
+          detail,
+          route: grounded.route
+        };
+      } catch {
+        return {
+          toolName: "news.briefing",
+          status: "executed",
+          reply: buildNewsBriefingFallbackReply(lookupResult),
+          detail
+        };
+      }
+    },
+    execute() {
+      throw new Error("news.briefing requires detailed execution");
     }
   },
   "world.lookup": {
@@ -199,6 +260,17 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
 
 export function inferDeterministicToolDecision(userMessage: string): ToolDecision | null {
   const normalized = normalizeUserMessage(userMessage);
+
+  if (looksLikeNewsBriefingIntent(normalized)) {
+    return {
+      decision: "execute",
+      toolName: "news.briefing",
+      reason: "clear news briefing intent from deterministic phrase matching",
+      args: {
+        query: userMessage.trim()
+      }
+    };
+  }
 
   if (looksLikeCalendarShowIntent(normalized)) {
     return {
@@ -347,7 +419,9 @@ export function buildToolInferencePrompt(userMessage: string): string {
     "- reminder.ack: id",
     "- calendar.show: no args",
     "- calendar.remind: index, optional leadTime",
+    "- news.briefing: query",
     "- world.lookup: query",
+    "Use news.briefing for generic requests like latest headlines, what's in the news today, or brief me on the news.",
     "Use world.lookup for questions that need public factual grounding, current events, weather, economics, or information that may be outdated in-model.",
     "When you choose world.lookup, preserve the owner's original wording as closely as possible in args.query.",
     "Do not collapse current-events phrasing like 'right now', 'latest', 'today', or 'what is happening' into a generic topic label.",
@@ -357,11 +431,16 @@ export function buildToolInferencePrompt(userMessage: string): string {
     '{"decision":"clarify","toolName":"reminder.add","reason":"...","question":"When should I remind you?"}',
     '{"decision":"execute","toolName":"reminder.add","reason":"...","args":{"duration":"10m","message":"stretch"}}',
     '{"decision":"execute","toolName":"calendar.show","reason":"owner is asking to see upcoming calendar items","args":{}}',
+    '{"decision":"execute","toolName":"news.briefing","reason":"owner is asking for a news briefing","args":{"query":"give me the latest headlines"}}',
     '{"decision":"execute","toolName":"world.lookup","reason":"owner is asking for public factual or current information","args":{"query":"when is zebra mating season"}}',
     'Examples that should usually map to calendar.show:',
     '- "what\'s my calendar looking like this week?"',
     '- "do i have any meetings or appointments today?"',
     '- "what is on my schedule tomorrow?"',
+    'Examples that should usually map to news.briefing:',
+    '- "give me the latest headlines"',
+    '- "what is in the news today?"',
+    '- "brief me on the news"',
     'Examples that should usually map to world.lookup:',
     '- "when are zebras mating season?"',
     '- "what is happening in Myanmar right now?"',
@@ -413,6 +492,7 @@ export async function executeToolDecision(params: {
   calendarClient: OutlookCalendarClient;
   decision: Extract<ToolDecision, { decision: "execute" }>;
   persistence: Persistence;
+  conversationId?: string;
   groundedAnswerService?: GroundedAnswerService;
   registry?: Partial<Record<ExplicitToolName, ToolDefinition>>;
   worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
@@ -474,6 +554,7 @@ export async function executeToolDecision(params: {
         return definition.executeDetailed({
           args: decision.args,
           persistence,
+          conversationId: params.conversationId,
           groundedAnswerService: params.groundedAnswerService,
           worldLookupAdapters: params.worldLookupAdapters,
           articleReader: params.articleReader
@@ -484,6 +565,7 @@ export async function executeToolDecision(params: {
         calendarClient,
         args: decision.args,
         persistence,
+        conversationId: params.conversationId,
         groundedAnswerService: params.groundedAnswerService,
         worldLookupAdapters: params.worldLookupAdapters,
         articleReader: params.articleReader
@@ -527,8 +609,33 @@ function isToolName(value: unknown): value is ExplicitToolName {
     value === "reminder.ack" ||
     value === "calendar.show" ||
     value === "calendar.remind" ||
+    value === "news.briefing" ||
     value === "world.lookup"
   );
+}
+
+function buildNewsBriefingAuditDetail(result: WorldLookupResult, preferences: NewsPreferences): string {
+  const chosenEvidence = result.evidence
+    .map((record) => `${record.source}:${record.title}${record.rankingSignals?.length ? `[${record.rankingSignals.join(",")}]` : ""}`)
+    .join(" | ");
+  return `outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; preferenceCounts=interested:${preferences.interestedTopics.length},uninterested:${preferences.uninterestedTopics.length},preferred:${preferences.preferredOutlets.length},blocked:${preferences.blockedOutlets.length}; failureCount=${result.failures.length}`;
+}
+
+function buildNewsBriefingFallbackReply(result: WorldLookupResult): string {
+  if (result.evidence.length === 0) {
+    return "I couldn't pull together a reliable news briefing from the public sources I checked just now.";
+  }
+
+  const lines = result.evidence.slice(0, 5).map((record, index) => {
+    const sourceLabel = record.publisher ?? formatWorldLookupSource(record.source);
+    return `${index + 1}. ${record.title} (${sourceLabel})`;
+  });
+  const links = result.evidence
+    .filter((record): record is typeof record & { url: string } => typeof record.url === "string" && record.url.length > 0)
+    .slice(0, 5)
+    .map((record) => `- ${record.url}`)
+    .join("\n");
+  return `Here are the main headlines I found:\n${lines.join("\n")}${links ? `\n\nLinks:\n${links}` : ""}`;
 }
 
 function buildWorldLookupAuditDetail(
@@ -615,6 +722,14 @@ function looksLikeCalendarShowIntent(normalized: string): boolean {
   }
 
   return false;
+}
+
+function looksLikeNewsBriefingIntent(normalized: string): boolean {
+  return (
+    /\b(latest headlines|top headlines|headline|headlines|top news|news today|today('?s)? news)\b/.test(normalized) ||
+    /\bwhat('?s| is) in the news\b/.test(normalized) ||
+    /\bbrief me on the news\b/.test(normalized)
+  );
 }
 
 function normalizeUserMessage(userMessage: string): string {
