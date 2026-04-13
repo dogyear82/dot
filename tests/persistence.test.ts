@@ -123,6 +123,37 @@ test("email actions persist draft and send state durably", () => {
   }
 });
 
+test("news browse sessions persist the latest briefing per conversation", () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    persistence.saveNewsBrowseSession({
+      kind: "briefing",
+      conversationId: "channel-123",
+      query: "give me the latest headlines",
+      savedAt: "2026-04-13T00:00:00Z",
+      items: [
+        {
+          ordinal: 1,
+          title: "Myanmar junta extends emergency rule",
+          url: "https://example.test/myanmar",
+          source: "newsdata",
+          publisher: "Reuters",
+          snippet: "Reuters reports the military government extended emergency rule.",
+          publishedAt: "2026-04-13T01:00:00Z"
+        }
+      ]
+    });
+
+    const session = persistence.getLatestNewsBrowseSession("channel-123");
+    assert.equal(session?.kind, "briefing");
+    assert.equal(session?.items[0]?.ordinal, 1);
+    assert.equal(session?.items[0]?.publisher, "Reuters");
+  } finally {
+    cleanup();
+  }
+});
+
 test("listRecentNormalizedMessages preserves millisecond ordering within the same second", () => {
   const { persistence, cleanup } = createPersistence();
 

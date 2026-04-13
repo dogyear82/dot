@@ -171,12 +171,17 @@ export function registerMessagePipeline(params: {
             const groundedAnswerService = chatService.generateGroundedReply
               ? {
                   generateGroundedReply: chatService.generateGroundedReply.bind(chatService),
-                  generateNewsBriefingReply: chatService.generateNewsBriefingReply?.bind(chatService)
+                  generateNewsBriefingReply: chatService.generateNewsBriefingReply?.bind(chatService),
+                  generateStoryFollowUpReply: chatService.generateStoryFollowUpReply?.bind(chatService)
                 }
               : undefined;
 
             const normalizeInferredExecuteDecision = (decision: Extract<ToolDecision, { decision: "execute" }>) => {
-              if (decision.toolName !== "world.lookup" && decision.toolName !== "news.briefing") {
+              if (
+                decision.toolName !== "world.lookup" &&
+                decision.toolName !== "news.briefing" &&
+                decision.toolName !== "news.follow_up"
+              ) {
                 return decision;
               }
 
@@ -278,6 +283,7 @@ export function registerMessagePipeline(params: {
               if (explicitToolDecision?.decision === "execute") {
                 const result = await executeToolDecision({
                   calendarClient,
+                  conversationId: event.correlation.conversationId ?? "",
                   decision: explicitToolDecision,
                   groundedAnswerService,
                   persistence,
@@ -340,6 +346,7 @@ export function registerMessagePipeline(params: {
                     const normalizedDecision = normalizeInferredExecuteDecision(inferred.decision);
                     const result = await executeToolDecision({
                       calendarClient,
+                      conversationId: event.correlation.conversationId ?? "",
                       decision: normalizedDecision,
                       groundedAnswerService,
                       persistence,
