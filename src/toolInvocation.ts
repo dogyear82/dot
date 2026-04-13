@@ -3,8 +3,10 @@ import { SpanKind } from "@opentelemetry/api";
 import { withSpan } from "./observability.js";
 import { handleCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
 import { createPolicyEngine, type PolicyDecision } from "./policyEngine.js";
+import { getNewsPreferences } from "./newsPreferences.js";
 import { handleReminderCommand } from "./reminders.js";
 import type {
+  NewsPreferences,
   PolicyActionType,
   WorldLookupArticleRecord,
   WorldLookupAdapterResult,
@@ -136,11 +138,13 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
   },
   "world.lookup": {
     toolName: "world.lookup",
-    async executeDetailed({ args, groundedAnswerService, worldLookupAdapters, articleReader }) {
+    async executeDetailed({ args, persistence, groundedAnswerService, worldLookupAdapters, articleReader }) {
       const query = getRequiredStringArg(args, "query");
+      const newsPreferences = getNewsPreferences(persistence.settings);
       const lookupResult = await executeWorldLookup({
         query,
-        adapters: worldLookupAdapters ?? createDefaultWorldLookupAdapters()
+        adapters: worldLookupAdapters ?? createDefaultWorldLookupAdapters(),
+        preferences: newsPreferences
       });
       const articleReadResult =
         lookupResult.bucket === "current_events" && lookupResult.evidence.length > 0
@@ -149,7 +153,7 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
             })
           : { articles: [], failures: [] };
 
-      const detail = buildWorldLookupAuditDetail(lookupResult, articleReadResult);
+      const detail = buildWorldLookupAuditDetail(lookupResult, articleReadResult, newsPreferences);
 
       if (!groundedAnswerService) {
         return {
@@ -529,14 +533,20 @@ function isToolName(value: unknown): value is ExplicitToolName {
 
 function buildWorldLookupAuditDetail(
   result: WorldLookupResult,
-  articleReadResult: { articles: WorldLookupArticleRecord[]; failures: string[] } = { articles: [], failures: [] }
+  articleReadResult: { articles: WorldLookupArticleRecord[]; failures: string[] } = { articles: [], failures: [] },
+  preferences: NewsPreferences = {
+    interestedTopics: [],
+    uninterestedTopics: [],
+    preferredOutlets: [],
+    blockedOutlets: []
+  }
 ): string {
   const citedSources = Array.from(new Set(result.evidence.map((record) => record.source))).join(",");
   const chosenEvidence = result.evidence
-    .map((record) => `${record.source}:${record.title}`)
+    .map((record) => `${record.source}:${record.title}${record.rankingSignals?.length ? `[${record.rankingSignals.join(",")}]` : ""}`)
     .join(" | ");
   const articleTitles = articleReadResult.articles.map((article) => article.title).join(" | ");
-  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; retrievalStrategy=${result.retrievalStrategy}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; citedSources=${citedSources || "none"}; articleReadCount=${articleReadResult.articles.length}; articleTitles=${articleTitles || "none"}; articleReadFailures=${articleReadResult.failures.length}; failureCount=${result.failures.length}`;
+  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; retrievalStrategy=${result.retrievalStrategy}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; citedSources=${citedSources || "none"}; articleReadCount=${articleReadResult.articles.length}; articleTitles=${articleTitles || "none"}; articleReadFailures=${articleReadResult.failures.length}; preferenceCounts=interested:${preferences.interestedTopics.length},uninterested:${preferences.uninterestedTopics.length},preferred:${preferences.preferredOutlets.length},blocked:${preferences.blockedOutlets.length}; failureCount=${result.failures.length}`;
 }
 
 function buildWorldLookupFallbackReply(result: WorldLookupResult): string {

@@ -2,6 +2,7 @@ import { SpanKind } from "@opentelemetry/api";
 
 import { withSpan } from "./observability.js";
 import type {
+  NewsPreferences,
   WorldLookupAdapterResult,
   WorldLookupEvidenceRecord,
   WorldLookupQueryBucket,
@@ -76,6 +77,7 @@ export async function executeWorldLookup(params: {
   query: string;
   adapters: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
   timeoutMs?: number;
+  preferences?: NewsPreferences;
 }): Promise<WorldLookupResult> {
   const bucket = classifyWorldLookupQuery(params.query);
   const basePlan = selectWorldLookupSourcePlan(bucket);
@@ -133,7 +135,8 @@ export async function executeWorldLookup(params: {
       const { evidence, retrievalStrategy } = filterWorldLookupEvidence({
         bucket,
         query: params.query,
-        evidence: rawEvidence
+        evidence: rawEvidence,
+        preferences: params.preferences
       });
       const failures = settled.flatMap((entry) =>
         entry.status === "rejected"
@@ -179,6 +182,7 @@ function filterWorldLookupEvidence(params: {
   bucket: WorldLookupQueryBucket;
   query: string;
   evidence: WorldLookupEvidenceRecord[];
+  preferences?: NewsPreferences;
 }): Pick<WorldLookupResult, "evidence" | "retrievalStrategy"> {
   if (params.evidence.length === 0) {
     return {
@@ -188,7 +192,7 @@ function filterWorldLookupEvidence(params: {
   }
 
   if (params.bucket === "current_events") {
-    return filterCurrentEventsEvidence(params.query, params.evidence);
+    return filterCurrentEventsEvidence(params.query, params.evidence, params.preferences);
   }
 
   if (params.bucket === "mixed") {
@@ -197,7 +201,8 @@ function filterWorldLookupEvidence(params: {
       params.evidence.filter(
         (record) =>
           record.source === "newsdata" || record.source === "wikimedia_current_events" || record.source === "gdelt"
-      )
+      ),
+      params.preferences
     );
 
     const nonCurrentEvents = params.evidence.filter(
@@ -219,7 +224,8 @@ function filterWorldLookupEvidence(params: {
 
 function filterCurrentEventsEvidence(
   query: string,
-  evidence: WorldLookupEvidenceRecord[]
+  evidence: WorldLookupEvidenceRecord[],
+  preferences?: NewsPreferences
 ): Pick<WorldLookupResult, "evidence" | "retrievalStrategy"> {
   const normalizedQuery = normalizeQuery(query);
   const topicTokens = extractTopicTokens(query);
@@ -229,15 +235,16 @@ function filterCurrentEventsEvidence(
   const ranked = evidence
     .map((record) => ({
       record,
-      score: scoreCurrentEventsEvidence({
+      ranking: scoreCurrentEventsEvidence({
         query: normalizedQuery,
         topicTokens,
         genericHeadlinesIntent,
-        record
+        record,
+        preferences
       })
     }))
-    .filter(({ score }) => score > 0)
-    .sort((left, right) => right.score - left.score);
+    .filter(({ ranking }) => ranking.score > 0)
+    .sort((left, right) => right.ranking.score - left.ranking.score);
 
   if (ranked.length === 0) {
     return {
@@ -246,11 +253,15 @@ function filterCurrentEventsEvidence(
     };
   }
 
-  const bestScore = ranked[0]?.score ?? 0;
-  const selected = ranked
-    .filter(({ score }, index) => index === 0 || (index < 3 && score >= bestScore - 2))
-    .slice(0, genericHeadlinesIntent ? 3 : 3)
-    .map(({ record }) => record);
+  const bestScore = ranked[0]?.ranking.score ?? 0;
+  const selected = (
+    genericHeadlinesIntent
+      ? ranked.slice(0, 3)
+      : ranked.filter(({ ranking }, index) => index === 0 || (index < 3 && ranking.score >= bestScore - 2)).slice(0, 3)
+  ).map(({ record, ranking }) => ({
+    ...record,
+    rankingSignals: ranking.signals.length > 0 ? ranking.signals : undefined
+  }));
 
   return {
     evidence: selected,
@@ -374,6 +385,7 @@ export function createWorldLookupEvidence(params: {
   url?: string | null;
   snippet: string;
   publishedAt?: string | null;
+  publisher?: string | null;
   confidence?: WorldLookupEvidenceRecord["confidence"];
 }): WorldLookupEvidenceRecord {
   return {
@@ -382,6 +394,7 @@ export function createWorldLookupEvidence(params: {
     url: params.url ?? null,
     snippet: params.snippet,
     publishedAt: params.publishedAt ?? null,
+    publisher: params.publisher ?? null,
     confidence: params.confidence ?? "medium"
   };
 }
@@ -391,22 +404,33 @@ function scoreCurrentEventsEvidence(params: {
   topicTokens: string[];
   genericHeadlinesIntent: boolean;
   record: WorldLookupEvidenceRecord;
-}): number {
+  preferences?: NewsPreferences;
+}): { score: number; signals: string[] } {
   const haystack = normalizeQuery(`${params.record.title} ${params.record.snippet}`);
   const recencyScore = scoreEvidenceRecency(params.record.publishedAt);
   const sourceScore = scoreCurrentEventsSource(params.record.source);
   const confidenceScore = params.record.confidence === "high" ? 2 : params.record.confidence === "medium" ? 1 : 0;
   const overlapCount = params.topicTokens.filter((token) => haystack.includes(token)).length;
+  const preferenceSignals = scoreNewsPreferences(params.record, haystack, params.preferences);
 
   if (params.genericHeadlinesIntent) {
-    return sourceScore + recencyScore + confidenceScore + (params.record.url ? 1 : 0);
+    return {
+      score: sourceScore + recencyScore + confidenceScore + (params.record.url ? 1 : 0) + preferenceSignals.score,
+      signals: preferenceSignals.signals
+    };
   }
 
   if (params.topicTokens.length > 0 && overlapCount === 0) {
-    return -1;
+    return {
+      score: -1,
+      signals: preferenceSignals.signals
+    };
   }
 
-  return sourceScore + recencyScore + confidenceScore + overlapCount * 3;
+  return {
+    score: sourceScore + recencyScore + confidenceScore + overlapCount * 3 + preferenceSignals.score,
+    signals: preferenceSignals.signals
+  };
 }
 
 function scoreCurrentEventsSource(source: WorldLookupSourceName): number {
@@ -448,4 +472,67 @@ function scoreEvidenceRecency(publishedAt: string | null): number {
     return 1;
   }
   return -4;
+}
+
+function scoreNewsPreferences(
+  record: WorldLookupEvidenceRecord,
+  haystack: string,
+  preferences?: NewsPreferences
+): { score: number; signals: string[] } {
+  if (!preferences) {
+    return { score: 0, signals: [] };
+  }
+
+  let score = 0;
+  const signals: string[] = [];
+  const publisher = normalizePublisher(record);
+
+  for (const topic of preferences.interestedTopics) {
+    if (haystack.includes(topic)) {
+      score += 3;
+      signals.push(`interested:${topic}`);
+    }
+  }
+
+  for (const topic of preferences.uninterestedTopics) {
+    if (haystack.includes(topic)) {
+      score -= 3;
+      signals.push(`uninterested:${topic}`);
+    }
+  }
+
+  for (const outlet of preferences.preferredOutlets) {
+    if (publisher === outlet) {
+      score += 4;
+      signals.push(`preferred_outlet:${outlet}`);
+    }
+  }
+
+  for (const outlet of preferences.blockedOutlets) {
+    if (publisher === outlet) {
+      score -= 6;
+      signals.push(`blocked_outlet:${outlet}`);
+    }
+  }
+
+  return { score, signals };
+}
+
+function normalizePublisher(record: WorldLookupEvidenceRecord): string | null {
+  const candidate = record.publisher ?? extractPublisherFromUrl(record.url);
+  return candidate ? normalizeQuery(candidate) : null;
+}
+
+function extractPublisherFromUrl(url: string | null): string | null {
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, "");
+    const labels = hostname.split(".");
+    return labels.length >= 2 ? labels[labels.length - 2] ?? null : labels[0] ?? null;
+  } catch {
+    return null;
+  }
 }

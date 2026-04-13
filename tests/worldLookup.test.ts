@@ -242,6 +242,68 @@ test("executeWorldLookup ranks generic headlines queries by source quality and r
   );
 });
 
+test("executeWorldLookup applies news preference signals without hard filtering by default", async () => {
+  const result = await executeWorldLookup({
+    query: "give me the latest headlines",
+    timeoutMs: 100,
+    preferences: {
+      interestedTopics: ["myanmar"],
+      uninterestedTopics: ["celebrity gossip"],
+      preferredOutlets: ["reuters"],
+      blockedOutlets: ["fox"]
+    },
+    adapters: {
+      newsdata: {
+        source: "newsdata",
+        async lookup() {
+          return {
+            source: "newsdata",
+            evidence: [
+              createWorldLookupEvidence({
+                source: "newsdata",
+                title: "Myanmar junta extends emergency rule",
+                url: "https://www.reuters.com/world/asia-pacific/myanmar-story",
+                snippet: "Reuters reports Myanmar's military government extended emergency rule.",
+                publishedAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+                publisher: "Reuters",
+                confidence: "high"
+              }),
+              createWorldLookupEvidence({
+                source: "newsdata",
+                title: "Fox runs celebrity gossip special",
+                url: "https://www.foxnews.com/entertainment/gossip-special",
+                snippet: "Celebrity gossip dominated the network's entertainment coverage.",
+                publishedAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+                publisher: "Fox",
+                confidence: "high"
+              })
+            ]
+          };
+        }
+      },
+      wikimedia_current_events: {
+        source: "wikimedia_current_events",
+        async lookup() {
+          return { source: "wikimedia_current_events", evidence: [] };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          return { source: "gdelt", evidence: [] };
+        }
+      }
+    }
+  });
+
+  assert.equal(result.evidence.length, 2);
+  assert.equal(result.evidence[0]?.title, "Myanmar junta extends emergency rule");
+  assert.match(result.evidence[0]?.rankingSignals?.join(",") ?? "", /interested:myanmar/);
+  assert.match(result.evidence[0]?.rankingSignals?.join(",") ?? "", /preferred_outlet:reuters/);
+  assert.match(result.evidence[1]?.rankingSignals?.join(",") ?? "", /blocked_outlet:fox/);
+  assert.match(result.evidence[1]?.rankingSignals?.join(",") ?? "", /uninterested:celebrity gossip/);
+});
+
 test("executeWorldLookup reports no_evidence when every selected source fails or returns nothing", async () => {
   const result = await executeWorldLookup({
     query: "What's the weather in Phoenix tomorrow?",

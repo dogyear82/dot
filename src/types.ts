@@ -198,6 +198,8 @@ export interface WorldLookupEvidenceRecord {
   snippet: string;
   publishedAt: string | null;
   confidence: "high" | "medium" | "low";
+  publisher?: string | null;
+  rankingSignals?: string[];
 }
 
 export interface WorldLookupArticleRecord {
@@ -233,6 +235,13 @@ export interface WorldLookupResult {
   outcome: "success" | "partial_failure" | "no_evidence";
   candidateCount: number;
   retrievalStrategy: "default" | "current_events_topic_ranked" | "current_events_generic_ranked";
+}
+
+export interface NewsPreferences {
+  interestedTopics: string[];
+  uninterestedTopics: string[];
+  preferredOutlets: string[];
+  blockedOutlets: string[];
 }
 
 export interface PersonalityPresetRecord {
