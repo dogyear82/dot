@@ -333,6 +333,8 @@ export function buildToolInferencePrompt(userMessage: string): string {
     "- calendar.remind: index, optional leadTime",
     "- world.lookup: query",
     "Use world.lookup for questions that need public factual grounding, current events, weather, economics, or information that may be outdated in-model.",
+    "When you choose world.lookup, preserve the owner's original wording as closely as possible in args.query.",
+    "Do not collapse current-events phrasing like 'right now', 'latest', 'today', or 'what is happening' into a generic topic label.",
     "Never invent unsupported tools or free-form side effects.",
     "Return strict JSON only in one of these shapes:",
     '{"decision":"none","reason":"..."}',

@@ -14,7 +14,7 @@ import { handlePersonalityCommand, isPersonalityCommand } from "./personality.js
 import { createSpanAttributesForEvent, recordToolExecution, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
 import { isReminderCommand } from "./reminders.js";
-import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
+import { executeToolDecision, parseExplicitToolDecision, type ToolDecision } from "./toolInvocation.js";
 import type { IncomingMessage, WorldLookupSourceName } from "./types.js";
 import { evaluateAddressedness } from "./discord/addressing.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
@@ -173,6 +173,21 @@ export function registerMessagePipeline(params: {
                 }
               : undefined;
 
+            const normalizeInferredExecuteDecision = (decision: Extract<ToolDecision, { decision: "execute" }>) => {
+              if (decision.toolName !== "world.lookup") {
+                return decision;
+              }
+
+              return {
+                ...decision,
+                args: {
+                  ...decision.args,
+                  // Preserve the full owner request so bucket selection keeps temporal/context cues like "right now".
+                  query: content
+                }
+              };
+            };
+
             if (accessDecision.canUsePrivilegedFeatures) {
               if (!persistence.settings.hasCompletedOnboarding()) {
                 const response = content
@@ -314,9 +329,10 @@ export function registerMessagePipeline(params: {
                   }
 
                   if (inferred.decision.decision === "execute") {
+                    const normalizedDecision = normalizeInferredExecuteDecision(inferred.decision);
                     const result = await executeToolDecision({
                       calendarClient,
-                      decision: inferred.decision,
+                      decision: normalizedDecision,
                       groundedAnswerService,
                       persistence,
                       worldLookupAdapters
@@ -327,7 +343,7 @@ export function registerMessagePipeline(params: {
                       invocationSource: "inferred",
                       status: result.status,
                       provider: result.route ?? inferred.route,
-                      detail: result.policyDecision?.reason ?? result.detail ?? inferred.decision.reason
+                      detail: result.policyDecision?.reason ?? result.detail ?? normalizedDecision.reason
                     });
                     recordToolExecution({ toolName: result.toolName, status: result.status });
                     logger.info(

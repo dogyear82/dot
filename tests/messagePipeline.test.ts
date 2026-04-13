@@ -389,6 +389,134 @@ test("message pipeline executes inferred world.lookup and records grounded audit
   }
 });
 
+test("message pipeline preserves the full owner wording for inferred world.lookup current-events queries", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("world lookup should not fall back to normal chat");
+    },
+    async generateGroundedReply(params) {
+      assert.equal(params.bucket, "current_events");
+      assert.deepEqual(params.selectedSources, ["wikimedia_current_events", "gdelt"]);
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        reply: "According to Wikinews, the situation in Myanmar remains unstable.\n\nLinks:\n- https://en.wikinews.org/wiki/Myanmar"
+      };
+    },
+    async inferToolDecision() {
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        decision: {
+          decision: "execute",
+          toolName: "world.lookup",
+          reason: "owner asked for current public information",
+          args: {
+            query: "Myanmar"
+          }
+        }
+      };
+    },
+    getPowerStatus(route) {
+      return route === "hosted" ? "engaged" : "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence,
+    worldLookupAdapters: {
+      wikimedia_current_events: {
+        source: "wikimedia_current_events",
+        async lookup({ query }) {
+          assert.match(query, /myanmar right now/i);
+          return {
+            source: "wikimedia_current_events",
+            evidence: [
+              {
+                source: "wikimedia_current_events",
+                title: "Myanmar current events",
+                url: "https://en.wikinews.org/wiki/Myanmar",
+                snippet: "Current-events coverage for Myanmar.",
+                publishedAt: null,
+                confidence: "medium"
+              }
+            ]
+          };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup({ query }) {
+          assert.match(query, /myanmar right now/i);
+          return {
+            source: "gdelt",
+            evidence: []
+          };
+        }
+      }
+    }
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-world-current-events",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "tell me what the situation is like in Myanmar right now",
+          addressedContent: "tell me what the situation is like in Myanmar right now",
+          isDirectMessage: false,
+          mentionedBot: true,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-world-current-events"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+
+    const audit = persistence.db
+      .prepare("SELECT tool_name, status, provider, detail FROM tool_execution_audit WHERE message_id = ?")
+      .get("msg-world-current-events") as { tool_name: string; status: string; provider: string | null; detail: string | null };
+
+    assert.equal(audit.tool_name, "world.lookup");
+    assert.equal(audit.status, "executed");
+    assert.equal(audit.provider, "hosted");
+    assert.match(audit.detail ?? "", /bucket=current_events/);
+    assert.match(audit.detail ?? "", /selectedSources=wikimedia_current_events,gdelt/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline turns incomplete explicit tool commands into clarification prompts", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
