@@ -142,6 +142,7 @@ export class WikipediaReferenceAdapter implements WorldLookupAdapter {
           url: `https://en.wikipedia.org/wiki/${encodeURIComponent(result.title.replace(/\s+/g, "_"))}`,
           snippet: stripHtml(result.snippet),
           publishedAt: result.timestamp ?? null,
+          publisher: "Wikipedia",
           confidence: "high"
         })
       )
@@ -183,6 +184,7 @@ export class NewsDataCurrentEventsAdapter implements WorldLookupAdapter {
               .find((value): value is string => typeof value === "string" && value.trim().length > 0)
               ?.trim() ?? (article.source_name ? `Recent reporting from ${article.source_name}.` : "Recent news coverage."),
             publishedAt: article.pubDate ?? null,
+            publisher: article.source_name ?? null,
             confidence: "high"
           })
         )
@@ -215,6 +217,7 @@ export class WikimediaCurrentEventsAdapter implements WorldLookupAdapter {
           url: `https://en.wikinews.org/wiki/${encodeURIComponent(result.title.replace(/\s+/g, "_"))}`,
           snippet: stripHtml(result.snippet),
           publishedAt: result.timestamp ?? null,
+          publisher: "Wikinews",
           confidence: "medium"
         })
       )
@@ -248,6 +251,7 @@ export class GdeltCurrentEventsAdapter implements WorldLookupAdapter {
             url: article.url || null,
             snippet: article.domain ? `Recent coverage from ${article.domain}.` : "Recent current-events coverage.",
             publishedAt: article.seendate ?? null,
+            publisher: article.domain ?? null,
             confidence: "medium"
           })
         )

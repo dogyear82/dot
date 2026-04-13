@@ -1004,3 +1004,68 @@ test("message pipeline routes policy commands and returns the unknown-contact cl
     cleanup();
   }
 });
+
+test("message pipeline routes news preference commands deterministically", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient: {
+      async listUpcomingEvents() {
+        return [];
+      }
+    },
+    chatService: {
+      async generateOwnerReply() {
+        throw new Error("news preference commands should not invoke chat");
+      },
+      async inferToolDecision() {
+        throw new Error("news preference commands should not invoke inference");
+      },
+      getPowerStatus() {
+        return "standby";
+      }
+    } as never,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  try {
+    persistence.settings.set("onboarding.completed", "true");
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-news-prefs",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "!news prefs add preferred Reuters",
+          addressedContent: "!news prefs add preferred Reuters",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-news-prefs"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /Saved `reuters`/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
