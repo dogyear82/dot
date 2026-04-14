@@ -91,8 +91,41 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
   "reminder.add": {
     toolName: "reminder.add",
     async execute(call, context) {
-      const duration = getRequiredStringArg(call.args, "duration");
-      const message = getRequiredStringArg(call.args, "message");
+      const duration = getOptionalStringArg(call.args, "duration");
+      const message = getOptionalStringArg(call.args, "message");
+      if (!duration && !message) {
+        return {
+          toolName: "reminder.add",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "When should I remind you, and what should I remind you about?"
+          },
+          detail: "presentation=final_text; missing=duration,message"
+        };
+      }
+      if (!duration) {
+        return {
+          toolName: "reminder.add",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "What duration from now should I set the reminder for? (e.g., 'in 15 hours' or give me the time offset)"
+          },
+          detail: "presentation=final_text; missing=duration"
+        };
+      }
+      if (!message) {
+        return {
+          toolName: "reminder.add",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "What should the reminder say?"
+          },
+          detail: "presentation=final_text; missing=message"
+        };
+      }
       return {
         toolName: "reminder.add",
         status: "success",
@@ -168,7 +201,18 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
   "calendar.remind": {
     toolName: "calendar.remind",
     async execute(call, context) {
-      const index = getRequiredNumericLikeArg(call.args, "index");
+      const index = getOptionalNumericLikeArg(call.args, "index");
+      if (index == null) {
+        return {
+          toolName: "calendar.remind",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "Which calendar item should I remind you about?"
+          },
+          detail: "presentation=final_text; missing=index"
+        };
+      }
       const leadTime = getOptionalStringArg(call.args, "leadTime");
       const content = leadTime ? `!calendar remind ${index} ${leadTime}` : `!calendar remind ${index}`;
       return {
@@ -489,6 +533,12 @@ function getRequiredNumericLikeArg(args: Record<string, string | number>, key: s
     throw new Error(`Missing required numeric tool argument: ${key}`);
   }
   return parsed;
+}
+
+function getOptionalNumericLikeArg(args: Record<string, string | number>, key: string): number | null {
+  const value = args[key];
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function buildNewsBriefingAuditDetail(result: WorldLookupResult, preferences: NewsPreferences): string {

@@ -181,6 +181,17 @@ export interface ToolExecutionAuditRecord {
   detail: string | null;
 }
 
+export interface PendingConversationalToolSessionRecord {
+  conversationId: string;
+  toolName: string;
+  args: Record<string, string | number>;
+  originalUserMessage: string;
+  clarificationQuestion: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+}
+
 export type WorldLookupQueryBucket = "reference" | "current_events" | "weather" | "economics" | "mixed";
 
 export type WorldLookupSourceName =

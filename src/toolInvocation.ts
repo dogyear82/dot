@@ -293,7 +293,7 @@ export function buildToolInferencePrompt(userMessage: string): string {
     "Return only strict JSON with one of two decisions: respond or execute_tool.",
     "Use execute_tool only when the owner is reasonably clearly asking for an available tool.",
     "If the owner is simply chatting, correcting Dot, or asking something that does not clearly require a tool, return respond.",
-    "If the owner seems to want a tool but key parameters are missing, return respond with a brief clarifying question.",
+    "If the owner seems to want a tool but some parameters are missing, still return execute_tool with the tool name and any arguments you can confidently infer. The tool itself will ask for clarification if needed.",
     "Supported tools and args:",
     "- reminder.add: duration, message",
     "- reminder.show: no args",
@@ -340,6 +340,32 @@ export function buildToolInferencePrompt(userMessage: string): string {
     '- "you got that one wrong"',
     '- "thanks"',
     `Owner message: ${JSON.stringify(userMessage)}`
+  ].join("\n");
+}
+
+export function buildPendingToolResolutionPrompt(params: {
+  userMessage: string;
+  toolName: ConversationalToolName;
+  existingArgs: Record<string, string | number>;
+  originalUserMessage: string;
+  clarificationQuestion: string;
+}): string {
+  return [
+    "You are resuming a pending Dot tool call after the tool previously asked a clarification question.",
+    "Return only strict JSON with one of two decisions: respond or execute_tool.",
+    "If the owner is continuing the pending tool flow, return execute_tool for the SAME tool with merged or newly supplied args.",
+    "Do not switch to a different tool unless the owner clearly abandons the pending flow and asks for something else entirely.",
+    "If the owner is cancelling, abandoning, or changing the subject, return respond with a short final reply in Dot's normal voice.",
+    "If the owner supplies only one missing field, return only that field in args. Existing args will be merged outside the model.",
+    "Do not invent unsupported tools or side effects.",
+    `Pending tool: ${params.toolName}`,
+    `Original user request: ${JSON.stringify(params.originalUserMessage)}`,
+    `Tool clarification question: ${JSON.stringify(params.clarificationQuestion)}`,
+    `Existing args already captured: ${JSON.stringify(params.existingArgs)}`,
+    `Latest owner reply: ${JSON.stringify(params.userMessage)}`,
+    "Return strict JSON only in one of these shapes:",
+    '{"decision":"respond","reason":"...","response":"..."}',
+    `{"decision":"execute_tool","toolName":"${params.toolName}","reason":"owner supplied missing information","confidence":"high","args":{"message":"stretch"}}`
   ].join("\n");
 }
 

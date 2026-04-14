@@ -2,17 +2,23 @@ import type { AppConfig } from "../config.js";
 import { SpanKind } from "@opentelemetry/api";
 import { startLlmTimer, withSpan } from "../observability.js";
 import type { SettingsStore } from "../settings.js";
-import type { ToolRenderInstructions } from "../conversationalTools.js";
+import type { ConversationalToolName, ToolRenderInstructions } from "../conversationalTools.js";
 import type {
   ConversationTurnRecord,
   NewsBrowseSessionItemRecord,
+  PendingConversationalToolSessionRecord,
   WorldLookupArticleRecord,
   WorldLookupEvidenceRecord,
   WorldLookupQueryBucket,
   WorldLookupSourceFailure,
   WorldLookupSourceName
 } from "../types.js";
-import { buildToolInferencePrompt, parseToolDecision, type ConversationalIntentDecision } from "../toolInvocation.js";
+import {
+  buildPendingToolResolutionPrompt,
+  buildToolInferencePrompt,
+  parseToolDecision,
+  type ConversationalIntentDecision
+} from "../toolInvocation.js";
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
 import { OllamaChatProvider, OneMinAiChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
 
@@ -60,6 +66,11 @@ export interface LlmService {
     userMessage: string,
     recentConversation?: ConversationTurnRecord[]
   ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision }>;
+  resolvePendingToolDecision?(params: {
+    userMessage: string;
+    session: PendingConversationalToolSessionRecord;
+    recentConversation?: ConversationTurnRecord[];
+  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision }>;
   getPowerStatus(route?: LlmRoute): LlmPowerStatus;
 }
 
@@ -236,6 +247,25 @@ export function createLlmService(params: {
 
       return { route, powerStatus: getPowerStatus(route), decision: reply };
     },
+    async resolvePendingToolDecision({ userMessage, session, recentConversation }) {
+      const messages = buildPendingToolResolutionMessages({
+        userMessage,
+        session,
+        recentConversation,
+        mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
+        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
+        settings: params.settings
+      });
+      const { route, reply } = await executeProviderRequest({
+        mode: getLlmMode(params.settings),
+        providers,
+        operation: "tool.resume",
+        invoke: async (provider) => parseToolDecision(await provider.generate(messages)),
+        failurePrefix: "No LLM provider could resolve a pending tool clarification."
+      });
+
+      return { route, powerStatus: getPowerStatus(route), decision: reply };
+    },
     getPowerStatus
   };
 }
@@ -377,6 +407,40 @@ function buildConversationalIntentMessages(params: {
     {
       role: "user",
       content: buildToolInferencePrompt(params.userMessage)
+    }
+  ];
+}
+
+function buildPendingToolResolutionMessages(params: {
+  userMessage: string;
+  session: PendingConversationalToolSessionRecord;
+  recentConversation?: ConversationTurnRecord[];
+  mode: PersonaMode;
+  balance: PersonaBalance;
+  settings: SettingsStore;
+}): ChatMessage[] {
+  return [
+    {
+      role: "system",
+      content: `${buildSystemPrompt({
+        mode: params.mode,
+        balance: params.balance,
+        settings: params.settings
+      })} ${buildCurrentDateTimeInstruction()} Return only strict JSON with either a respond or execute_tool decision. If you choose respond, the response field must be the final user-facing reply in Dot's normal voice. Do not add markdown fences.`
+    },
+    ...(params.recentConversation ?? []).map((turn) => ({
+      role: turn.role,
+      content: turn.content
+    })),
+    {
+      role: "user",
+      content: buildPendingToolResolutionPrompt({
+        userMessage: params.userMessage,
+        toolName: params.session.toolName as ConversationalToolName,
+        existingArgs: params.session.args,
+        originalUserMessage: params.session.originalUserMessage,
+        clarificationQuestion: params.session.clarificationQuestion
+      })
     }
   ];
 }

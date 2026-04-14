@@ -17,11 +17,12 @@ import type { Persistence } from "./persistence.js";
 import { isReminderCommand } from "./reminders.js";
 import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
 import { executeConversationalToolCall, renderConversationalToolResult, type ConversationalToolName } from "./conversationalTools.js";
-import type { IncomingMessage, WorldLookupSourceName } from "./types.js";
+import type { IncomingMessage, PendingConversationalToolSessionRecord, WorldLookupSourceName } from "./types.js";
 import { evaluateAddressedness } from "./discord/addressing.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
 
 const RECENT_CHAT_HISTORY_LIMIT = 10;
+const PENDING_TOOL_SESSION_TTL_MS = 15 * 60 * 1000;
 
 export function registerMessagePipeline(params: {
   bus: EventBus;
@@ -139,6 +140,7 @@ export function registerMessagePipeline(params: {
             }
 
             let hasSavedUserTurn = false;
+            const conversationId = event.correlation.conversationId ?? "";
 
             const saveUserConversationTurn = () => {
               if (hasSavedUserTurn || !content) {
@@ -146,7 +148,7 @@ export function registerMessagePipeline(params: {
               }
 
               persistence.saveConversationTurn({
-                conversationId: event.correlation.conversationId ?? "",
+                conversationId,
                 role: "user",
                 participantActorId: event.payload.sender.actorId,
                 content,
@@ -176,6 +178,44 @@ export function registerMessagePipeline(params: {
                   generateStoryFollowUpReply: chatService.generateStoryFollowUpReply?.bind(chatService)
                 }
               : undefined;
+
+            const getPendingToolSession = (): PendingConversationalToolSessionRecord | null => {
+              if (!conversationId) {
+                return null;
+              }
+              const session = persistence.getPendingConversationalToolSession(conversationId);
+              if (!session) {
+                return null;
+              }
+              if (new Date(session.expiresAt).getTime() <= Date.now()) {
+                persistence.clearPendingConversationalToolSession(conversationId);
+                return null;
+              }
+              return session;
+            };
+
+            const savePendingToolSession = (params: {
+              toolName: string;
+              args: Record<string, string | number>;
+              originalUserMessage: string;
+              clarificationQuestion: string;
+              prior?: PendingConversationalToolSessionRecord | null;
+            }) => {
+              if (!conversationId) {
+                return;
+              }
+              const now = new Date();
+              persistence.savePendingConversationalToolSession({
+                conversationId,
+                toolName: params.toolName,
+                args: params.args,
+                originalUserMessage: params.prior?.originalUserMessage ?? params.originalUserMessage,
+                clarificationQuestion: params.clarificationQuestion,
+                createdAt: params.prior?.createdAt ?? now.toISOString(),
+                updatedAt: now.toISOString(),
+                expiresAt: new Date(now.getTime() + PENDING_TOOL_SESSION_TTL_MS).toISOString()
+              });
+            };
 
             if (accessDecision.canUsePrivilegedFeatures) {
               if (!persistence.settings.hasCompletedOnboarding()) {
@@ -307,13 +347,24 @@ export function registerMessagePipeline(params: {
               }
 
               try {
+                let activePendingToolSession: PendingConversationalToolSessionRecord | null = null;
                 try {
-                  const inferred = await chatService.inferToolDecision(
-                    content,
-                    persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT)
-                  );
+                  const recentConversation = persistence.listRecentConversationTurns(conversationId, RECENT_CHAT_HISTORY_LIMIT);
+                  const pendingToolSession = getPendingToolSession();
+                  activePendingToolSession = pendingToolSession;
+                  const inferred =
+                    pendingToolSession && chatService.resolvePendingToolDecision
+                      ? await chatService.resolvePendingToolDecision({
+                          userMessage: content,
+                          session: pendingToolSession,
+                          recentConversation
+                        })
+                      : await chatService.inferToolDecision(content, recentConversation);
 
                   if (inferred.decision.decision === "respond") {
+                    if (pendingToolSession) {
+                      persistence.clearPendingConversationalToolSession(conversationId);
+                    }
                     persistence.saveToolExecutionAudit({
                       messageId: event.payload.messageId,
                       toolName: "respond",
@@ -329,20 +380,20 @@ export function registerMessagePipeline(params: {
                   }
 
                   if (inferred.decision.decision === "execute_tool") {
-                    const recentConversation = persistence.listRecentConversationTurns(
-                      event.correlation.conversationId ?? "",
-                      RECENT_CHAT_HISTORY_LIMIT
-                    );
                     if (!chatService.renderToolResult) {
                       throw new Error("Chat service cannot render conversational tool results");
                     }
+                    const resolvedArgs =
+                      pendingToolSession && pendingToolSession.toolName === inferred.decision.toolName
+                        ? { ...pendingToolSession.args, ...inferred.decision.args }
+                        : inferred.decision.args;
                     const result = await renderConversationalToolResult({
                       result: await executeConversationalToolCall({
                         call: {
                           toolName: inferred.decision.toolName as ConversationalToolName,
-                          args: inferred.decision.args,
+                          args: resolvedArgs,
                           userMessage: content,
-                          conversationId: event.correlation.conversationId ?? ""
+                          conversationId
                         },
                         context: {
                           calendarClient,
@@ -356,6 +407,17 @@ export function registerMessagePipeline(params: {
                       renderService: { renderToolResult: chatService.renderToolResult! },
                       recentConversation
                     });
+                    if (result.status === "clarify") {
+                      savePendingToolSession({
+                        toolName: result.toolName,
+                        args: resolvedArgs,
+                        originalUserMessage: content,
+                        clarificationQuestion: result.reply,
+                        prior: pendingToolSession
+                      });
+                    } else if (pendingToolSession) {
+                      persistence.clearPendingConversationalToolSession(conversationId);
+                    }
                     persistence.saveToolExecutionAudit({
                       messageId: event.payload.messageId,
                       toolName: result.toolName,
@@ -383,6 +445,18 @@ export function registerMessagePipeline(params: {
                     detail: error instanceof Error ? error.message : "unknown inference failure"
                   });
                   recordToolExecution({ toolName: "conversation-intent", status: "failed" });
+                  if (activePendingToolSession) {
+                    logger.warn(
+                      { err: error, messageId: event.payload.messageId, toolName: activePendingToolSession.toolName },
+                      "Pending tool clarification failed; keeping the clarification active"
+                    );
+                    pipelineOutcome = "tool_clarify";
+                    await publishReply(
+                      "I lost the thread on that tool follow-up. Answer my last clarification directly and I'll try again.",
+                      "none"
+                    );
+                    return;
+                  }
                   logger.warn({ err: error, messageId: event.payload.messageId }, "Conversational intent classification failed; falling back to chat");
                 }
 

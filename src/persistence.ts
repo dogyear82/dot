@@ -23,6 +23,7 @@ import type {
   NewsBrowseSessionRecord,
   OAuthDeviceFlowRecord,
   OAuthTokenRecord,
+  PendingConversationalToolSessionRecord,
   PendingContactClassificationRecord,
   PersonalityPresetRecord,
   PolicyActionType,
@@ -71,6 +72,9 @@ export interface Persistence {
     contactQuery: string;
     conversationId: string;
   }): PendingContactClassificationRecord;
+  getPendingConversationalToolSession(conversationId: string): PendingConversationalToolSessionRecord | null;
+  savePendingConversationalToolSession(record: PendingConversationalToolSessionRecord): void;
+  clearPendingConversationalToolSession(conversationId: string): void;
   listPendingContactClassifications(): PendingContactClassificationRecord[];
   getPendingContactClassification(id: number): PendingContactClassificationRecord | null;
   clearPendingContactClassification(id: number): void;
@@ -1222,6 +1226,24 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     saveNewsBrowseSession(record) {
       upsertWorkerStateStatement.run(newsBrowseSessionKey(record.conversationId), JSON.stringify(record));
     },
+    getPendingConversationalToolSession(conversationId) {
+      const raw = getWorkerStateStatement.get(pendingConversationalToolSessionKey(conversationId))?.value ?? null;
+      if (!raw) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(raw) as PendingConversationalToolSessionRecord;
+      } catch {
+        return null;
+      }
+    },
+    savePendingConversationalToolSession(record) {
+      upsertWorkerStateStatement.run(pendingConversationalToolSessionKey(record.conversationId), JSON.stringify(record));
+    },
+    clearPendingConversationalToolSession(conversationId) {
+      clearWorkerStateStatement.run(pendingConversationalToolSessionKey(conversationId));
+    },
     getMailTriageDecision(messageId) {
       return getMailTriageDecisionStatement.get(messageId) ?? null;
     },
@@ -1600,6 +1622,10 @@ function ensureColumn(db: Database.Database, tableName: string, columnName: stri
 
 function newsBrowseSessionKey(conversationId: string): string {
   return `newsBrowseSession:${conversationId}`;
+}
+
+function pendingConversationalToolSessionKey(conversationId: string): string {
+  return `pendingConversationalTool:${conversationId}`;
 }
 
 function normalizeContactValue(value: string): string {

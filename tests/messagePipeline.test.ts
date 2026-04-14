@@ -517,6 +517,152 @@ test("message pipeline executes inferred reminder add/show/ack through the conve
   }
 });
 
+test("message pipeline resumes a pending conversational reminder clarification instead of falling back to chat", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient: {
+      async listUpcomingEvents() {
+        return [];
+      }
+    },
+    chatService: {
+      async generateOwnerReply() {
+        throw new Error("pending reminder clarification should not fall back to free chat");
+      },
+      async renderToolResult() {
+        throw new Error("final_text reminder flow should not invoke llm rendering");
+      },
+      async inferToolDecision(userMessage: string) {
+        assert.equal(userMessage, "set a reminder to stretch");
+        return {
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "execute_tool",
+            toolName: "reminder.add",
+            reason: "owner wants a reminder but only supplied the message",
+            confidence: "high",
+            args: {
+              message: "stretch"
+            }
+          }
+        };
+      },
+      async resolvePendingToolDecision({
+        userMessage,
+        session
+      }: {
+        userMessage: string;
+        session: { toolName: string; args: Record<string, string | number> };
+      }) {
+        assert.equal(userMessage, "in 10 minutes");
+        assert.equal(session.toolName, "reminder.add");
+        assert.deepEqual(session.args, {
+          message: "stretch"
+        });
+        return {
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "execute_tool",
+            toolName: "reminder.add",
+            reason: "owner supplied the missing duration",
+            confidence: "high",
+            args: {
+              duration: "10m"
+            }
+          }
+        };
+      },
+      getPowerStatus() {
+        return "standby";
+      }
+    } as never,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  try {
+    persistence.settings.set("onboarding.completed", "true");
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-remind-clarify-1",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "set a reminder to stretch",
+          addressedContent: "set a reminder to stretch",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-clarify-1"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /What duration from now should I set the reminder for/i);
+    assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
+      message: "stretch"
+    });
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        eventId: "discord:msg-remind-clarify-2",
+        correlation: {
+          correlationId: "msg-remind-clarify-2",
+          causationId: null,
+          conversationId: "channel-1",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-remind-clarify-2",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "in 10 minutes",
+          addressedContent: "in 10 minutes",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-clarify-2"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 2);
+    assert.match(outbound[1]?.payload.content ?? "", /Saved reminder #1/i);
+    assert.equal(persistence.getPendingConversationalToolSession("channel-1"), null);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline preserves the full owner wording for inferred world.lookup current-events queries", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();

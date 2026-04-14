@@ -138,6 +138,42 @@ test("conversational tool executor handles reminder mutations and calendar.remin
   }
 });
 
+test("conversational reminder tool returns clarify when required args are missing", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const missingDuration = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          message: "stretch"
+        },
+        userMessage: "set a reminder to stretch"
+      },
+      context: createContext({ persistence })
+    });
+    assert.equal(missingDuration.status, "clarify");
+    assert.equal(missingDuration.presentation, "final_text");
+    assert.match(String(missingDuration.payload.text), /What duration from now/i);
+
+    const missingMessage = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          duration: "10m"
+        },
+        userMessage: "set a reminder in 10 minutes"
+      },
+      context: createContext({ persistence })
+    });
+    assert.equal(missingMessage.status, "clarify");
+    assert.equal(missingMessage.presentation, "final_text");
+    assert.match(String(missingMessage.payload.text), /What should the reminder say/i);
+  } finally {
+    cleanup();
+  }
+});
+
 test("conversational tool executor returns a common llm_render result for calendar.show", async () => {
   const { persistence, cleanup } = createPersistence();
   const capturedRenderCalls: Array<{
