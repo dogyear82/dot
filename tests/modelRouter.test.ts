@@ -35,6 +35,7 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     SQLITE_PATH: "./data/test.sqlite",
     OLLAMA_BASE_URL: "http://ollama:11434",
     OLLAMA_MODEL: "llama3.1:8b",
+    NEWSDATA_API_KEY: "",
     ONEMINAI_API_KEY: "",
     ONEMINAI_BASE_URL: "",
     ONEMINAI_MODEL: "",

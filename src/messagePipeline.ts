@@ -185,12 +185,17 @@ export function registerMessagePipeline(params: {
                 return decision;
               }
 
+              const conversationId = event.correlation.conversationId ?? "";
+              const retryQuery =
+                decision.toolName === "world.lookup" ? resolveCurrentEventsRetryQuery(content, conversationId, persistence) : null;
+
               return {
                 ...decision,
                 args: {
                   ...decision.args,
                   // Preserve the full owner request so bucket selection keeps temporal/context cues like "right now".
-                  query: content
+                  // If the owner is correcting a stale/history answer in an active topical-news session, retry the saved topic instead.
+                  query: retryQuery ?? content
                 }
               };
             };
@@ -472,6 +477,32 @@ export function registerMessagePipeline(params: {
       );
     });
   });
+}
+
+function resolveCurrentEventsRetryQuery(content: string, conversationId: string, persistence: Persistence): string | null {
+  if (!conversationId || !looksLikeCurrentEventsCorrection(content)) {
+    return null;
+  }
+
+  const latestSession = persistence.getLatestNewsBrowseSession(conversationId);
+  if (!latestSession || latestSession.kind !== "topic_lookup") {
+    return null;
+  }
+
+  return latestSession.query;
+}
+
+function looksLikeCurrentEventsCorrection(content: string): boolean {
+  const normalized = content
+    .trim()
+    .toLowerCase()
+    .replace(/[’‘]/g, "'")
+    .replace(/\s+/g, " ");
+
+  const asksForCurrentNews = /\b(current events|current event|news|latest|right now|recent)\b/.test(normalized);
+  const rejectsReferenceAnswer = /\b(wikipedia|history|historical|not history|not news)\b/.test(normalized);
+
+  return asksForCurrentNews && rejectsReferenceAnswer;
 }
 
 function mapInboundEventToIncomingMessage(event: InboundMessageReceivedEvent): IncomingMessage {

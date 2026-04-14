@@ -156,7 +156,7 @@ export function createLlmService(params: {
       return {
         route,
         powerStatus: getPowerStatus(route),
-        reply: appendGroundedLinks(reply, evidence)
+        reply: appendGroundedLinks(reply, evidence, 5)
       };
     },
     async generateStoryFollowUpReply({ userMessage, selectedItem, evidence, articles, recentConversation }) {
@@ -436,7 +436,7 @@ function buildNewsBriefingMessages(params: {
         mode: params.mode,
         balance: params.balance,
         settings: params.settings
-      })} ${buildCurrentDateTimeInstruction()} You are preparing a concise news briefing. Stay in the active personality profile. Use the supplied external evidence only. Make it clear this information was looked up, not remembered. Give a short list of 4 to 5 headlines when enough evidence exists. Blend major world news with stories that seem especially relevant to the owner's stored interests when the evidence supports that mix. Keep each item brief. Cite the outlet naturally in each item. Do not dump raw articles or long summaries. If the evidence is weak, say you could not assemble a reliable briefing from the available sources.`
+      })} ${buildCurrentDateTimeInstruction()} You are preparing a concise news briefing. Stay in the active personality profile. Use the supplied external evidence only. Make it clear this information was looked up, not remembered. Give a short list of 4 to 5 headlines when enough evidence exists. Blend major world news with stories that seem especially relevant to the owner's stored interests when the evidence supports that mix. Keep each item brief. Cite the outlet naturally in each item. Each item must name the story itself and why it matters in one sentence. Do not answer with only links or outlet names. Do not dump raw articles or long summaries. If the evidence is weak, say you could not assemble a reliable briefing from the available sources.`
     },
     ...(params.recentConversation ?? []).map((turn) => ({
       role: turn.role,
@@ -506,14 +506,14 @@ function buildStoryFollowUpMessages(params: {
   ];
 }
 
-function appendGroundedLinks(reply: string, evidence: WorldLookupEvidenceRecord[]): string {
+function appendGroundedLinks(reply: string, evidence: WorldLookupEvidenceRecord[], maxLinks = 3): string {
   const uniqueLinks = Array.from(
     new Map(
       evidence
         .filter((record): record is WorldLookupEvidenceRecord & { url: string } => typeof record.url === "string" && record.url.length > 0)
         .map((record) => [record.url, record])
     ).values()
-  ).slice(0, 3);
+  ).slice(0, maxLinks);
 
   if (uniqueLinks.length === 0) {
     return reply;

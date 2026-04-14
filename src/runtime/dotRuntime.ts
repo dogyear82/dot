@@ -12,6 +12,7 @@ import { MicrosoftGraphOutlookCalendarClient } from "../outlookCalendar.js";
 import { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
 import { initializePersistence } from "../persistence.js";
 import { startReminderScheduler } from "../reminders.js";
+import { createDefaultWorldLookupAdapters } from "../worldLookupAdapters.js";
 import type { ServiceHost, ServiceStatus } from "./serviceHost.js";
 import { createServiceCoordinator, createServiceHost } from "./serviceHost.js";
 
@@ -34,6 +35,7 @@ export async function createDotRuntime(params: {
     config,
     settings: persistence.settings
   });
+  const worldLookupAdapters = createRuntimeWorldLookupAdapters(config);
 
   let unregisterMessagePipeline: (() => void) | undefined;
   let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
@@ -123,7 +125,8 @@ export async function createDotRuntime(params: {
           logger,
           outlookOAuthClient,
           ownerUserId: config.DISCORD_OWNER_USER_ID,
-          persistence
+          persistence,
+          worldLookupAdapters
         });
       },
       stop() {
@@ -187,6 +190,12 @@ export async function createDotRuntime(params: {
       return coordinator.getStatuses();
     }
   };
+}
+
+export function createRuntimeWorldLookupAdapters(config: Pick<AppConfig, "NEWSDATA_API_KEY">) {
+  return createDefaultWorldLookupAdapters({
+    newsDataApiKey: config.NEWSDATA_API_KEY
+  });
 }
 
 export function registerRuntimeSignalHandlers(runtime: DotRuntime) {

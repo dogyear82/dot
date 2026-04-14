@@ -22,7 +22,7 @@ const SOURCE_PLANS: Record<WorldLookupQueryBucket, WorldLookupSourcePlan> = {
   },
   current_events: {
     bucket: "current_events",
-    sources: ["newsdata", "wikimedia_current_events", "gdelt"],
+    sources: ["newsdata", "gdelt"],
     timeoutMs: DEFAULT_WORLD_LOOKUP_TIMEOUT_MS
   },
   weather: {
@@ -37,7 +37,7 @@ const SOURCE_PLANS: Record<WorldLookupQueryBucket, WorldLookupSourcePlan> = {
   },
   mixed: {
     bucket: "mixed",
-    sources: ["wikipedia", "newsdata", "wikimedia_current_events", "gdelt", "open_meteo", "world_bank"],
+    sources: ["wikipedia", "newsdata", "gdelt", "open_meteo", "world_bank"],
     timeoutMs: DEFAULT_WORLD_LOOKUP_TIMEOUT_MS
   }
 };
@@ -83,7 +83,7 @@ export async function executeWorldLookup(params: {
   const bucket = classifyWorldLookupQuery(params.query);
   const basePlan = selectWorldLookupSourcePlan(bucket);
   const timeoutMs = params.timeoutMs ?? basePlan.timeoutMs;
-  const selectedSources = basePlan.sources;
+  const selectedSources = selectWorldLookupSources(bucket, params.query, basePlan.sources);
 
   return withSpan(
     "world.lookup",
@@ -180,6 +180,18 @@ export async function executeWorldLookup(params: {
   );
 }
 
+function selectWorldLookupSources(
+  bucket: WorldLookupQueryBucket,
+  query: string,
+  defaultSources: WorldLookupSourceName[]
+): WorldLookupSourceName[] {
+  if (bucket === "current_events" && looksLikeGenericHeadlinesQuery(normalizeQuery(query))) {
+    return defaultSources.filter((source) => source === "newsdata");
+  }
+
+  return defaultSources;
+}
+
 function filterWorldLookupEvidence(params: {
   bucket: WorldLookupQueryBucket;
   query: string;
@@ -188,9 +200,15 @@ function filterWorldLookupEvidence(params: {
   maxEvidenceCount?: number;
 }): Pick<WorldLookupResult, "evidence" | "retrievalStrategy"> {
   if (params.evidence.length === 0) {
+    const normalizedQuery = normalizeQuery(params.query);
     return {
       evidence: params.evidence,
-      retrievalStrategy: "default"
+      retrievalStrategy:
+        params.bucket === "current_events"
+          ? looksLikeGenericHeadlinesQuery(normalizedQuery)
+            ? "current_events_generic_ranked"
+            : "current_events_topic_ranked"
+          : "default"
     };
   }
 
@@ -203,15 +221,15 @@ function filterWorldLookupEvidence(params: {
       params.query,
       params.evidence.filter(
         (record) =>
-          record.source === "newsdata" || record.source === "wikimedia_current_events" || record.source === "gdelt"
+          record.source === "newsdata" || record.source === "gdelt"
       ),
       params.preferences,
       params.maxEvidenceCount
     );
 
     const nonCurrentEvents = params.evidence.filter(
-      (record) =>
-        record.source !== "newsdata" && record.source !== "wikimedia_current_events" && record.source !== "gdelt"
+        (record) =>
+          record.source !== "newsdata" && record.source !== "gdelt"
     );
 
     return {
@@ -400,7 +418,11 @@ function looksLikeMixedQuery(normalized: string): boolean {
 }
 
 function normalizeQuery(query: string): string {
-  return query.trim().toLowerCase().replace(/\s+/g, " ");
+  return query
+    .trim()
+    .toLowerCase()
+    .replace(/[’‘]/g, "'")
+    .replace(/\s+/g, " ");
 }
 
 async function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, source: WorldLookupSourceName): Promise<T> {
@@ -482,8 +504,6 @@ function scoreCurrentEventsSource(source: WorldLookupSourceName): number {
       return 5;
     case "gdelt":
       return 3;
-    case "wikimedia_current_events":
-      return 1;
     default:
       return 0;
   }
