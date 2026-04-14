@@ -2,6 +2,7 @@ import type { AppConfig } from "../config.js";
 import { SpanKind } from "@opentelemetry/api";
 import { startLlmTimer, withSpan } from "../observability.js";
 import type { SettingsStore } from "../settings.js";
+import type { ToolRenderInstructions } from "../conversationalTools.js";
 import type {
   ConversationTurnRecord,
   NewsBrowseSessionItemRecord,
@@ -47,6 +48,12 @@ export interface LlmService {
     selectedItem: NewsBrowseSessionItemRecord;
     evidence: WorldLookupEvidenceRecord[];
     articles?: WorldLookupArticleRecord[];
+    recentConversation?: ConversationTurnRecord[];
+  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
+  renderToolResult?(params: {
+    userMessage: string;
+    payload: Record<string, unknown>;
+    renderInstructions: ToolRenderInstructions;
     recentConversation?: ConversationTurnRecord[];
   }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
   inferToolDecision(
@@ -185,6 +192,30 @@ export function createLlmService(params: {
         route,
         powerStatus: getPowerStatus(route),
         reply: appendGroundedLinks(reply, evidence)
+      };
+    },
+    async renderToolResult({ userMessage, payload, renderInstructions, recentConversation }) {
+      const messages = buildToolRenderMessages({
+        userMessage,
+        payload,
+        renderInstructions,
+        recentConversation,
+        mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
+        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
+        settings: params.settings
+      });
+      const { route, reply } = await executeProviderRequest({
+        mode: getLlmMode(params.settings),
+        providers,
+        operation: "tool.render",
+        invoke: (provider) => provider.generate(messages),
+        failurePrefix: "No LLM provider could render a tool result."
+      });
+
+      return {
+        route,
+        powerStatus: getPowerStatus(route),
+        reply
       };
     },
     async inferToolDecision(userMessage, recentConversation) {
@@ -519,6 +550,52 @@ function buildStoryFollowUpMessages(params: {
         "Article extracts:",
         articleLines,
         "Answer in Dot's normal voice and keep it concise."
+      ].join("\n")
+    }
+  ];
+}
+
+function buildToolRenderMessages(params: {
+  userMessage: string;
+  payload: Record<string, unknown>;
+  renderInstructions: ToolRenderInstructions;
+  recentConversation?: ConversationTurnRecord[];
+  mode: PersonaMode;
+  balance: PersonaBalance;
+  settings: SettingsStore;
+}): ChatMessage[] {
+  const constraints =
+    params.renderInstructions.constraints && params.renderInstructions.constraints.length > 0
+      ? params.renderInstructions.constraints.map((constraint) => `- ${constraint}`).join("\n")
+      : "- Use only the supplied tool payload.";
+  const styleHints =
+    params.renderInstructions.styleHints && params.renderInstructions.styleHints.length > 0
+      ? params.renderInstructions.styleHints.map((hint) => `- ${hint}`).join("\n")
+      : "- Keep the reply concise and natural.";
+
+  return [
+    {
+      role: "system",
+      content: `${buildSystemPrompt({
+        mode: params.mode,
+        balance: params.balance,
+        settings: params.settings
+      })} ${buildCurrentDateTimeInstruction()} ${params.renderInstructions.systemPrompt} Render only the supplied tool result. Do not call tools, do not invent facts, and do not broaden into free-form chat.`
+    },
+    ...(params.recentConversation ?? []).map((turn) => ({
+      role: turn.role,
+      content: turn.content
+    })),
+    {
+      role: "user",
+      content: [
+        `Original user message: ${params.userMessage}`,
+        "Rendering constraints:",
+        constraints,
+        "Style hints:",
+        styleHints,
+        "Tool payload:",
+        JSON.stringify(params.payload, null, 2)
       ].join("\n")
     }
   ];
