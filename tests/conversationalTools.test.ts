@@ -73,6 +73,71 @@ test("conversational tool executor returns a common final_text result for remind
   }
 });
 
+test("conversational tool executor handles reminder mutations and calendar.remind through the common final_text contract", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const addResult = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          duration: "10m",
+          message: "stretch"
+        },
+        userMessage: "remind me to stretch in 10 minutes"
+      },
+      context: createContext({ persistence })
+    });
+    assert.equal(addResult.presentation, "final_text");
+    assert.match(String(addResult.payload.text), /Saved reminder #1/i);
+
+    const ackResult = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.ack",
+        args: {
+          id: 1
+        },
+        userMessage: "acknowledge reminder 1"
+      },
+      context: createContext({ persistence })
+    });
+    assert.equal(ackResult.presentation, "final_text");
+    assert.match(String(ackResult.payload.text), /Acknowledged reminder #1/i);
+
+    const calendarRemind = await executeConversationalToolCall({
+      call: {
+        toolName: "calendar.remind",
+        args: {
+          index: 1,
+          leadTime: "15m"
+        },
+        userMessage: "remind me about the first event 15 minutes early"
+      },
+      context: createContext({
+        persistence,
+        calendarClient: {
+          async listUpcomingEvents() {
+            return [
+              {
+                id: "evt-1",
+                subject: "Planning",
+                startAt: "2027-04-08T10:00:00.000Z",
+                endAt: "2027-04-08T11:00:00.000Z",
+                webLink: null
+              }
+            ];
+          }
+        }
+      })
+    });
+
+    assert.equal(calendarRemind.presentation, "final_text");
+    assert.match(String(calendarRemind.payload.text), /Saved reminder #2/i);
+  } finally {
+    cleanup();
+  }
+});
+
 test("conversational tool executor returns a common llm_render result for calendar.show", async () => {
   const { persistence, cleanup } = createPersistence();
   const capturedRenderCalls: Array<{

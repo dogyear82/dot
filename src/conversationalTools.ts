@@ -14,6 +14,7 @@ import type {
   WorldLookupSourceName
 } from "./types.js";
 import type { OutlookCalendarClient } from "./outlookCalendar.js";
+import { handleCalendarCommand } from "./outlookCalendar.js";
 import type { GroundedAnswerService } from "./toolInvocation.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
 import type { WorldLookupArticleReader } from "./worldLookupArticles.js";
@@ -23,8 +24,11 @@ import { createDefaultWorldLookupAdapters } from "./worldLookupAdapters.js";
 import { getNewsPreferences } from "./newsPreferences.js";
 
 export type ConversationalToolName =
+  | "reminder.add"
   | "reminder.show"
+  | "reminder.ack"
   | "calendar.show"
+  | "calendar.remind"
   | "news.briefing"
   | "news.follow_up"
   | "world.lookup";
@@ -84,6 +88,22 @@ export interface ConversationalTool {
 }
 
 const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, ConversationalTool> = {
+  "reminder.add": {
+    toolName: "reminder.add",
+    async execute(call, context) {
+      const duration = getRequiredStringArg(call.args, "duration");
+      const message = getRequiredStringArg(call.args, "message");
+      return {
+        toolName: "reminder.add",
+        status: "success",
+        presentation: "final_text",
+        payload: {
+          text: handleReminderCommand(context.persistence, `!reminder add ${duration} ${message}`)
+        },
+        detail: "presentation=final_text"
+      };
+    }
+  },
   "reminder.show": {
     toolName: "reminder.show",
     async execute(_call, context) {
@@ -93,6 +113,21 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
         presentation: "final_text",
         payload: {
           text: handleReminderCommand(context.persistence, "!reminder show")
+        },
+        detail: "presentation=final_text"
+      };
+    }
+  },
+  "reminder.ack": {
+    toolName: "reminder.ack",
+    async execute(call, context) {
+      const id = getRequiredNumericLikeArg(call.args, "id");
+      return {
+        toolName: "reminder.ack",
+        status: "success",
+        presentation: "final_text",
+        payload: {
+          text: handleReminderCommand(context.persistence, `!reminder ack ${id}`)
         },
         detail: "presentation=final_text"
       };
@@ -127,6 +162,27 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
           styleHints: ["Name the next few events clearly.", "Preserve event ordering from the payload."]
         },
         detail: `presentation=llm_render; eventCount=${events.length}; originalMessage=${call.userMessage}`
+      };
+    }
+  },
+  "calendar.remind": {
+    toolName: "calendar.remind",
+    async execute(call, context) {
+      const index = getRequiredNumericLikeArg(call.args, "index");
+      const leadTime = getOptionalStringArg(call.args, "leadTime");
+      const content = leadTime ? `!calendar remind ${index} ${leadTime}` : `!calendar remind ${index}`;
+      return {
+        toolName: "calendar.remind",
+        status: "success",
+        presentation: "final_text",
+        payload: {
+          text: await handleCalendarCommand({
+            calendarClient: context.calendarClient,
+            content,
+            persistence: context.persistence
+          })
+        },
+        detail: "presentation=final_text"
       };
     }
   },
@@ -419,6 +475,20 @@ function getRequiredStringArg(args: Record<string, string | number>, key: string
     throw new Error(`Missing required tool argument: ${key}`);
   }
   return value.trim();
+}
+
+function getOptionalStringArg(args: Record<string, string | number>, key: string): string | null {
+  const value = args[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function getRequiredNumericLikeArg(args: Record<string, string | number>, key: string): number {
+  const value = args[key];
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Missing required numeric tool argument: ${key}`);
+  }
+  return parsed;
 }
 
 function buildNewsBriefingAuditDetail(result: WorldLookupResult, preferences: NewsPreferences): string {

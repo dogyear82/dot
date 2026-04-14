@@ -22,7 +22,6 @@ import { evaluateAddressedness } from "./discord/addressing.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
 
 const RECENT_CHAT_HISTORY_LIMIT = 10;
-const CONVERSATIONAL_TOOL_NAMES = new Set<ConversationalToolName>(["news.briefing", "news.follow_up", "world.lookup"]);
 
 export function registerMessagePipeline(params: {
   bus: EventBus;
@@ -334,43 +333,29 @@ export function registerMessagePipeline(params: {
                       event.correlation.conversationId ?? "",
                       RECENT_CHAT_HISTORY_LIMIT
                     );
-                    if (CONVERSATIONAL_TOOL_NAMES.has(inferred.decision.toolName as ConversationalToolName) && !chatService.renderToolResult) {
+                    if (!chatService.renderToolResult) {
                       throw new Error("Chat service cannot render conversational tool results");
                     }
-                    const result = CONVERSATIONAL_TOOL_NAMES.has(inferred.decision.toolName as ConversationalToolName)
-                      ? await renderConversationalToolResult({
-                          result: await executeConversationalToolCall({
-                            call: {
-                              toolName: inferred.decision.toolName as ConversationalToolName,
-                              args: inferred.decision.args,
-                              userMessage: content,
-                              conversationId: event.correlation.conversationId ?? ""
-                            },
-                            context: {
-                              calendarClient,
-                              persistence,
-                              groundedAnswerService,
-                              worldLookupAdapters,
-                              articleReader: undefined
-                            }
-                          }),
+                    const result = await renderConversationalToolResult({
+                      result: await executeConversationalToolCall({
+                        call: {
+                          toolName: inferred.decision.toolName as ConversationalToolName,
+                          args: inferred.decision.args,
                           userMessage: content,
-                          renderService: { renderToolResult: chatService.renderToolResult! },
-                          recentConversation
-                        })
-                      : await executeToolDecision({
+                          conversationId: event.correlation.conversationId ?? ""
+                        },
+                        context: {
                           calendarClient,
-                          conversationId: event.correlation.conversationId ?? "",
-                          decision: {
-                            decision: "execute",
-                            toolName: inferred.decision.toolName,
-                            reason: inferred.decision.reason,
-                            args: inferred.decision.args
-                          },
-                          groundedAnswerService,
                           persistence,
-                          worldLookupAdapters
-                        });
+                          groundedAnswerService,
+                          worldLookupAdapters,
+                          articleReader: undefined
+                        }
+                      }),
+                      userMessage: content,
+                      renderService: { renderToolResult: chatService.renderToolResult! },
+                      recentConversation
+                    });
                     persistence.saveToolExecutionAudit({
                       messageId: event.payload.messageId,
                       toolName: result.toolName,

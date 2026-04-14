@@ -394,6 +394,129 @@ test("message pipeline executes inferred world.lookup and records grounded audit
   }
 });
 
+test("message pipeline executes inferred reminder add/show/ack through the conversational tool contract", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  let inferenceCount = 0;
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient: {
+      async listUpcomingEvents() {
+        return [];
+      }
+    },
+    chatService: {
+      async generateOwnerReply() {
+        throw new Error("reminder flow should not fall back to chat");
+      },
+      async renderToolResult() {
+        throw new Error("final_text reminder tools should not invoke llm rendering");
+      },
+      async inferToolDecision() {
+        inferenceCount += 1;
+        if (inferenceCount === 1) {
+          return {
+            route: "local",
+            powerStatus: "standby",
+            decision: {
+              decision: "execute_tool",
+              toolName: "reminder.add",
+              reason: "owner wants a reminder",
+              confidence: "high",
+              args: {
+                duration: "10m",
+                message: "stretch"
+              }
+            }
+          };
+        }
+
+        if (inferenceCount === 2) {
+          return {
+            route: "local",
+            powerStatus: "standby",
+            decision: {
+              decision: "execute_tool",
+              toolName: "reminder.show",
+              reason: "owner wants to list reminders",
+              confidence: "high",
+              args: {}
+            }
+          };
+        }
+
+        return {
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "execute_tool",
+            toolName: "reminder.ack",
+            reason: "owner wants to acknowledge a reminder",
+            confidence: "high",
+            args: {
+              id: 1
+            }
+          }
+        };
+      },
+      getPowerStatus() {
+        return "standby";
+      }
+    } as never,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  try {
+    persistence.settings.set("onboarding.completed", "true");
+
+    for (const [messageId, content] of [
+      ["msg-remind-1", "remind me in 10 minutes to stretch"],
+      ["msg-remind-2", "show my reminders"],
+      ["msg-remind-3", "acknowledge reminder 1"]
+    ] as const) {
+      await bus.publishInboundMessage(
+        inboundEvent({
+          payload: {
+            messageId,
+            sender: {
+              actorId: "owner-1",
+              displayName: "tan",
+              actorRole: "owner"
+            },
+            content,
+            addressedContent: content,
+            isDirectMessage: true,
+            mentionedBot: false,
+            replyRoute: {
+              transport: "discord",
+              channelId: "channel-1",
+              guildId: null,
+              replyTo: messageId
+            }
+          }
+        })
+      );
+    }
+
+    assert.equal(outbound.length, 3);
+    assert.match(outbound[0]?.payload.content ?? "", /Saved reminder #1/i);
+    assert.match(outbound[1]?.payload.content ?? "", /Pending reminders/i);
+    assert.match(outbound[2]?.payload.content ?? "", /Acknowledged reminder #1/i);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline preserves the full owner wording for inferred world.lookup current-events queries", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
@@ -725,6 +848,141 @@ test("message pipeline saves topical current-events lookups for later follow-up 
 
     assert.equal(audit.tool_name, "world.lookup");
     assert.match(audit.detail ?? "", /topicSessionSaved=yes/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline executes inferred calendar show and remind through the conversational tool contract", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  let inferenceCount = 0;
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient: {
+      async listUpcomingEvents() {
+        return [
+          {
+            id: "evt-1",
+            subject: "Planning",
+            startAt: "2027-04-08T10:00:00.000Z",
+            endAt: "2027-04-08T11:00:00.000Z",
+            webLink: "https://example.test/planning"
+          }
+        ];
+      }
+    },
+    chatService: {
+      async generateOwnerReply() {
+        throw new Error("calendar flow should not fall back to chat");
+      },
+      async renderToolResult() {
+        return {
+          route: "hosted",
+          powerStatus: "engaged",
+          reply: "You have Planning at 10:00."
+        };
+      },
+      async inferToolDecision() {
+        inferenceCount += 1;
+        if (inferenceCount === 1) {
+          return {
+            route: "hosted",
+            powerStatus: "engaged",
+            decision: {
+              decision: "execute_tool",
+              toolName: "calendar.show",
+              reason: "owner wants upcoming calendar events",
+              confidence: "high",
+              args: {}
+            }
+          };
+        }
+
+        return {
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "execute_tool",
+            toolName: "calendar.remind",
+            reason: "owner wants a reminder for the first event",
+            confidence: "high",
+            args: {
+              index: 1,
+              leadTime: "15m"
+            }
+          }
+        };
+      },
+      getPowerStatus(route: "none" | "deterministic" | "local" | "hosted" = "none") {
+        return route === "hosted" ? "engaged" : "standby";
+      }
+    } as never,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  try {
+    persistence.settings.set("onboarding.completed", "true");
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-cal-show",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "what's on my calendar?",
+          addressedContent: "what's on my calendar?",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-cal-show"
+          }
+        }
+      })
+    );
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-cal-remind",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "remind me about the first one 15 minutes early",
+          addressedContent: "remind me about the first one 15 minutes early",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-cal-remind"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 2);
+    assert.match(outbound[0]?.payload.content ?? "", /You have Planning at 10:00/i);
+    assert.match(outbound[1]?.payload.content ?? "", /Saved reminder #1/i);
   } finally {
     unsubscribe();
     cleanup();

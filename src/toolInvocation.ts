@@ -2,11 +2,10 @@ import type { Persistence } from "./persistence.js";
 import { SpanKind } from "@opentelemetry/api";
 import { withSpan } from "./observability.js";
 import { handleCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
+import type { ConversationalToolName } from "./conversationalTools.js";
 import { createPolicyEngine, type PolicyDecision } from "./policyEngine.js";
-import { getNewsPreferences } from "./newsPreferences.js";
 import { handleReminderCommand } from "./reminders.js";
 import type {
-  NewsPreferences,
   NewsBrowseSessionItemRecord,
   PolicyActionType,
   WorldLookupArticleRecord,
@@ -15,19 +14,15 @@ import type {
   WorldLookupSourceFailure,
   WorldLookupSourceName
 } from "./types.js";
-import { executeWorldLookup, type WorldLookupAdapter } from "./worldLookup.js";
-import { HtmlWorldLookupArticleReader, type WorldLookupArticleReader } from "./worldLookupArticles.js";
-import { createDefaultWorldLookupAdapters } from "./worldLookupAdapters.js";
+import type { WorldLookupAdapter } from "./worldLookup.js";
+import type { WorldLookupArticleReader } from "./worldLookupArticles.js";
 
 export type ExplicitToolName =
   | "reminder.add"
   | "reminder.show"
   | "reminder.ack"
   | "calendar.show"
-  | "calendar.remind"
-  | "news.briefing"
-  | "news.follow_up"
-  | "world.lookup";
+  | "calendar.remind";
 
 export type ConversationalIntentDecision =
   | {
@@ -37,7 +32,7 @@ export type ConversationalIntentDecision =
     }
   | {
       decision: "execute_tool";
-      toolName: ExplicitToolName;
+      toolName: ConversationalToolName;
       reason: string;
       confidence: "medium" | "high";
       args: Record<string, string | number>;
@@ -167,228 +162,6 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
       });
     }
   },
-  "news.briefing": {
-    toolName: "news.briefing",
-    async executeDetailed({ args, persistence, conversationId, groundedAnswerService, worldLookupAdapters }) {
-      const query = getRequiredStringArg(args, "query");
-      const newsPreferences = getNewsPreferences(persistence.settings);
-      const lookupResult = await executeWorldLookup({
-        query,
-        adapters: worldLookupAdapters ?? createDefaultWorldLookupAdapters(),
-        preferences: newsPreferences,
-        maxEvidenceCount: 8
-      });
-
-      const detail = buildNewsBriefingAuditDetail(lookupResult, newsPreferences);
-      if (conversationId) {
-        persistence.saveNewsBrowseSession({
-          kind: "briefing",
-          conversationId,
-          query,
-          savedAt: new Date().toISOString(),
-          items: lookupResult.evidence.map((record, index) => ({
-            ordinal: index + 1,
-            title: record.title,
-            url: record.url,
-            source: record.source,
-            publisher: record.publisher ?? null,
-            snippet: record.snippet,
-            publishedAt: record.publishedAt
-          }))
-        });
-      }
-
-      if (!groundedAnswerService?.generateNewsBriefingReply) {
-        return {
-          toolName: "news.briefing",
-          status: "executed",
-          reply: buildNewsBriefingFallbackReply(lookupResult),
-          detail
-        };
-      }
-
-      try {
-        const grounded = await groundedAnswerService.generateNewsBriefingReply({
-          userMessage: query,
-          evidence: lookupResult.evidence,
-          selectedSources: lookupResult.selectedSources,
-          failures: lookupResult.failures,
-          outcome: lookupResult.outcome
-        });
-
-        return {
-          toolName: "news.briefing",
-          status: "executed",
-          reply: grounded.reply,
-          detail,
-          route: grounded.route
-        };
-      } catch {
-        return {
-          toolName: "news.briefing",
-          status: "executed",
-          reply: buildNewsBriefingFallbackReply(lookupResult),
-          detail
-        };
-      }
-    },
-    execute() {
-      throw new Error("news.briefing requires detailed execution");
-    }
-  },
-  "news.follow_up": {
-    toolName: "news.follow_up",
-    async executeDetailed({ args, persistence, conversationId, groundedAnswerService, articleReader }) {
-      const query = getRequiredStringArg(args, "query");
-      const session = conversationId ? persistence.getLatestNewsBrowseSession(conversationId) : null;
-      if (!session) {
-        return {
-          toolName: "news.follow_up",
-          status: "clarify",
-          reply: "I don't have a recent news list in this conversation to follow up on yet.",
-          detail: "newsSession=missing"
-        };
-      }
-
-      const selectedItem = resolveNewsSessionItem(session.items, query);
-      if (!selectedItem) {
-        return {
-          toolName: "news.follow_up",
-          status: "clarify",
-          reply: "I couldn't tell which story you meant from the last news list. Give me the number or the outlet name.",
-          detail: "newsSession=unresolved"
-        };
-      }
-
-      const evidence = [
-        {
-          source: selectedItem.source,
-          title: selectedItem.title,
-          url: selectedItem.url,
-          snippet: selectedItem.snippet,
-          publishedAt: selectedItem.publishedAt,
-          publisher: selectedItem.publisher,
-          confidence: "high" as const
-        }
-      ];
-      const articleReadResult =
-        selectedItem.url && groundedAnswerService?.generateStoryFollowUpReply
-          ? await (articleReader ?? new HtmlWorldLookupArticleReader()).read({ evidence })
-          : { articles: [], failures: [] };
-
-      if (!groundedAnswerService?.generateStoryFollowUpReply) {
-        return {
-          toolName: "news.follow_up",
-          status: "executed",
-          reply: buildNewsFollowUpFallbackReply(selectedItem),
-          detail: `newsSession=resolved; ordinal=${selectedItem.ordinal}; title=${selectedItem.title}; source=${selectedItem.source}`
-        };
-      }
-
-      const grounded = await groundedAnswerService.generateStoryFollowUpReply({
-        userMessage: query,
-        selectedItem,
-        evidence,
-        articles: articleReadResult.articles
-      });
-
-      return {
-        toolName: "news.follow_up",
-        status: "executed",
-        reply: grounded.reply,
-        route: grounded.route,
-        detail: `newsSession=resolved; ordinal=${selectedItem.ordinal}; title=${selectedItem.title}; source=${selectedItem.source}; articleReadCount=${articleReadResult.articles.length}`
-      };
-    },
-    execute() {
-      throw new Error("news.follow_up requires detailed execution");
-    }
-  },
-  "world.lookup": {
-    toolName: "world.lookup",
-    async executeDetailed({ args, persistence, conversationId, groundedAnswerService, worldLookupAdapters, articleReader }) {
-      const query = getRequiredStringArg(args, "query");
-      const newsPreferences = getNewsPreferences(persistence.settings);
-      const lookupResult = await executeWorldLookup({
-        query,
-        adapters: worldLookupAdapters ?? createDefaultWorldLookupAdapters(),
-        preferences: newsPreferences
-      });
-      const articleReadResult =
-        lookupResult.bucket === "current_events" && lookupResult.evidence.length > 0
-          ? await (articleReader ?? new HtmlWorldLookupArticleReader()).read({
-              evidence: lookupResult.evidence
-            })
-          : { articles: [], failures: [] };
-
-      const topicSessionSaved =
-        Boolean(conversationId) &&
-        lookupResult.bucket === "current_events" &&
-        lookupResult.retrievalStrategy === "current_events_topic_ranked" &&
-        lookupResult.evidence.length > 0;
-
-      if (topicSessionSaved && conversationId) {
-        persistence.saveNewsBrowseSession({
-          kind: "topic_lookup",
-          conversationId,
-          query,
-          savedAt: new Date().toISOString(),
-          items: lookupResult.evidence.map((record, index) => ({
-            ordinal: index + 1,
-            title: record.title,
-            url: record.url,
-            source: record.source,
-            publisher: record.publisher ?? null,
-            snippet: record.snippet,
-            publishedAt: record.publishedAt
-          }))
-        });
-      }
-
-      const detail = buildWorldLookupAuditDetail(lookupResult, articleReadResult, newsPreferences, {
-        topicSessionSaved
-      });
-
-      if (!groundedAnswerService) {
-        return {
-          toolName: "world.lookup",
-          status: "executed",
-          reply: buildWorldLookupFallbackReply(lookupResult),
-          detail
-        };
-      }
-
-      try {
-        const grounded = await groundedAnswerService.generateGroundedReply({
-          userMessage: query,
-          evidence: lookupResult.evidence,
-          articles: articleReadResult.articles,
-          bucket: lookupResult.bucket,
-          selectedSources: lookupResult.selectedSources,
-          failures: lookupResult.failures,
-          outcome: lookupResult.outcome
-        });
-
-        return {
-          toolName: "world.lookup",
-          status: "executed",
-          reply: grounded.reply,
-          detail,
-          route: grounded.route
-        };
-      } catch {
-        return {
-          toolName: "world.lookup",
-          status: "executed",
-          reply: buildWorldLookupFallbackReply(lookupResult),
-          detail
-        };
-      }
-    },
-    execute() {
-      throw new Error("world.lookup requires detailed execution");
-    }
-  }
 };
 
 export function parseExplicitToolDecision(content: string): ToolDecision | null {
@@ -721,7 +494,7 @@ function getRequiredNumericLikeArg(args: Record<string, string | number>, key: s
   return parsed;
 }
 
-function isToolName(value: unknown): value is ExplicitToolName {
+function isToolName(value: unknown): value is ConversationalToolName {
   return (
     value === "reminder.add" ||
     value === "reminder.show" ||
@@ -732,85 +505,6 @@ function isToolName(value: unknown): value is ExplicitToolName {
     value === "news.follow_up" ||
     value === "world.lookup"
   );
-}
-
-function buildNewsBriefingAuditDetail(result: WorldLookupResult, preferences: NewsPreferences): string {
-  const chosenEvidence = result.evidence
-    .map((record) => `${record.source}:${record.title}${record.rankingSignals?.length ? `[${record.rankingSignals.join(",")}]` : ""}`)
-    .join(" | ");
-  return `outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; preferenceCounts=interested:${preferences.interestedTopics.length},uninterested:${preferences.uninterestedTopics.length},preferred:${preferences.preferredOutlets.length},blocked:${preferences.blockedOutlets.length}; failureCount=${result.failures.length}`;
-}
-
-function buildNewsBriefingFallbackReply(result: WorldLookupResult): string {
-  if (result.evidence.length === 0) {
-    return "I couldn't pull together a reliable news briefing from the public sources I checked just now.";
-  }
-
-  const lines = result.evidence.slice(0, 5).map((record, index) => {
-    const sourceLabel = record.publisher ?? formatWorldLookupSource(record.source);
-    return `${index + 1}. ${record.title} (${sourceLabel})`;
-  });
-  const links = result.evidence
-    .filter((record): record is typeof record & { url: string } => typeof record.url === "string" && record.url.length > 0)
-    .slice(0, 5)
-    .map((record) => `- ${record.url}`)
-    .join("\n");
-  return `Here are the main headlines I found:\n${lines.join("\n")}${links ? `\n\nLinks:\n${links}` : ""}`;
-}
-
-function buildNewsFollowUpFallbackReply(item: NewsBrowseSessionItemRecord): string {
-  const sourceLabel = item.publisher ?? formatWorldLookupSource(item.source);
-  const linkBlock = item.url ? `\n\nLinks:\n- ${item.url}` : "";
-  return `From ${sourceLabel}, ${item.snippet}${linkBlock}`;
-}
-
-function buildWorldLookupAuditDetail(
-  result: WorldLookupResult,
-  articleReadResult: { articles: WorldLookupArticleRecord[]; failures: string[] } = { articles: [], failures: [] },
-  preferences: NewsPreferences = {
-    interestedTopics: [],
-    uninterestedTopics: [],
-    preferredOutlets: [],
-    blockedOutlets: []
-  },
-  options: {
-    topicSessionSaved?: boolean;
-  } = {}
-): string {
-  const citedSources = Array.from(new Set(result.evidence.map((record) => record.source))).join(",");
-  const chosenEvidence = result.evidence
-    .map((record) => `${record.source}:${record.title}${record.rankingSignals?.length ? `[${record.rankingSignals.join(",")}]` : ""}`)
-    .join(" | ");
-  const articleTitles = articleReadResult.articles.map((article) => article.title).join(" | ");
-  return `bucket=${result.bucket}; outcome=${result.outcome}; selectedSources=${result.selectedSources.join(",")}; candidateCount=${result.candidateCount}; retrievalStrategy=${result.retrievalStrategy}; evidenceCount=${result.evidence.length}; chosenEvidence=${chosenEvidence || "none"}; citedSources=${citedSources || "none"}; articleReadCount=${articleReadResult.articles.length}; articleTitles=${articleTitles || "none"}; articleReadFailures=${articleReadResult.failures.length}; topicSessionSaved=${options.topicSessionSaved ? "yes" : "no"}; preferenceCounts=interested:${preferences.interestedTopics.length},uninterested:${preferences.uninterestedTopics.length},preferred:${preferences.preferredOutlets.length},blocked:${preferences.blockedOutlets.length}; failureCount=${result.failures.length}`;
-}
-
-function buildWorldLookupFallbackReply(result: WorldLookupResult): string {
-  if (result.evidence.length === 0) {
-    return "I couldn't verify that from the public sources I checked just now.";
-  }
-
-  const first = result.evidence[0];
-  const sourceLabel = formatWorldLookupSource(first.source);
-  const linkBlock = first.url ? `\n\nLinks:\n- ${first.url}` : "";
-  return `According to ${sourceLabel}, ${first.snippet}${linkBlock}`;
-}
-
-function formatWorldLookupSource(source: WorldLookupSourceName): string {
-  switch (source) {
-    case "newsdata":
-      return "NewsData.io";
-    case "wikipedia":
-      return "Wikipedia";
-    case "wikimedia_current_events":
-      return "Wikinews";
-    case "gdelt":
-      return "GDELT";
-    case "open_meteo":
-      return "Open-Meteo";
-    case "world_bank":
-      return "World Bank";
-  }
 }
 
 function extractJsonObject(payload: string): string {
@@ -834,46 +528,4 @@ function normalizeUserMessage(userMessage: string): string {
     .toLowerCase()
     .replace(/[’‘]/g, "'")
     .replace(/\s+/g, " ");
-}
-
-function resolveNewsSessionItem(
-  items: NewsBrowseSessionItemRecord[],
-  query: string
-): NewsBrowseSessionItemRecord | null {
-  const normalized = normalizeUserMessage(query);
-  const ordinal = parseOrdinalReference(normalized);
-  if (ordinal != null) {
-    return items.find((item) => item.ordinal === ordinal) ?? null;
-  }
-
-  return (
-    items.find((item) => {
-      const publisher = item.publisher ? normalizeUserMessage(item.publisher) : "";
-      const title = normalizeUserMessage(item.title);
-      return (publisher.length > 0 && normalized.includes(publisher)) || normalized.includes(title);
-    }) ?? null
-  );
-}
-
-function parseOrdinalReference(normalized: string): number | null {
-  const mapping: Record<string, number> = {
-    first: 1,
-    "1st": 1,
-    second: 2,
-    "2nd": 2,
-    third: 3,
-    "3rd": 3,
-    fourth: 4,
-    "4th": 4,
-    fifth: 5,
-    "5th": 5
-  };
-
-  for (const [label, ordinal] of Object.entries(mapping)) {
-    if (normalized.includes(label)) {
-      return ordinal;
-    }
-  }
-
-  return null;
 }
