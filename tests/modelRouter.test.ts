@@ -560,6 +560,48 @@ test("llm service can generate a sourced news follow-up in the active voice", as
   assert.match(capturedMessages[0]?.[1]?.content ?? "", /Selected story: Myanmar junta extends emergency rule/);
 });
 
+test("llm service can render structured tool payloads with tool-specific instructions", async () => {
+  const store = createStore();
+  const capturedMessages: ChatMessage[][] = [];
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", "local", true, async (messages) => {
+        capturedMessages.push(messages);
+        return "You have Planning at 10:00.";
+      })
+    ]
+  });
+
+  const result = await service.renderToolResult?.({
+    userMessage: "what's on my calendar?",
+    payload: {
+      events: [
+        {
+          index: 1,
+          subject: "Planning",
+          startAt: "2027-04-08T10:00:00.000Z",
+          endAt: "2027-04-08T11:00:00.000Z"
+        }
+      ]
+    },
+    renderInstructions: {
+      systemPrompt: "Render the provided calendar events into a concise user-facing response in Dot's normal voice.",
+      constraints: ["Use only the supplied calendar payload."],
+      styleHints: ["Preserve event ordering from the payload."]
+    }
+  });
+
+  assert(result);
+  assert.equal(result.route, "local");
+  assert.equal(result.reply, "You have Planning at 10:00.");
+  assert.match(capturedMessages[0]?.[0]?.content ?? "", /Render only the supplied tool result/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Original user message: what's on my calendar\?/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /\"subject\": \"Planning\"/);
+});
+
 test("getLlmMode defaults to normal when unset", () => {
   const store = createStore();
   assert.equal(getLlmMode(store), "normal");
