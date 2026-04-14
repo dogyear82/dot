@@ -1233,7 +1233,16 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       }
 
       try {
-        return JSON.parse(raw) as PendingConversationalToolSessionRecord;
+        const parsed = JSON.parse(raw) as PendingConversationalToolSessionRecord & {
+          clarificationQuestion?: string;
+          pendingPrompt?: string;
+          pendingStatus?: "clarify" | "requires_confirmation";
+        };
+        return {
+          ...parsed,
+          pendingStatus: parsed.pendingStatus ?? "clarify",
+          pendingPrompt: parsed.pendingPrompt ?? parsed.clarificationQuestion ?? ""
+        };
       } catch {
         return null;
       }

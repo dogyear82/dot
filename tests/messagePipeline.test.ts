@@ -461,6 +461,22 @@ test("message pipeline executes inferred reminder add/show/ack through the conve
           }
         };
       },
+      async resolvePendingToolDecision({ userMessage }: { userMessage: string }) {
+        assert.equal(userMessage, "yes");
+        return {
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "execute_tool",
+            toolName: "reminder.add",
+            reason: "owner confirmed the reminder details",
+            confidence: "high",
+            args: {
+              confirmed: "yes"
+            }
+          }
+        };
+      },
       getPowerStatus() {
         return "standby";
       }
@@ -480,11 +496,19 @@ test("message pipeline executes inferred reminder add/show/ack through the conve
 
     for (const [messageId, content] of [
       ["msg-remind-1", "remind me in 10 minutes to stretch"],
+      ["msg-remind-1b", "yes"],
       ["msg-remind-2", "show my reminders"],
       ["msg-remind-3", "acknowledge reminder 1"]
     ] as const) {
       await bus.publishInboundMessage(
         inboundEvent({
+          eventId: `discord:${messageId}`,
+          correlation: {
+            correlationId: messageId,
+            causationId: null,
+            conversationId: "channel-1",
+            actorId: "owner-1"
+          },
           payload: {
             messageId,
             sender: {
@@ -507,17 +531,18 @@ test("message pipeline executes inferred reminder add/show/ack through the conve
       );
     }
 
-    assert.equal(outbound.length, 3);
-    assert.match(outbound[0]?.payload.content ?? "", /Saved reminder #1/i);
-    assert.match(outbound[1]?.payload.content ?? "", /Pending reminders/i);
-    assert.match(outbound[2]?.payload.content ?? "", /Acknowledged reminder #1/i);
+    assert.equal(outbound.length, 4);
+    assert.match(outbound[0]?.payload.content ?? "", /Want me to save it\?/i);
+    assert.match(outbound[1]?.payload.content ?? "", /Saved reminder #1/i);
+    assert.match(outbound[2]?.payload.content ?? "", /Pending reminders/i);
+    assert.match(outbound[3]?.payload.content ?? "", /Acknowledged reminder #1/i);
   } finally {
     unsubscribe();
     cleanup();
   }
 });
 
-test("message pipeline resumes a pending conversational reminder clarification instead of falling back to chat", async () => {
+test("message pipeline resumes reminder clarification and confirmation flows instead of falling back to chat", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
   const outbound: OutboundMessageRequestedEvent[] = [];
@@ -557,12 +582,38 @@ test("message pipeline resumes a pending conversational reminder clarification i
         session
       }: {
         userMessage: string;
-        session: { toolName: string; args: Record<string, string | number> };
+        session: {
+          toolName: string;
+          args: Record<string, string | number>;
+          pendingStatus: "clarify" | "requires_confirmation";
+        };
       }) {
-        assert.equal(userMessage, "in 10 minutes");
         assert.equal(session.toolName, "reminder.add");
+        if (userMessage === "in 10 minutes") {
+          assert.equal(session.pendingStatus, "clarify");
+          assert.deepEqual(session.args, {
+            message: "stretch"
+          });
+          return {
+            route: "local",
+            powerStatus: "standby",
+            decision: {
+              decision: "execute_tool",
+              toolName: "reminder.add",
+              reason: "owner supplied the missing duration",
+              confidence: "high",
+              args: {
+                duration: "10m"
+              }
+            }
+          };
+        }
+
+        assert.equal(userMessage, "yes");
+        assert.equal(session.pendingStatus, "requires_confirmation");
         assert.deepEqual(session.args, {
-          message: "stretch"
+          message: "stretch",
+          duration: "10m"
         });
         return {
           route: "local",
@@ -570,10 +621,10 @@ test("message pipeline resumes a pending conversational reminder clarification i
           decision: {
             decision: "execute_tool",
             toolName: "reminder.add",
-            reason: "owner supplied the missing duration",
+            reason: "owner confirmed the reminder details",
             confidence: "high",
             args: {
-              duration: "10m"
+              confirmed: "yes"
             }
           }
         };
@@ -655,7 +706,44 @@ test("message pipeline resumes a pending conversational reminder clarification i
     );
 
     assert.equal(outbound.length, 2);
-    assert.match(outbound[1]?.payload.content ?? "", /Saved reminder #1/i);
+    assert.match(outbound[1]?.payload.content ?? "", /Want me to save it\?/i);
+    assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
+      message: "stretch",
+      duration: "10m"
+    });
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        eventId: "discord:msg-remind-clarify-3",
+        correlation: {
+          correlationId: "msg-remind-clarify-3",
+          causationId: null,
+          conversationId: "channel-1",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-remind-clarify-3",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "yes",
+          addressedContent: "yes",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-clarify-3"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 3);
+    assert.match(outbound[2]?.payload.content ?? "", /Saved reminder #1/i);
     assert.equal(persistence.getPendingConversationalToolSession("channel-1"), null);
   } finally {
     unsubscribe();

@@ -294,6 +294,7 @@ export function buildToolInferencePrompt(userMessage: string): string {
     "Use execute_tool only when the owner is reasonably clearly asking for an available tool.",
     "If the owner is simply chatting, correcting Dot, or asking something that does not clearly require a tool, return respond.",
     "If the owner seems to want a tool but some parameters are missing, still return execute_tool with the tool name and any arguments you can confidently infer. The tool itself will ask for clarification if needed.",
+    "For reminder.add and calendar.remind, do not invent missing scheduling details, indices, or reminder text. Leave missing fields out of args.",
     "Supported tools and args:",
     "- reminder.add: duration, message",
     "- reminder.show: no args",
@@ -348,24 +349,30 @@ export function buildPendingToolResolutionPrompt(params: {
   toolName: ConversationalToolName;
   existingArgs: Record<string, string | number>;
   originalUserMessage: string;
-  clarificationQuestion: string;
+  pendingStatus: "clarify" | "requires_confirmation";
+  pendingPrompt: string;
 }): string {
   return [
-    "You are resuming a pending Dot tool call after the tool previously asked a clarification question.",
+    "You are resuming a pending Dot tool call after the tool previously asked the owner for missing information or confirmation.",
     "Return only strict JSON with one of two decisions: respond or execute_tool.",
     "If the owner is continuing the pending tool flow, return execute_tool for the SAME tool with merged or newly supplied args.",
     "Do not switch to a different tool unless the owner clearly abandons the pending flow and asks for something else entirely.",
     "If the owner is cancelling, abandoning, or changing the subject, return respond with a short final reply in Dot's normal voice.",
     "If the owner supplies only one missing field, return only that field in args. Existing args will be merged outside the model.",
+    "If the pending step is requires_confirmation and the owner confirms, return execute_tool for the same tool with args containing only {\"confirmed\":\"yes\"}.",
+    "If the pending step is requires_confirmation and the owner declines or cancels, return respond with a short acknowledgment instead of executing the tool.",
+    "Do not invent missing reminder time, message, or any other tool arguments during pending resolution.",
     "Do not invent unsupported tools or side effects.",
     `Pending tool: ${params.toolName}`,
+    `Pending status: ${params.pendingStatus}`,
     `Original user request: ${JSON.stringify(params.originalUserMessage)}`,
-    `Tool clarification question: ${JSON.stringify(params.clarificationQuestion)}`,
+    `Pending prompt: ${JSON.stringify(params.pendingPrompt)}`,
     `Existing args already captured: ${JSON.stringify(params.existingArgs)}`,
     `Latest owner reply: ${JSON.stringify(params.userMessage)}`,
     "Return strict JSON only in one of these shapes:",
     '{"decision":"respond","reason":"...","response":"..."}',
-    `{"decision":"execute_tool","toolName":"${params.toolName}","reason":"owner supplied missing information","confidence":"high","args":{"message":"stretch"}}`
+    `{"decision":"execute_tool","toolName":"${params.toolName}","reason":"owner supplied missing information","confidence":"high","args":{"message":"stretch"}}`,
+    `{"decision":"execute_tool","toolName":"${params.toolName}","reason":"owner confirmed the pending reminder details","confidence":"high","args":{"confirmed":"yes"}}`
   ].join("\n");
 }
 

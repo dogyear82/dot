@@ -73,7 +73,7 @@ test("conversational tool executor returns a common final_text result for remind
   }
 });
 
-test("conversational tool executor handles reminder mutations and calendar.remind through the common final_text contract", async () => {
+test("conversational tool executor handles confirmed reminder mutations and calendar.remind through the common final_text contract", async () => {
   const { persistence, cleanup } = createPersistence();
 
   try {
@@ -82,7 +82,8 @@ test("conversational tool executor handles reminder mutations and calendar.remin
         toolName: "reminder.add",
         args: {
           duration: "10m",
-          message: "stretch"
+          message: "stretch",
+          confirmed: "yes"
         },
         userMessage: "remind me to stretch in 10 minutes"
       },
@@ -169,6 +170,33 @@ test("conversational reminder tool returns clarify when required args are missin
     assert.equal(missingMessage.status, "clarify");
     assert.equal(missingMessage.presentation, "final_text");
     assert.match(String(missingMessage.payload.text), /What should the reminder say/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational reminder tool requires confirmation before saving", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const confirmation = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          duration: "tomorrow at 12pm",
+          message: "stretch"
+        },
+        userMessage: "set a reminder for tomorrow at 12pm to stretch"
+      },
+      context: createContext({ persistence })
+    });
+
+    assert.equal(confirmation.status, "requires_confirmation");
+    assert.equal(confirmation.presentation, "final_text");
+    assert.match(String(confirmation.payload.text), /Want me to save it\?/i);
+
+    const reminders = persistence.listPendingReminders();
+    assert.equal(reminders.length, 0);
   } finally {
     cleanup();
   }

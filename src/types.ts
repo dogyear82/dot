@@ -186,7 +186,8 @@ export interface PendingConversationalToolSessionRecord {
   toolName: string;
   args: Record<string, string | number>;
   originalUserMessage: string;
-  clarificationQuestion: string;
+  pendingStatus: "clarify" | "requires_confirmation";
+  pendingPrompt: string;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;

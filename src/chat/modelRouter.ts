@@ -439,7 +439,8 @@ function buildPendingToolResolutionMessages(params: {
         toolName: params.session.toolName as ConversationalToolName,
         existingArgs: params.session.args,
         originalUserMessage: params.session.originalUserMessage,
-        clarificationQuestion: params.session.clarificationQuestion
+        pendingStatus: params.session.pendingStatus,
+        pendingPrompt: params.session.pendingPrompt
       })
     }
   ];

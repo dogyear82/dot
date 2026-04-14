@@ -198,7 +198,8 @@ export function registerMessagePipeline(params: {
               toolName: string;
               args: Record<string, string | number>;
               originalUserMessage: string;
-              clarificationQuestion: string;
+              pendingStatus: "clarify" | "requires_confirmation";
+              pendingPrompt: string;
               prior?: PendingConversationalToolSessionRecord | null;
             }) => {
               if (!conversationId) {
@@ -210,7 +211,8 @@ export function registerMessagePipeline(params: {
                 toolName: params.toolName,
                 args: params.args,
                 originalUserMessage: params.prior?.originalUserMessage ?? params.originalUserMessage,
-                clarificationQuestion: params.clarificationQuestion,
+                pendingStatus: params.pendingStatus,
+                pendingPrompt: params.pendingPrompt,
                 createdAt: params.prior?.createdAt ?? now.toISOString(),
                 updatedAt: now.toISOString(),
                 expiresAt: new Date(now.getTime() + PENDING_TOOL_SESSION_TTL_MS).toISOString()
@@ -407,12 +409,13 @@ export function registerMessagePipeline(params: {
                       renderService: { renderToolResult: chatService.renderToolResult! },
                       recentConversation
                     });
-                    if (result.status === "clarify") {
+                    if (result.status === "clarify" || result.status === "requires_confirmation") {
                       savePendingToolSession({
                         toolName: result.toolName,
                         args: resolvedArgs,
                         originalUserMessage: content,
-                        clarificationQuestion: result.reply,
+                        pendingStatus: result.status,
+                        pendingPrompt: result.reply,
                         prior: pendingToolSession
                       });
                     } else if (pendingToolSession) {

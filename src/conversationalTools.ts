@@ -93,6 +93,7 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
     async execute(call, context) {
       const duration = getOptionalStringArg(call.args, "duration");
       const message = getOptionalStringArg(call.args, "message");
+      const confirmed = getOptionalAffirmativeArg(call.args, "confirmed");
       if (!duration && !message) {
         return {
           toolName: "reminder.add",
@@ -124,6 +125,17 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
             text: "What should the reminder say?"
           },
           detail: "presentation=final_text; missing=message"
+        };
+      }
+      if (!confirmed) {
+        return {
+          toolName: "reminder.add",
+          status: "requires_confirmation",
+          presentation: "final_text",
+          payload: {
+            text: `I've got a reminder to ${message} ${formatReminderTimeForConfirmation(duration)}. Want me to save it?`
+          },
+          detail: "presentation=final_text; awaiting_confirmation=yes"
         };
       }
       return {
@@ -539,6 +551,37 @@ function getOptionalNumericLikeArg(args: Record<string, string | number>, key: s
   const value = args[key];
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getOptionalAffirmativeArg(args: Record<string, string | number>, key: string): boolean {
+  const value = args[key];
+  if (typeof value === "number") {
+    return value > 0;
+  }
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case "yes":
+    case "y":
+    case "true":
+    case "1":
+    case "confirm":
+    case "confirmed":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function formatReminderTimeForConfirmation(duration: string): string {
+  const trimmed = duration.trim();
+  if (/^(in|at|on|tomorrow|today|next)\b/i.test(trimmed)) {
+    return trimmed.startsWith("in ") ? trimmed : `at ${trimmed}`;
+  }
+
+  return `in ${trimmed}`;
 }
 
 function buildNewsBriefingAuditDetail(result: WorldLookupResult, preferences: NewsPreferences): string {
