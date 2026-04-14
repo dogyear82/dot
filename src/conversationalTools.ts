@@ -95,10 +95,11 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
         getOptionalStringArg(call.args, "duration") ??
         getOptionalStringArg(call.args, "time") ??
         getOptionalStringArg(call.args, "when");
+      const dueAt = getOptionalStringArg(call.args, "dueAt");
       const message = getOptionalStringArg(call.args, "message");
       const confirmed = getOptionalAffirmativeArg(call.args, "confirmed");
       const normalizedDuration = rawDuration ? normalizeDurationInput(rawDuration) : null;
-      if (!rawDuration && !message) {
+      if (!rawDuration && !dueAt && !message) {
         return {
           toolName: "reminder.add",
           status: "clarify",
@@ -109,7 +110,7 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
           detail: "presentation=final_text; missing=duration,message"
         };
       }
-      if (!rawDuration) {
+      if (!rawDuration && !dueAt) {
         return {
           toolName: "reminder.add",
           status: "clarify",
@@ -120,7 +121,7 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
           detail: "presentation=final_text; missing=duration"
         };
       }
-      if (!normalizedDuration) {
+      if (rawDuration && !normalizedDuration) {
         return {
           toolName: "reminder.add",
           status: "clarify",
@@ -148,9 +149,25 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
           status: "requires_confirmation",
           presentation: "final_text",
           payload: {
-            text: `I've got a reminder to ${message} ${formatReminderTimeForConfirmation(rawDuration)}. Want me to save it?`
+            text: `I've got a reminder to ${message} ${
+              dueAt
+                ? formatReminderDateTimeForConfirmation(new Date(dueAt))
+                : formatReminderTimeForConfirmation(normalizedDuration ?? rawDuration ?? "that time")
+            }. Want me to save it?`
           },
           detail: "presentation=final_text; awaiting_confirmation=yes"
+        };
+      }
+      if (dueAt) {
+        const reminder = context.persistence.createReminder(message, dueAt);
+        return {
+          toolName: "reminder.add",
+          status: "success",
+          presentation: "final_text",
+          payload: {
+            text: `Saved reminder #${reminder.id} for ${reminder.dueAt}: ${reminder.message}`
+          },
+          detail: "presentation=final_text; mode=specific"
         };
       }
       return {
@@ -597,6 +614,14 @@ function formatReminderTimeForConfirmation(duration: string): string {
   }
 
   return `in ${trimmed}`;
+}
+
+function formatReminderDateTimeForConfirmation(dueAt: Date): string {
+  const weekday = dueAt.toLocaleDateString("en-US", { weekday: "long" });
+  const month = dueAt.toLocaleDateString("en-US", { month: "long" });
+  const day = dueAt.getDate();
+  const time = dueAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return `on ${weekday}, ${month} ${day} at ${time}`;
 }
 
 function buildNewsBriefingAuditDetail(result: WorldLookupResult, preferences: NewsPreferences): string {

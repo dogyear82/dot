@@ -1,3 +1,5 @@
+import type { ReminderIntakeState } from "./reminderIntake.js";
+
 export interface IncomingMessage {
   id: string;
   channelId: string;
@@ -188,6 +190,7 @@ export interface PendingConversationalToolSessionRecord {
   originalUserMessage: string;
   pendingStatus: "clarify" | "requires_confirmation";
   pendingPrompt: string;
+  sessionState?: ReminderIntakeState | null;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;

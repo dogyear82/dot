@@ -542,7 +542,7 @@ test("message pipeline executes inferred reminder add/show/ack through the conve
   }
 });
 
-test("message pipeline resumes reminder clarification and confirmation flows instead of falling back to chat", async () => {
+test("message pipeline uses deterministic reminder intake for clarification and confirmation flows", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
   const outbound: OutboundMessageRequestedEvent[] = [];
@@ -562,7 +562,9 @@ test("message pipeline resumes reminder clarification and confirmation flows ins
         throw new Error("final_text reminder flow should not invoke llm rendering");
       },
       async inferToolDecision(userMessage: string) {
-        assert.equal(userMessage, "set a reminder to stretch");
+        if (userMessage !== "set a reminder to stretch") {
+          throw new Error(`unexpected fresh inference for reminder intake turn: ${userMessage}`);
+        }
         return {
           route: "local",
           powerStatus: "standby",
@@ -577,57 +579,8 @@ test("message pipeline resumes reminder clarification and confirmation flows ins
           }
         };
       },
-      async resolvePendingToolDecision({
-        userMessage,
-        session
-      }: {
-        userMessage: string;
-        session: {
-          toolName: string;
-          args: Record<string, string | number>;
-          pendingStatus: "clarify" | "requires_confirmation";
-        };
-      }) {
-        assert.equal(session.toolName, "reminder.add");
-        if (userMessage === "in 10 minutes") {
-          assert.equal(session.pendingStatus, "clarify");
-          assert.deepEqual(session.args, {
-            message: "stretch"
-          });
-          return {
-            route: "local",
-            powerStatus: "standby",
-            decision: {
-              decision: "execute_tool",
-              toolName: "reminder.add",
-              reason: "owner supplied the missing duration",
-              confidence: "high",
-              args: {
-                duration: "10m"
-              }
-            }
-          };
-        }
-
-        assert.equal(userMessage, "yes");
-        assert.equal(session.pendingStatus, "requires_confirmation");
-        assert.deepEqual(session.args, {
-          message: "stretch",
-          duration: "10m"
-        });
-        return {
-          route: "local",
-          powerStatus: "standby",
-          decision: {
-            decision: "execute_tool",
-            toolName: "reminder.add",
-            reason: "owner confirmed the reminder details",
-            confidence: "high",
-            args: {
-              confirmed: "yes"
-            }
-          }
-        };
+      async resolvePendingToolDecision() {
+        throw new Error("reminder intake should not use llm pending-tool resolution");
       },
       getPowerStatus() {
         return "standby";
@@ -670,7 +623,8 @@ test("message pipeline resumes reminder clarification and confirmation flows ins
     );
 
     assert.equal(outbound.length, 1);
-    assert.match(outbound[0]?.payload.content ?? "", /What duration from now should I set the reminder for/i);
+    assert.match(outbound[0]?.payload.content ?? "", /fire up that intake form/i);
+    assert.match(outbound[0]?.payload.content ?? "", /specific time or a duration from now/i);
     assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
       message: "stretch"
     });
@@ -691,8 +645,8 @@ test("message pipeline resumes reminder clarification and confirmation flows ins
             displayName: "tan",
             actorRole: "owner"
           },
-          content: "in 10 minutes",
-          addressedContent: "in 10 minutes",
+          content: "duration",
+          addressedContent: "duration",
           isDirectMessage: true,
           mentionedBot: false,
           replyRoute: {
@@ -706,10 +660,9 @@ test("message pipeline resumes reminder clarification and confirmation flows ins
     );
 
     assert.equal(outbound.length, 2);
-    assert.match(outbound[1]?.payload.content ?? "", /Want me to save it\?/i);
+    assert.match(outbound[1]?.payload.content ?? "", /How long from now should I set it for/i);
     assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
-      message: "stretch",
-      duration: "10m"
+      message: "stretch"
     });
 
     await bus.publishInboundMessage(
@@ -728,8 +681,8 @@ test("message pipeline resumes reminder clarification and confirmation flows ins
             displayName: "tan",
             actorRole: "owner"
           },
-          content: "yes",
-          addressedContent: "yes",
+          content: "in 10 minutes",
+          addressedContent: "in 10 minutes",
           isDirectMessage: true,
           mentionedBot: false,
           replyRoute: {
@@ -743,7 +696,44 @@ test("message pipeline resumes reminder clarification and confirmation flows ins
     );
 
     assert.equal(outbound.length, 3);
-    assert.match(outbound[2]?.payload.content ?? "", /Saved reminder #1/i);
+    assert.match(outbound[2]?.payload.content ?? "", /Want me to save it\?/i);
+    assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
+      message: "stretch",
+      duration: "10m"
+    });
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        eventId: "discord:msg-remind-clarify-4",
+        correlation: {
+          correlationId: "msg-remind-clarify-4",
+          causationId: null,
+          conversationId: "channel-1",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-remind-clarify-4",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "yes",
+          addressedContent: "yes",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-clarify-4"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 4);
+    assert.match(outbound[3]?.payload.content ?? "", /Saved reminder #1/i);
     assert.equal(persistence.getPendingConversationalToolSession("channel-1"), null);
   } finally {
     unsubscribe();

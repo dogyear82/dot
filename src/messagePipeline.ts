@@ -15,6 +15,7 @@ import { handlePersonalityCommand, isPersonalityCommand } from "./personality.js
 import { createSpanAttributesForEvent, recordToolExecution, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
 import { isReminderCommand } from "./reminders.js";
+import { continueReminderIntake, startReminderIntake, type ReminderIntakeState } from "./reminderIntake.js";
 import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
 import { executeConversationalToolCall, renderConversationalToolResult, type ConversationalToolName } from "./conversationalTools.js";
 import type { IncomingMessage, PendingConversationalToolSessionRecord, WorldLookupSourceName } from "./types.js";
@@ -200,6 +201,7 @@ export function registerMessagePipeline(params: {
               originalUserMessage: string;
               pendingStatus: "clarify" | "requires_confirmation";
               pendingPrompt: string;
+              sessionState?: ReminderIntakeState | null;
               prior?: PendingConversationalToolSessionRecord | null;
             }) => {
               if (!conversationId) {
@@ -213,6 +215,7 @@ export function registerMessagePipeline(params: {
                 originalUserMessage: params.prior?.originalUserMessage ?? params.originalUserMessage,
                 pendingStatus: params.pendingStatus,
                 pendingPrompt: params.pendingPrompt,
+                sessionState: params.sessionState ?? params.prior?.sessionState ?? null,
                 createdAt: params.prior?.createdAt ?? now.toISOString(),
                 updatedAt: now.toISOString(),
                 expiresAt: new Date(now.getTime() + PENDING_TOOL_SESSION_TTL_MS).toISOString()
@@ -355,13 +358,25 @@ export function registerMessagePipeline(params: {
                   const pendingToolSession = getPendingToolSession();
                   activePendingToolSession = pendingToolSession;
                   const inferred =
-                    pendingToolSession && chatService.resolvePendingToolDecision
-                      ? await chatService.resolvePendingToolDecision({
-                          userMessage: content,
-                          session: pendingToolSession,
-                          recentConversation
-                        })
-                      : await chatService.inferToolDecision(content, recentConversation);
+                    pendingToolSession?.toolName === "reminder.add"
+                      ? {
+                          route: "deterministic" as const,
+                          powerStatus: chatService.getPowerStatus("deterministic"),
+                          decision: {
+                            decision: "execute_tool" as const,
+                            toolName: "reminder.add" as const,
+                            reason: "continue deterministic reminder intake",
+                            confidence: "high" as const,
+                            args: {}
+                          }
+                        }
+                      : pendingToolSession && chatService.resolvePendingToolDecision
+                        ? await chatService.resolvePendingToolDecision({
+                            userMessage: content,
+                            session: pendingToolSession,
+                            recentConversation
+                          })
+                        : await chatService.inferToolDecision(content, recentConversation);
 
                   if (inferred.decision.decision === "respond") {
                     if (pendingToolSession) {
@@ -385,10 +400,61 @@ export function registerMessagePipeline(params: {
                     if (!chatService.renderToolResult) {
                       throw new Error("Chat service cannot render conversational tool results");
                     }
-                    const resolvedArgs =
+                    let resolvedArgs =
                       pendingToolSession && pendingToolSession.toolName === inferred.decision.toolName
                         ? { ...pendingToolSession.args, ...inferred.decision.args }
                         : inferred.decision.args;
+                    if (inferred.decision.toolName === "reminder.add") {
+                      const reminderIntakeOutcome =
+                        pendingToolSession?.sessionState?.engine === "reminder.add.intake"
+                          ? continueReminderIntake({
+                              state: pendingToolSession.sessionState,
+                              userMessage: content
+                            })
+                          : startReminderIntake({
+                              args: resolvedArgs
+                            });
+
+                      if (reminderIntakeOutcome.kind === "clarify" || reminderIntakeOutcome.kind === "requires_confirmation") {
+                        const reminderIntakeArgs = reminderIntakeArgsFromState(reminderIntakeOutcome.state);
+                        savePendingToolSession({
+                          toolName: "reminder.add",
+                          args: reminderIntakeArgs,
+                          originalUserMessage: content,
+                          pendingStatus: reminderIntakeOutcome.kind,
+                          pendingPrompt: reminderIntakeOutcome.prompt,
+                          sessionState: reminderIntakeOutcome.state,
+                          prior: pendingToolSession
+                        });
+                        persistence.saveToolExecutionAudit({
+                          messageId: event.payload.messageId,
+                          toolName: "reminder.add",
+                          invocationSource: "inferred",
+                          status: reminderIntakeOutcome.kind,
+                          provider: inferred.route,
+                          detail: `deterministic_intake=yes; step=${reminderIntakeOutcome.state.step}`
+                        });
+                        recordToolExecution({ toolName: "reminder.add", status: reminderIntakeOutcome.kind });
+                        logger.info(
+                          {
+                            route: inferred.route,
+                            messageId: event.payload.messageId,
+                            toolName: "reminder.add",
+                            intakeStep: reminderIntakeOutcome.state.step,
+                            status: reminderIntakeOutcome.kind
+                          },
+                          "Advanced deterministic reminder intake"
+                        );
+                        pipelineOutcome = "tool_clarify";
+                        await publishReply(reminderIntakeOutcome.prompt, inferred.route);
+                        return;
+                      }
+
+                      resolvedArgs = {
+                        ...resolvedArgs,
+                        ...reminderIntakeOutcome.args
+                      };
+                    }
                     const result = await renderConversationalToolResult({
                       result: await executeConversationalToolCall({
                         call: {
@@ -557,4 +623,18 @@ function mapInboundEventToIncomingMessage(event: InboundMessageReceivedEvent): I
     mentionedBot: event.payload.mentionedBot,
     createdAt: event.occurredAt
   };
+}
+
+function reminderIntakeArgsFromState(state: ReminderIntakeState): Record<string, string | number> {
+  const args: Record<string, string | number> = {};
+  if (state.data.message) {
+    args.message = state.data.message;
+  }
+  if (state.data.duration) {
+    args.duration = state.data.duration;
+  }
+  if (state.data.dueAt) {
+    args.dueAt = state.data.dueAt;
+  }
+  return args;
 }
