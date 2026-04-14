@@ -16,11 +16,13 @@ import { createSpanAttributesForEvent, recordToolExecution, startPipelineTimer, 
 import type { Persistence } from "./persistence.js";
 import { isReminderCommand } from "./reminders.js";
 import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
+import { executeConversationalToolCall, renderConversationalToolResult, type ConversationalToolName } from "./conversationalTools.js";
 import type { IncomingMessage, WorldLookupSourceName } from "./types.js";
 import { evaluateAddressedness } from "./discord/addressing.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
 
 const RECENT_CHAT_HISTORY_LIMIT = 10;
+const CONVERSATIONAL_TOOL_NAMES = new Set<ConversationalToolName>(["news.briefing", "news.follow_up", "world.lookup"]);
 
 export function registerMessagePipeline(params: {
   bus: EventBus;
@@ -328,34 +330,62 @@ export function registerMessagePipeline(params: {
                   }
 
                   if (inferred.decision.decision === "execute_tool") {
-                    const result = await executeToolDecision({
-                      calendarClient,
-                      conversationId: event.correlation.conversationId ?? "",
-                      decision: {
-                        decision: "execute",
-                        toolName: inferred.decision.toolName,
-                        reason: inferred.decision.reason,
-                        args: inferred.decision.args
-                      },
-                      groundedAnswerService,
-                      persistence,
-                      worldLookupAdapters
-                    });
+                    const recentConversation = persistence.listRecentConversationTurns(
+                      event.correlation.conversationId ?? "",
+                      RECENT_CHAT_HISTORY_LIMIT
+                    );
+                    if (CONVERSATIONAL_TOOL_NAMES.has(inferred.decision.toolName as ConversationalToolName) && !chatService.renderToolResult) {
+                      throw new Error("Chat service cannot render conversational tool results");
+                    }
+                    const result = CONVERSATIONAL_TOOL_NAMES.has(inferred.decision.toolName as ConversationalToolName)
+                      ? await renderConversationalToolResult({
+                          result: await executeConversationalToolCall({
+                            call: {
+                              toolName: inferred.decision.toolName as ConversationalToolName,
+                              args: inferred.decision.args,
+                              userMessage: content,
+                              conversationId: event.correlation.conversationId ?? ""
+                            },
+                            context: {
+                              calendarClient,
+                              persistence,
+                              groundedAnswerService,
+                              worldLookupAdapters,
+                              articleReader: undefined
+                            }
+                          }),
+                          userMessage: content,
+                          renderService: { renderToolResult: chatService.renderToolResult! },
+                          recentConversation
+                        })
+                      : await executeToolDecision({
+                          calendarClient,
+                          conversationId: event.correlation.conversationId ?? "",
+                          decision: {
+                            decision: "execute",
+                            toolName: inferred.decision.toolName,
+                            reason: inferred.decision.reason,
+                            args: inferred.decision.args
+                          },
+                          groundedAnswerService,
+                          persistence,
+                          worldLookupAdapters
+                        });
                     persistence.saveToolExecutionAudit({
                       messageId: event.payload.messageId,
                       toolName: result.toolName,
                       invocationSource: "inferred",
-                      status: result.status,
-                      provider: result.route ?? inferred.route,
-                      detail: result.policyDecision?.reason ?? result.detail ?? inferred.decision.reason
+                      status: result.status === "success" ? "executed" : result.status,
+                      provider: result.route ?? "none",
+                      detail: result.detail ?? inferred.decision.reason
                     });
-                    recordToolExecution({ toolName: result.toolName, status: result.status });
+                    recordToolExecution({ toolName: result.toolName, status: result.status === "success" ? "executed" : result.status });
                     logger.info(
-                      { route: inferred.route, messageId: event.payload.messageId, toolName: result.toolName, status: result.status },
+                      { route: result.route ?? inferred.route, messageId: event.payload.messageId, toolName: result.toolName, status: result.status },
                       "Executed inferred tool decision"
                     );
-                    pipelineOutcome = result.status === "executed" ? "tool_execute" : "tool_clarify";
-                    await publishReply(result.reply, result.route ?? inferred.route);
+                    pipelineOutcome = result.status === "success" ? "tool_execute" : "tool_clarify";
+                    await publishReply(result.reply, result.route ?? "none");
                     return;
                   }
                 } catch (error) {

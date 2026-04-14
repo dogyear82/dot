@@ -148,3 +148,104 @@ test("conversational tool executor returns a common llm_render result for calend
     cleanup();
   }
 });
+
+test("conversational tool executor returns llm_render payloads for news/current-events tools and preserves sessions", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const topicLookup = await executeConversationalToolCall({
+      call: {
+        toolName: "world.lookup",
+        args: { query: "what's happening in Myanmar right now?" },
+        userMessage: "what's happening in Myanmar right now?",
+        conversationId: "conv-1"
+      },
+      context: createContext({
+        persistence,
+        worldLookupAdapters: {
+          newsdata: {
+            source: "newsdata",
+            async lookup({ query }) {
+              assert.match(query, /myanmar/i);
+              return {
+                source: "newsdata",
+                evidence: [
+                  {
+                    source: "newsdata",
+                    title: "Myanmar junta extends emergency rule",
+                    url: "https://example.test/myanmar",
+                    snippet: "Reuters reports the military government extended emergency rule.",
+                    publishedAt: "2026-04-13T08:00:00Z",
+                    publisher: "Reuters",
+                    confidence: "high"
+                  }
+                ]
+              };
+            }
+          }
+        },
+        articleReader: {
+          async read() {
+            return {
+              articles: [
+                {
+                  url: "https://example.test/myanmar",
+                  title: "Myanmar junta extends emergency rule",
+                  source: "newsdata",
+                  publisher: "Reuters",
+                  publishedAt: "2026-04-13T08:00:00Z",
+                  content: "Article text",
+                  excerpt: "Article excerpt"
+                }
+              ],
+              failures: []
+            };
+          }
+        }
+      })
+    });
+
+    assert.equal(topicLookup.presentation, "llm_render");
+    assert.equal(topicLookup.status, "success");
+    assert.equal(topicLookup.payload.mode, "world_lookup");
+    assert.equal((topicLookup.payload.articles as Array<{ title: string }>).length, 1);
+    assert.match(topicLookup.detail ?? "", /topicSessionSaved=yes/);
+    assert.equal(persistence.getLatestNewsBrowseSession("conv-1")?.kind, "topic_lookup");
+
+    const followUp = await executeConversationalToolCall({
+      call: {
+        toolName: "news.follow_up",
+        args: { query: "tell me more about the first one" },
+        userMessage: "tell me more about the first one",
+        conversationId: "conv-1"
+      },
+      context: createContext({
+        persistence,
+        articleReader: {
+          async read() {
+            return {
+              articles: [
+                {
+                  url: "https://example.test/myanmar",
+                  title: "Myanmar junta extends emergency rule",
+                  source: "newsdata",
+                  publisher: "Reuters",
+                  publishedAt: "2026-04-13T08:00:00Z",
+                  content: "Article text",
+                  excerpt: "Article excerpt"
+                }
+              ],
+              failures: []
+            };
+          }
+        }
+      })
+    });
+
+    assert.equal(followUp.presentation, "llm_render");
+    assert.equal(followUp.payload.mode, "news_follow_up");
+    assert.equal((followUp.payload.selectedItem as { ordinal: number }).ordinal, 1);
+  } finally {
+    cleanup();
+  }
+});

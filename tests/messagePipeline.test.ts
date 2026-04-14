@@ -310,7 +310,7 @@ test("message pipeline executes inferred world.lookup and records grounded audit
     async generateOwnerReply() {
       throw new Error("world lookup should not fall back to normal chat");
     },
-    async generateGroundedReply() {
+    async renderToolResult() {
       return {
         route: "local",
         powerStatus: "standby",
@@ -407,9 +407,9 @@ test("message pipeline preserves the full owner wording for inferred world.looku
     async generateOwnerReply() {
       throw new Error("world lookup should not fall back to normal chat");
     },
-    async generateGroundedReply(params) {
-      assert.equal(params.bucket, "current_events");
-      assert.deepEqual(params.selectedSources, ["newsdata", "gdelt"]);
+    async renderToolResult(params) {
+      assert.equal(params.payload.bucket, "current_events");
+      assert.deepEqual(params.payload.selectedSources, ["newsdata", "gdelt"]);
       return {
         route: "hosted",
         powerStatus: "engaged",
@@ -538,23 +538,14 @@ test("message pipeline saves topical current-events lookups for later follow-up 
     async generateOwnerReply() {
       throw new Error("topic news flow should not fall back to normal chat");
     },
-    async generateGroundedReply(params) {
-      if (params.userMessage.includes("OpenAI")) {
+    async renderToolResult(params) {
+      if (String(params.payload.query).includes("OpenAI")) {
         return {
           route: "hosted",
           powerStatus: "engaged",
           reply: "According to Reuters, OpenAI is expanding its enterprise push.\n\nLinks:\n- https://example.test/openai-1"
         };
       }
-
-      return {
-        route: "hosted",
-        powerStatus: "engaged",
-        reply: "According to AP, the follow-up story says OpenAI also signed new government customers.\n\nLinks:\n- https://example.test/openai-2"
-      };
-    },
-    async generateStoryFollowUpReply(params) {
-      assert.equal(params.selectedItem.ordinal, 2);
       return {
         route: "hosted",
         powerStatus: "engaged",
@@ -734,6 +725,215 @@ test("message pipeline saves topical current-events lookups for later follow-up 
 
     assert.equal(audit.tool_name, "world.lookup");
     assert.match(audit.detail ?? "", /topicSessionSaved=yes/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline lets a correction turn repair the prior current-events lookup instead of searching the complaint text", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  let inferenceCount = 0;
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("correction flow should not fall back to normal chat");
+    },
+    async renderToolResult(params) {
+      if (inferenceCount === 1) {
+        return {
+          route: "local",
+          powerStatus: "standby",
+          reply: "According to Wikipedia, Ukraine is a country in Eastern Europe.\n\nLinks:\n- https://en.wikipedia.org/wiki/Ukraine"
+        };
+      }
+
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        reply: "According to Reuters, fighting intensified in eastern Ukraine this week.\n\nLinks:\n- https://example.test/ukraine-live"
+      };
+    },
+    async inferToolDecision(userMessage, recentConversation) {
+      inferenceCount += 1;
+      if (inferenceCount === 1) {
+        return {
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "execute_tool",
+            toolName: "world.lookup",
+            reason: "owner asked a current-events question",
+            confidence: "high",
+            args: {
+              query: "what's going on in Ukraine"
+            }
+          }
+        };
+      }
+
+      const transcript = (recentConversation ?? []).map((turn) => turn.content).join("\n");
+      assert.match(transcript, /what's going on in Ukraine/i);
+
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        decision: {
+          decision: "execute_tool",
+          toolName: "world.lookup",
+          reason: "owner is correcting a stale history-style answer and still wants current events",
+          confidence: "high",
+          args: {
+            query: "what's going on in Ukraine right now"
+          }
+        }
+      };
+    },
+    getPowerStatus(route) {
+      return route === "hosted" ? "engaged" : "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence,
+    worldLookupAdapters: {
+      wikipedia: {
+        source: "wikipedia",
+        async lookup({ query }) {
+          if (/right now/i.test(query)) {
+            throw new Error("repair lookup should not hit wikipedia");
+          }
+
+          return {
+            source: "wikipedia",
+            evidence: [
+              {
+                source: "wikipedia",
+                title: "Ukraine",
+                url: "https://en.wikipedia.org/wiki/Ukraine",
+                snippet: "Ukraine is a country in Eastern Europe.",
+                publishedAt: null,
+                confidence: "high"
+              }
+            ]
+          };
+        }
+      },
+      newsdata: {
+        source: "newsdata",
+        async lookup({ query }) {
+          assert.match(query, /ukraine right now/i);
+          return {
+            source: "newsdata",
+            evidence: [
+              {
+                source: "newsdata",
+                title: "Fighting intensifies in eastern Ukraine",
+                url: "https://example.test/ukraine-live",
+                snippet: "Reuters reports fighting intensified in eastern Ukraine this week.",
+                publishedAt: "2026-04-13T08:00:00Z",
+                publisher: "Reuters",
+                confidence: "high"
+              }
+            ]
+          };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          return { source: "gdelt", evidence: [] };
+        }
+      }
+    }
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        correlation: {
+          correlationId: "corr-ukraine-1",
+          causationId: null,
+          conversationId: "channel-ukraine",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-ukraine-1",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "what's going on in Ukraine",
+          addressedContent: "what's going on in Ukraine",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-ukraine",
+            guildId: null,
+            replyTo: "msg-ukraine-1"
+          }
+        }
+      })
+    );
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        correlation: {
+          correlationId: "corr-ukraine-2",
+          causationId: null,
+          conversationId: "channel-ukraine",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-ukraine-2",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "I'm asking for current events, not history. wikipedia is not news",
+          addressedContent: "I'm asking for current events, not history. wikipedia is not news",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-ukraine",
+            guildId: null,
+            replyTo: "msg-ukraine-2"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 2);
+    assert.match(outbound[1]?.payload.content ?? "", /According to Reuters/i);
+
+    const audit = persistence.db
+      .prepare("SELECT tool_name, status, provider, detail FROM tool_execution_audit WHERE message_id = ?")
+      .get("msg-ukraine-2") as { tool_name: string; status: string; provider: string | null; detail: string | null };
+
+    assert.equal(audit.tool_name, "world.lookup");
+    assert.equal(audit.provider, "hosted");
+    assert.match(audit.detail ?? "", /bucket=current_events/);
   } finally {
     unsubscribe();
     cleanup();
@@ -1478,11 +1678,8 @@ test("message pipeline executes inferred news.briefing and records briefing audi
     async generateOwnerReply() {
       throw new Error("news briefing should not fall back to normal chat");
     },
-    async generateGroundedReply() {
-      throw new Error("news briefing should not use grounded reply");
-    },
-    async generateNewsBriefingReply(params) {
-      assert.equal(params.selectedSources[0], "newsdata");
+    async renderToolResult(params) {
+      assert.equal((params.payload.selectedSources as string[])[0], "newsdata");
       return {
         route: "local",
         powerStatus: "standby",
@@ -1617,18 +1814,17 @@ test("message pipeline resolves an inferred news follow-up against the latest sa
     async generateOwnerReply() {
       throw new Error("news follow-up should not fall back to normal chat");
     },
-    async generateGroundedReply() {
-      throw new Error("news follow-up should not use grounded reply");
-    },
-    async generateNewsBriefingReply(params) {
-      return {
-        route: "local",
-        powerStatus: "standby",
-        reply: `Here are the headlines.\n1. According to AP, ${params.evidence[0]?.title}\n2. According to Reuters, ${params.evidence[1]?.title}`
-      };
-    },
-    async generateStoryFollowUpReply(params) {
-      assert.equal(params.selectedItem.ordinal, 2);
+    async renderToolResult(params) {
+      if (params.payload.mode === "news_briefing") {
+        const evidence = params.payload.evidence as Array<{ title: string }>;
+        return {
+          route: "local",
+          powerStatus: "standby",
+          reply: `Here are the headlines.\n1. According to AP, ${evidence[0]?.title}\n2. According to Reuters, ${evidence[1]?.title}`
+        };
+      }
+
+      assert.equal((params.payload.selectedItem as { ordinal: number }).ordinal, 2);
       return {
         route: "local",
         powerStatus: "standby",
