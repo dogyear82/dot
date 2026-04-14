@@ -80,6 +80,7 @@ export function createLlmService(params: {
   config: AppConfig;
   settings: SettingsStore;
   providers?: ChatProvider[];
+  intentProviders?: ChatProvider[];
 }): LlmService {
   const providers =
     params.providers ??
@@ -96,6 +97,19 @@ export function createLlmService(params: {
         params.config.MODEL_REQUEST_TIMEOUT_MS
       )
     ];
+  const intentProviders =
+    params.intentProviders ??
+    (params.config.ONEMINAI_INTENT_MODEL
+      ? [
+          new OneMinAiChatProvider(
+            params.config.ONEMINAI_BASE_URL,
+            params.config.ONEMINAI_API_KEY,
+            params.config.ONEMINAI_INTENT_MODEL,
+            params.config.MODEL_REQUEST_TIMEOUT_MS
+          ),
+          ...providers
+        ]
+      : providers);
 
   const getPowerStatus = (route: LlmRoute = "none"): LlmPowerStatus => {
     const mode = getLlmMode(params.settings);
@@ -239,7 +253,7 @@ export function createLlmService(params: {
       });
       const { route, reply } = await executeProviderRequest({
         mode: getLlmMode(params.settings),
-        providers,
+        providers: intentProviders,
         operation: "tool.infer",
         invoke: async (provider) => parseToolDecision(await provider.generate(messages)),
         failurePrefix: "No LLM provider could infer a tool decision."
@@ -258,7 +272,7 @@ export function createLlmService(params: {
       });
       const { route, reply } = await executeProviderRequest({
         mode: getLlmMode(params.settings),
-        providers,
+        providers: intentProviders,
         operation: "tool.resume",
         invoke: async (provider) => parseToolDecision(await provider.generate(messages)),
         failurePrefix: "No LLM provider could resolve a pending tool clarification."

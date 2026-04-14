@@ -153,6 +153,7 @@ podman-compose up -d --force-recreate ollama
 ```
 
 - Set `OLLAMA_MODEL` in `.env` to a model you already have locally, such as `openhermes`.
+- Set `ONEMINAI_INTENT_MODEL` in `.env` if you want conversational tool-intent classification to use a different hosted model than normal chat replies. When unset, intent inference uses the normal provider stack.
 
 ## Current owner commands
 

@@ -24,6 +24,7 @@ const envSchema = z.object({
   ONEMINAI_API_KEY: z.string().optional().default(""),
   ONEMINAI_BASE_URL: z.string().default(""),
   ONEMINAI_MODEL: z.string().default(""),
+  ONEMINAI_INTENT_MODEL: z.string().default(""),
   MODEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
   OUTLOOK_ACCESS_TOKEN: z.string().optional().default(""),
   OUTLOOK_CLIENT_ID: z.string().optional().default(""),
