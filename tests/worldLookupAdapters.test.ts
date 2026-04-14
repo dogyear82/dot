@@ -109,6 +109,36 @@ test("NewsDataCurrentEventsAdapter normalizes latest-news results", async () => 
   assert.equal(result.evidence[0]?.publishedAt, "2026-04-12 12:00:00");
 });
 
+test("NewsDataCurrentEventsAdapter omits q for generic headline briefings", async () => {
+  const adapter = new NewsDataCurrentEventsAdapter("test-key", async (input) => {
+    const url = String(input);
+    assert.match(url, /newsdata\.io\/api\/1\/latest/);
+    assert.match(url, /apikey=test-key/);
+    assert.doesNotMatch(url, /[?&]q=/);
+    assert.match(url, /size=10/);
+    return createJsonResponse({
+      results: [
+        {
+          article_id: "top-1",
+          title: "Markets wobble after tariff warning",
+          link: "https://news.example/markets",
+          description: "A top story from the latest news feed.",
+          pubDate: "2026-04-12 13:00:00",
+          source_name: "Example News"
+        }
+      ]
+    });
+  });
+
+  const result = await adapter.lookup({
+    query: "give me the latest headlines",
+    timeoutMs: 100
+  });
+
+  assert.equal(result.source, "newsdata");
+  assert.equal(result.evidence[0]?.title, "Markets wobble after tariff warning");
+});
+
 test("NewsDataCurrentEventsAdapter rejects lookup when unconfigured", async () => {
   const adapter = new NewsDataCurrentEventsAdapter("", async () => {
     throw new Error("fetch should not be called");

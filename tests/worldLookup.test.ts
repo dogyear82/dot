@@ -19,6 +19,7 @@ test("classifyWorldLookupQuery maps representative prompts into deterministic bu
   assert.equal(classifyWorldLookupQuery("What's the weather in Phoenix tomorrow?"), "weather");
   assert.equal(classifyWorldLookupQuery("How is Argentina's economy doing?"), "economics");
   assert.equal(classifyWorldLookupQuery("What is happening in Myanmar right now?"), "current_events");
+  assert.equal(classifyWorldLookupQuery("what’s going on in ukraine"), "current_events");
   assert.equal(classifyWorldLookupQuery("What's the latest weather and economic outlook for Japan?"), "mixed");
 });
 
@@ -31,9 +32,50 @@ test("selectWorldLookupSourcePlan returns explicit source plans per bucket", () 
 
   assert.deepEqual(selectWorldLookupSourcePlan("current_events"), {
     bucket: "current_events",
-    sources: ["newsdata", "wikimedia_current_events", "gdelt"],
+    sources: ["newsdata", "gdelt"],
     timeoutMs: 4000
   });
+});
+
+test("executeWorldLookup uses NewsData only for generic headline briefings", async () => {
+  const touched: string[] = [];
+
+  const result = await executeWorldLookup({
+    query: "give me the latest headlines",
+    timeoutMs: 100,
+    adapters: {
+      newsdata: {
+        source: "newsdata",
+        async lookup() {
+          touched.push("newsdata");
+          return {
+            source: "newsdata",
+            evidence: [
+              createWorldLookupEvidence({
+                source: "newsdata",
+                title: "Global markets react to tariff threat",
+                url: "https://example.test/newsdata-1",
+                snippet: "Investors reacted sharply across Asia and Europe.",
+                publishedAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+                confidence: "high"
+              })
+            ]
+          };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          touched.push("gdelt");
+          return { source: "gdelt", evidence: [] };
+        }
+      }
+    }
+  });
+
+  assert.deepEqual(touched, ["newsdata"]);
+  assert.deepEqual(result.selectedSources, ["newsdata"]);
+  assert.equal(result.outcome, "success");
 });
 
 test("executeWorldLookup runs selected sources in parallel and tolerates partial failure", async () => {
@@ -44,19 +86,19 @@ test("executeWorldLookup runs selected sources in parallel and tolerates partial
     query: "What is happening in Myanmar right now?",
     timeoutMs: 100,
     adapters: {
-      wikimedia_current_events: {
-        source: "wikimedia_current_events",
+      newsdata: {
+        source: "newsdata",
         async lookup() {
-          started.push("wikimedia_current_events");
+          started.push("newsdata");
           await new Promise((resolve) => setTimeout(resolve, 20));
-          completed.push("wikimedia_current_events");
+          completed.push("newsdata");
           return {
-            source: "wikimedia_current_events",
+            source: "newsdata",
             evidence: [
               createWorldLookupEvidence({
-                source: "wikimedia_current_events",
+                source: "newsdata",
                 title: "Myanmar current events",
-                url: "https://example.test/wikimedia",
+                url: "https://example.test/newsdata",
                 snippet: "Recent events summary for Myanmar"
               })
             ]
@@ -74,16 +116,15 @@ test("executeWorldLookup runs selected sources in parallel and tolerates partial
     }
   });
 
-  assert.deepEqual(started.sort(), ["gdelt", "wikimedia_current_events"]);
-  assert.deepEqual(completed, ["wikimedia_current_events"]);
+  assert.deepEqual(started.sort(), ["gdelt", "newsdata"]);
+  assert.deepEqual(completed, ["newsdata"]);
   assert.equal(result.bucket, "current_events");
-  assert.deepEqual(result.selectedSources, ["newsdata", "wikimedia_current_events", "gdelt"]);
+  assert.deepEqual(result.selectedSources, ["newsdata", "gdelt"]);
   assert.equal(result.candidateCount, 1);
   assert.equal(result.retrievalStrategy, "current_events_topic_ranked");
   assert.equal(result.evidence.length, 1);
-  assert.equal(result.failures.length, 2);
-  assert.equal(result.failures[0]?.source, "newsdata");
-  assert.equal(result.failures[1]?.source, "gdelt");
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0]?.source, "gdelt");
   assert.equal(result.outcome, "partial_failure");
 });
 
@@ -92,42 +133,23 @@ test("executeWorldLookup tolerates an unconfigured NewsData adapter while using 
     query: "What is happening in Myanmar right now?",
     timeoutMs: 100,
     adapters: {
-      wikimedia_current_events: {
-        source: "wikimedia_current_events",
-        async lookup() {
-          return {
-            source: "wikimedia_current_events",
-            evidence: [
-              createWorldLookupEvidence({
-                source: "wikimedia_current_events",
-                title: "Myanmar current events",
-                url: "https://example.test/wikimedia",
-                snippet: "Recent events summary for Myanmar"
-              })
-            ]
-          };
-        }
-      },
       gdelt: {
         source: "gdelt",
         async lookup() {
-          return {
-            source: "gdelt",
-            evidence: []
-          };
+          return { source: "gdelt", evidence: [] };
         }
       }
     }
   });
 
   assert.equal(result.bucket, "current_events");
-  assert.deepEqual(result.selectedSources, ["newsdata", "wikimedia_current_events", "gdelt"]);
-  assert.equal(result.candidateCount, 1);
+  assert.deepEqual(result.selectedSources, ["newsdata", "gdelt"]);
+  assert.equal(result.candidateCount, 0);
   assert.equal(result.retrievalStrategy, "current_events_topic_ranked");
-  assert.equal(result.evidence.length, 1);
+  assert.equal(result.evidence.length, 0);
   assert.equal(result.failures.length, 1);
   assert.equal(result.failures[0]?.source, "newsdata");
-  assert.equal(result.outcome, "partial_failure");
+  assert.equal(result.outcome, "no_evidence");
 });
 
 test("executeWorldLookup discards irrelevant current-events evidence that does not match the topic", async () => {
@@ -135,22 +157,6 @@ test("executeWorldLookup discards irrelevant current-events evidence that does n
     query: "tell me what the situation is like in Myanmar right now",
     timeoutMs: 100,
     adapters: {
-      wikimedia_current_events: {
-        source: "wikimedia_current_events",
-        async lookup() {
-          return {
-            source: "wikimedia_current_events",
-            evidence: [
-              createWorldLookupEvidence({
-                source: "wikimedia_current_events",
-                title: "Dalai Lama representative discusses Tibet",
-                url: "https://example.test/dalai-lama",
-                snippet: "Talks about China, Tibet, Shugden and the next Dalai Lama."
-              })
-            ]
-          };
-        }
-      },
       gdelt: {
         source: "gdelt",
         async lookup() {
@@ -161,7 +167,7 @@ test("executeWorldLookup discards irrelevant current-events evidence that does n
   });
 
   assert.equal(result.bucket, "current_events");
-  assert.equal(result.candidateCount, 1);
+  assert.equal(result.candidateCount, 0);
   assert.equal(result.retrievalStrategy, "current_events_topic_ranked");
   assert.equal(result.outcome, "no_evidence");
   assert.deepEqual(result.evidence, []);
@@ -201,24 +207,6 @@ test("executeWorldLookup ranks generic headlines queries by source quality and r
           };
         }
       },
-      wikimedia_current_events: {
-        source: "wikimedia_current_events",
-        async lookup() {
-          return {
-            source: "wikimedia_current_events",
-            evidence: [
-              createWorldLookupEvidence({
-                source: "wikimedia_current_events",
-                title: "Old interview mentions headlines",
-                url: "https://example.test/wikinews-old",
-                snippet: "This old feature mentions headlines in passing.",
-                publishedAt: "2024-12-18T10:55:42Z",
-                confidence: "medium"
-              })
-            ]
-          };
-        }
-      },
       gdelt: {
         source: "gdelt",
         async lookup() {
@@ -233,7 +221,7 @@ test("executeWorldLookup ranks generic headlines queries by source quality and r
 
   assert.equal(result.bucket, "current_events");
   assert.equal(result.retrievalStrategy, "current_events_generic_ranked");
-  assert.equal(result.candidateCount, 3);
+  assert.equal(result.candidateCount, 2);
   assert.equal(result.outcome, "success");
   assert.equal(result.evidence.length, 2);
   assert.deepEqual(

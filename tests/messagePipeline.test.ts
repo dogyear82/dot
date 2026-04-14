@@ -404,7 +404,7 @@ test("message pipeline preserves the full owner wording for inferred world.looku
     },
     async generateGroundedReply(params) {
       assert.equal(params.bucket, "current_events");
-      assert.deepEqual(params.selectedSources, ["newsdata", "wikimedia_current_events", "gdelt"]);
+      assert.deepEqual(params.selectedSources, ["newsdata", "gdelt"]);
       return {
         route: "hosted",
         powerStatus: "engaged",
@@ -444,20 +444,20 @@ test("message pipeline preserves the full owner wording for inferred world.looku
     ownerUserId: "owner-1",
     persistence,
     worldLookupAdapters: {
-      wikimedia_current_events: {
-        source: "wikimedia_current_events",
+      newsdata: {
+        source: "newsdata",
         async lookup({ query }) {
           assert.match(query, /myanmar right now/i);
           return {
-            source: "wikimedia_current_events",
+            source: "newsdata",
             evidence: [
               {
-                source: "wikimedia_current_events",
+                source: "newsdata",
                 title: "Myanmar current events",
-                url: "https://en.wikinews.org/wiki/Myanmar",
+                url: "https://example.test/myanmar",
                 snippet: "Current-events coverage for Myanmar.",
                 publishedAt: null,
-                confidence: "medium"
+                confidence: "high"
               }
             ]
           };
@@ -510,7 +510,7 @@ test("message pipeline preserves the full owner wording for inferred world.looku
     assert.equal(audit.status, "executed");
     assert.equal(audit.provider, "hosted");
     assert.match(audit.detail ?? "", /bucket=current_events/);
-    assert.match(audit.detail ?? "", /selectedSources=newsdata,wikimedia_current_events,gdelt/);
+    assert.match(audit.detail ?? "", /selectedSources=newsdata,gdelt/);
     assert.match(audit.detail ?? "", /retrievalStrategy=current_events_topic_ranked/);
   } finally {
     unsubscribe();

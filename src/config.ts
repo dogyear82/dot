@@ -20,6 +20,7 @@ const envSchema = z.object({
   SQLITE_PATH: z.string().default("./data/dot.sqlite"),
   OLLAMA_BASE_URL: z.string().url().default("http://ollama:11434"),
   OLLAMA_MODEL: z.string().default("llama3.1:8b"),
+  NEWSDATA_API_KEY: z.string().optional().default(""),
   ONEMINAI_API_KEY: z.string().optional().default(""),
   ONEMINAI_BASE_URL: z.string().default(""),
   ONEMINAI_MODEL: z.string().default(""),

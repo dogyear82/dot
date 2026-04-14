@@ -162,7 +162,7 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
         query,
         adapters: worldLookupAdapters ?? createDefaultWorldLookupAdapters(),
         preferences: newsPreferences,
-        maxEvidenceCount: 5
+        maxEvidenceCount: 8
       });
 
       const detail = buildNewsBriefingAuditDetail(lookupResult, newsPreferences);
@@ -888,7 +888,11 @@ function looksLikeNewsFollowUpIntent(normalized: string): boolean {
 }
 
 function normalizeUserMessage(userMessage: string): string {
-  return userMessage.trim().toLowerCase().replace(/\s+/g, " ");
+  return userMessage
+    .trim()
+    .toLowerCase()
+    .replace(/[’‘]/g, "'")
+    .replace(/\s+/g, " ");
 }
 
 function resolveNewsSessionItem(

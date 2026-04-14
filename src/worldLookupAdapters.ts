@@ -163,10 +163,13 @@ export class NewsDataCurrentEventsAdapter implements WorldLookupAdapter {
       throw new Error("newsdata adapter not configured");
     }
 
+    const genericHeadlinesQuery = looksLikeGenericHeadlinesQuery(params.query);
     const url = new URL(NEWSDATA_LATEST_URL);
     url.searchParams.set("apikey", this.apiKey);
-    url.searchParams.set("q", params.query);
-    url.searchParams.set("size", "6");
+    if (!genericHeadlinesQuery) {
+      url.searchParams.set("q", params.query);
+    }
+    url.searchParams.set("size", genericHeadlinesQuery ? "10" : "6");
     url.searchParams.set("language", "en");
 
     const payload = newsDataResponseSchema.parse(await fetchJson(this.fetchImpl, url, params.timeoutMs));
@@ -190,6 +193,15 @@ export class NewsDataCurrentEventsAdapter implements WorldLookupAdapter {
         )
     };
   }
+}
+
+function looksLikeGenericHeadlinesQuery(query: string): boolean {
+  const normalized = query.trim().toLowerCase().replace(/\s+/g, " ");
+  return (
+    /\b(latest headlines|top headlines|headline|headlines|top news|news today|today('?s)? news)\b/.test(normalized) ||
+    /\bwhat('?s| is) in the news\b/.test(normalized) ||
+    /\bbrief me on the news\b/.test(normalized)
+  );
 }
 
 export class WikimediaCurrentEventsAdapter implements WorldLookupAdapter {
