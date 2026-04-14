@@ -387,6 +387,7 @@ export function registerMessagePipeline(params: {
                         stage: pendingToolSession ? "tool.resume" : "tool.infer",
                         provider: inferred.route,
                         inputUserMessage: content,
+                        promptMessages: "promptMessages" in inferred ? inferred.promptMessages : undefined,
                         rawModelOutput: inferred.rawModelOutput,
                         parsedDecision: inferred.decision
                       },

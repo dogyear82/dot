@@ -65,12 +65,12 @@ export interface LlmService {
   inferToolDecision(
     userMessage: string,
     recentConversation?: ConversationTurnRecord[]
-  ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string }>;
+  ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
   resolvePendingToolDecision?(params: {
     userMessage: string;
     session: PendingConversationalToolSessionRecord;
     recentConversation?: ConversationTurnRecord[];
-  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string }>;
+  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
   getPowerStatus(route?: LlmRoute): LlmPowerStatus;
 }
 
@@ -258,6 +258,7 @@ export function createLlmService(params: {
         invoke: async (provider) => {
           const rawModelOutput = await provider.generate(messages);
           return {
+            promptMessages: messages,
             rawModelOutput,
             decision: parseToolDecision(rawModelOutput)
           };
@@ -265,7 +266,13 @@ export function createLlmService(params: {
         failurePrefix: "No LLM provider could infer a tool decision."
       });
 
-      return { route, powerStatus: getPowerStatus(route), decision: reply.decision, rawModelOutput: reply.rawModelOutput };
+      return {
+        route,
+        powerStatus: getPowerStatus(route),
+        decision: reply.decision,
+        rawModelOutput: reply.rawModelOutput,
+        promptMessages: reply.promptMessages
+      };
     },
     async resolvePendingToolDecision({ userMessage, session, recentConversation }) {
       const messages = buildPendingToolResolutionMessages({
@@ -283,6 +290,7 @@ export function createLlmService(params: {
         invoke: async (provider) => {
           const rawModelOutput = await provider.generate(messages);
           return {
+            promptMessages: messages,
             rawModelOutput,
             decision: parseToolDecision(rawModelOutput)
           };
@@ -290,7 +298,13 @@ export function createLlmService(params: {
         failurePrefix: "No LLM provider could resolve a pending tool clarification."
       });
 
-      return { route, powerStatus: getPowerStatus(route), decision: reply.decision, rawModelOutput: reply.rawModelOutput };
+      return {
+        route,
+        powerStatus: getPowerStatus(route),
+        decision: reply.decision,
+        rawModelOutput: reply.rawModelOutput,
+        promptMessages: reply.promptMessages
+      };
     },
     getPowerStatus
   };
