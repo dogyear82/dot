@@ -320,7 +320,7 @@ function createLogger() {
 test("Discord ingress publishes through the bus and preserves command-seeded follow-up context", async () => {
   const { persistence, cleanup } = createPersistence();
   const replies: string[] = [];
-  const generatedMessages: Array<{ userMessage: string; recentConversation: Array<{ role: string; content: string }> }> = [];
+  const classifiedMessages: Array<{ userMessage: string; recentConversation: Array<{ role: string; content: string }> }> = [];
   const bus = createInMemoryEventBus();
 
   try {
@@ -330,20 +330,22 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
         listUpcomingEvents: async () => []
       } as never,
       chatService: {
-        inferToolDecision: async () => ({
-          route: "local",
-          powerStatus: "standby",
-          decision: {
-            decision: "none",
-            reason: "not a tool request"
-          }
-        }),
-        generateOwnerReply: async ({ userMessage, recentConversation }) => {
-          generatedMessages.push({
+        inferToolDecision: async (userMessage, recentConversation) => {
+          classifiedMessages.push({
             userMessage,
             recentConversation: (recentConversation ?? []).map((turn) => ({ role: turn.role, content: turn.content }))
           });
-
+          return {
+            route: "local",
+            powerStatus: "standby",
+            decision: {
+              decision: "respond",
+              reason: "not a tool request",
+              response: "freeform reply"
+            }
+          };
+        },
+        generateOwnerReply: async ({ userMessage, recentConversation }) => {
           return {
             route: "local",
             powerStatus: "standby",
@@ -419,9 +421,9 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      assert.equal(generatedMessages.length, 1);
-      assert.equal(generatedMessages[0]?.userMessage, "and what about tomorrow?");
-      assert.deepEqual(generatedMessages[0]?.recentConversation, [
+      assert.equal(classifiedMessages.length, 1);
+      assert.equal(classifiedMessages[0]?.userMessage, "and what about tomorrow?");
+      assert.deepEqual(classifiedMessages[0]?.recentConversation, [
         { role: "user", content: "!settings" },
           {
             role: "assistant",
@@ -453,7 +455,7 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      assert.equal(generatedMessages.length, 1);
+      assert.equal(classifiedMessages.length, 1);
     } finally {
       unregisterEgress();
       unsubscribe();
@@ -611,8 +613,9 @@ test("Discord ingress normalizes a plain-text @Dot command before pipeline routi
           route: "local",
           powerStatus: "standby",
           decision: {
-            decision: "none",
-            reason: "not a tool request"
+            decision: "respond",
+            reason: "not a tool request",
+            response: "freeform reply"
           }
         }),
         generateOwnerReply: async () => ({
@@ -698,8 +701,9 @@ test("Discord ingress normalizes a role mention command before pipeline routing"
           route: "local",
           powerStatus: "standby",
           decision: {
-            decision: "none",
-            reason: "not a tool request"
+            decision: "respond",
+            reason: "not a tool request",
+            response: "freeform reply"
           }
         }),
         generateOwnerReply: async () => ({
@@ -771,7 +775,7 @@ test("Discord ingress normalizes a role mention command before pipeline routing"
 test("Discord ingress treats the bot role mention as addressed chat", async () => {
   const { persistence, cleanup } = createPersistence();
   const replies: string[] = [];
-  const generatedMessages: string[] = [];
+  const classifiedMessages: string[] = [];
   const bus = createInMemoryEventBus();
 
   try {
@@ -781,16 +785,19 @@ test("Discord ingress treats the bot role mention as addressed chat", async () =
         listUpcomingEvents: async () => []
       } as never,
       chatService: {
-        inferToolDecision: async () => ({
-          route: "local",
-          powerStatus: "standby",
-          decision: {
-            decision: "none",
-            reason: "not a tool request"
-          }
-        }),
+        inferToolDecision: async (userMessage) => {
+          classifiedMessages.push(userMessage);
+          return {
+            route: "local",
+            powerStatus: "standby",
+            decision: {
+              decision: "respond",
+              reason: "not a tool request",
+              response: "role mention chat reply"
+            }
+          };
+        },
         generateOwnerReply: async ({ userMessage }) => {
-          generatedMessages.push(userMessage);
           return {
             route: "local",
             powerStatus: "standby",
@@ -843,7 +850,7 @@ test("Discord ingress treats the bot role mention as addressed chat", async () =
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      assert.equal(generatedMessages[0], "what do you think?");
+      assert.equal(classifiedMessages[0], "what do you think?");
       assert.match(replies[0] ?? "", /role mention chat reply/);
     } finally {
       unregisterEgress();
@@ -872,8 +879,9 @@ test("Discord ingress does not treat an unrelated same-name role as Dot", async 
           route: "local",
           powerStatus: "standby",
           decision: {
-            decision: "none",
-            reason: "not a tool request"
+            decision: "respond",
+            reason: "not a tool request",
+            response: "should not happen"
           }
         }),
         generateOwnerReply: async ({ userMessage }) => {

@@ -29,6 +29,20 @@ export type ExplicitToolName =
   | "news.follow_up"
   | "world.lookup";
 
+export type ConversationalIntentDecision =
+  | {
+      decision: "respond";
+      reason: string;
+      response: string;
+    }
+  | {
+      decision: "execute_tool";
+      toolName: ExplicitToolName;
+      reason: string;
+      confidence: "medium" | "high";
+      args: Record<string, string | number>;
+    };
+
 export type ToolDecision =
   | {
       decision: "none";
@@ -377,43 +391,6 @@ const TOOL_DEFINITIONS: Record<ExplicitToolName, ToolDefinition> = {
   }
 };
 
-export function inferDeterministicToolDecision(userMessage: string): ToolDecision | null {
-  const normalized = normalizeUserMessage(userMessage);
-
-  if (looksLikeNewsBriefingIntent(normalized)) {
-    return {
-      decision: "execute",
-      toolName: "news.briefing",
-      reason: "clear news briefing intent from deterministic phrase matching",
-      args: {
-        query: userMessage.trim()
-      }
-    };
-  }
-
-  if (looksLikeNewsFollowUpIntent(normalized)) {
-    return {
-      decision: "execute",
-      toolName: "news.follow_up",
-      reason: "clear follow-up reference to a previously listed news story",
-      args: {
-        query: userMessage.trim()
-      }
-    };
-  }
-
-  if (looksLikeCalendarShowIntent(normalized)) {
-    return {
-      decision: "execute",
-      toolName: "calendar.show",
-      reason: "clear calendar-view intent from deterministic phrase matching",
-      args: {}
-    };
-  }
-
-  return null;
-}
-
 export function parseExplicitToolDecision(content: string): ToolDecision | null {
   const parts = content.trim().split(/\s+/);
 
@@ -539,10 +516,11 @@ export function parseExplicitToolDecision(content: string): ToolDecision | null 
 
 export function buildToolInferencePrompt(userMessage: string): string {
   return [
-    "You decide whether an owner message should invoke one of Dot's existing tools.",
-    "Only choose a tool when the owner is reasonably clearly asking for it.",
-    "If you are unsure, return decision none.",
-    "If the owner clearly wants a tool but required parameters are missing, return decision clarify with a concise question.",
+    "You decide whether Dot should answer directly or execute one of Dot's existing tools.",
+    "Return only strict JSON with one of two decisions: respond or execute_tool.",
+    "Use execute_tool only when the owner is reasonably clearly asking for an available tool.",
+    "If the owner is simply chatting, correcting Dot, or asking something that does not clearly require a tool, return respond.",
+    "If the owner seems to want a tool but key parameters are missing, return respond with a brief clarifying question.",
     "Supported tools and args:",
     "- reminder.add: duration, message",
     "- reminder.show: no args",
@@ -555,73 +533,78 @@ export function buildToolInferencePrompt(userMessage: string): string {
     "Use news.briefing for generic requests like latest headlines, what's in the news today, or brief me on the news.",
     "Use news.follow_up when the owner is clearly referring back to a story from the latest news list.",
     "Use world.lookup for questions that need public factual grounding, current events, weather, economics, or information that may be outdated in-model.",
+    "You may use the recent conversation context to recover the subject of a follow-up or correction when the latest message is elliptical.",
+    "If the owner is correcting a stale or history-focused answer and asking for current events or news, prefer execute_tool world.lookup with a repaired query grounded in the recent conversation instead of a plain conversational response.",
     "When you choose world.lookup, preserve the owner's original wording as closely as possible in args.query.",
     "Do not collapse current-events phrasing like 'right now', 'latest', 'today', or 'what is happening' into a generic topic label.",
     "Never invent unsupported tools or free-form side effects.",
+    "If you choose execute_tool, confidence must be either medium or high. Do not emit low confidence.",
     "Return strict JSON only in one of these shapes:",
-    '{"decision":"none","reason":"..."}',
-    '{"decision":"clarify","toolName":"reminder.add","reason":"...","question":"When should I remind you?"}',
-    '{"decision":"execute","toolName":"reminder.add","reason":"...","args":{"duration":"10m","message":"stretch"}}',
-    '{"decision":"execute","toolName":"calendar.show","reason":"owner is asking to see upcoming calendar items","args":{}}',
-    '{"decision":"execute","toolName":"news.briefing","reason":"owner is asking for a news briefing","args":{"query":"give me the latest headlines"}}',
-    '{"decision":"execute","toolName":"news.follow_up","reason":"owner is referring back to a story from the latest news list","args":{"query":"tell me more about the second one"}}',
-    '{"decision":"execute","toolName":"world.lookup","reason":"owner is asking for public factual or current information","args":{"query":"when is zebra mating season"}}',
-    'Examples that should usually map to calendar.show:',
+    '{"decision":"respond","reason":"...","response":"..."}',
+    '{"decision":"execute_tool","toolName":"reminder.add","reason":"...","confidence":"high","args":{"duration":"10m","message":"stretch"}}',
+    '{"decision":"execute_tool","toolName":"calendar.show","reason":"owner is asking to see upcoming calendar items","confidence":"high","args":{}}',
+    '{"decision":"execute_tool","toolName":"news.briefing","reason":"owner is asking for a news briefing","confidence":"high","args":{"query":"give me the latest headlines"}}',
+    '{"decision":"execute_tool","toolName":"news.follow_up","reason":"owner is referring back to a story from the latest news list","confidence":"high","args":{"query":"tell me more about the second one"}}',
+    '{"decision":"execute_tool","toolName":"world.lookup","reason":"owner is asking for public factual or current information","confidence":"high","args":{"query":"when is zebra mating season"}}',
+    'Examples that should usually map to execute_tool calendar.show:',
     '- "what\'s my calendar looking like this week?"',
     '- "do i have any meetings or appointments today?"',
     '- "what is on my schedule tomorrow?"',
-    'Examples that should usually map to news.briefing:',
+    'Examples that should usually map to execute_tool news.briefing:',
     '- "give me the latest headlines"',
     '- "what is in the news today?"',
     '- "brief me on the news"',
-    'Examples that should usually map to news.follow_up:',
+    'Examples that should usually map to execute_tool news.follow_up:',
     '- "tell me more about the second one"',
     '- "what about the Reuters one?"',
-    'Examples that should usually map to world.lookup:',
+    'Examples that should usually map to execute_tool world.lookup:',
     '- "when are zebras mating season?"',
     '- "what is happening in Myanmar right now?"',
     '- "what\'s the weather in Phoenix tomorrow?"',
     '- "how is Argentina\'s economy doing?"',
+    'Examples that should usually map to respond:',
+    '- "how are you?"',
+    '- "you got that one wrong"',
+    '- "thanks"',
     `Owner message: ${JSON.stringify(userMessage)}`
   ].join("\n");
 }
 
-export function parseToolDecision(payload: string): ToolDecision {
-  const parsed = JSON.parse(extractJsonObject(payload)) as Partial<ToolDecision>;
-  if (parsed.decision === "none" && typeof parsed.reason === "string") {
-    return { decision: "none", reason: parsed.reason };
-  }
-
+export function parseToolDecision(payload: string): ConversationalIntentDecision {
+  const parsed = JSON.parse(extractJsonObject(payload)) as Partial<ConversationalIntentDecision> & {
+    confidence?: unknown;
+  };
   if (
-    parsed.decision === "clarify" &&
-    isToolName(parsed.toolName) &&
+    parsed.decision === "respond" &&
     typeof parsed.reason === "string" &&
-    typeof parsed.question === "string"
+    typeof parsed.response === "string" &&
+    parsed.response.trim().length > 0
   ) {
     return {
-      decision: "clarify",
-      toolName: parsed.toolName,
+      decision: "respond",
       reason: parsed.reason,
-      question: parsed.question
+      response: parsed.response.trim()
     };
   }
 
   if (
-    parsed.decision === "execute" &&
+    parsed.decision === "execute_tool" &&
     isToolName(parsed.toolName) &&
     typeof parsed.reason === "string" &&
+    (parsed.confidence === "medium" || parsed.confidence === "high") &&
     parsed.args &&
     typeof parsed.args === "object"
   ) {
     return {
-      decision: "execute",
+      decision: "execute_tool",
       toolName: parsed.toolName,
       reason: parsed.reason,
+      confidence: parsed.confidence,
       args: parsed.args as Record<string, string | number>
     };
   }
 
-  throw new Error("Tool inference returned an invalid response");
+  throw new Error("Conversational intent inference returned an invalid response");
 }
 
 export async function executeToolDecision(params: {
@@ -843,48 +826,6 @@ function extractJsonObject(payload: string): string {
   }
 
   throw new Error("Tool inference returned non-JSON output");
-}
-
-function looksLikeCalendarShowIntent(normalized: string): boolean {
-  if (
-    /(?:what(?:'s| is) my calendar(?: looking like)?|show my calendar|check my calendar)/.test(normalized) ||
-    /(?:what(?:'s| is) on my schedule|show my schedule|check my schedule)/.test(normalized)
-  ) {
-    return true;
-  }
-
-  if (
-    /do i have/.test(normalized) &&
-    /\b(meeting|meetings|appointment|appointments|event|events)\b/.test(normalized)
-  ) {
-    return true;
-  }
-
-  if (
-    /\b(calendar|schedule)\b/.test(normalized) &&
-    /\b(today|tomorrow|tonight|this week|this afternoon|this morning|upcoming|coming up)\b/.test(normalized)
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-function looksLikeNewsBriefingIntent(normalized: string): boolean {
-  return (
-    /\b(latest headlines|top headlines|headline|headlines|top news|news today|today('?s)? news)\b/.test(normalized) ||
-    /\bwhat('?s| is) in the news\b/.test(normalized) ||
-    /\bbrief me on the news\b/.test(normalized)
-  );
-}
-
-function looksLikeNewsFollowUpIntent(normalized: string): boolean {
-  return (
-    ((/\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\b/.test(normalized) &&
-      /\b(one|story|headline|article)\b/.test(normalized)) ||
-      (/\b(reuters|ap|cnn|bbc|fox|guardian|nyt|new york times)\b/.test(normalized) &&
-        /\b(one|story|headline|article)\b/.test(normalized)))
-  );
 }
 
 function normalizeUserMessage(userMessage: string): string {

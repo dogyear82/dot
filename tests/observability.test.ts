@@ -68,8 +68,8 @@ function inboundEvent(): InboundMessageReceivedEvent {
         displayName: "tan",
         actorRole: "owner"
       },
-      content: "!settings show",
-      addressedContent: "!settings show",
+      content: "hello there",
+      addressedContent: "hello there",
       isDirectMessage: false,
       mentionedBot: true,
       replyRoute: {
@@ -108,7 +108,11 @@ test("observability exports metrics and spans for a canonical message-pipeline f
       return { route: "local", powerStatus: "standby", reply: "chat reply" };
     },
     async inferToolDecision() {
-      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+      return {
+        route: "local",
+        powerStatus: "standby",
+        decision: { decision: "respond", reason: "not needed", response: "chat reply" }
+      };
     },
     getPowerStatus() {
       return "standby";
@@ -143,6 +147,7 @@ test("observability exports metrics and spans for a canonical message-pipeline f
     assert.match(metricsBody, /dot_inbound_messages_total/);
     assert.match(metricsBody, /dot_message_pipeline_duration_seconds/);
     assert.match(metricsBody, /dot_eventbus_events_published_total/);
+    assert.match(metricsBody, /dot_tool_executions_total\{[^}]*tool_name="respond"[^}]*status="executed"/);
 
     const spans = spanExporter.getFinishedSpans();
     assert(spans.some((span) => span.name === "eventbus.publish"));

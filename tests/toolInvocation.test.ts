@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { initializePersistence } from "../src/persistence.js";
-import { executeToolDecision, inferDeterministicToolDecision, parseExplicitToolDecision, parseToolDecision } from "../src/toolInvocation.js";
+import { executeToolDecision, parseExplicitToolDecision, parseToolDecision } from "../src/toolInvocation.js";
 
 function createPersistence() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-tool-invoke-"));
@@ -21,55 +21,28 @@ function createPersistence() {
   };
 }
 
-test("parseToolDecision accepts execute and clarify responses", () => {
-  assert.deepEqual(parseToolDecision('{"decision":"none","reason":"just chatting"}'), {
-    decision: "none",
-    reason: "just chatting"
+test("parseToolDecision accepts respond and execute_tool responses", () => {
+  assert.deepEqual(parseToolDecision('{"decision":"respond","reason":"just chatting","response":"Hey there."}'), {
+    decision: "respond",
+    reason: "just chatting",
+    response: "Hey there."
   });
 
   assert.deepEqual(
-    parseToolDecision('{"decision":"clarify","toolName":"reminder.add","reason":"missing duration","question":"When should I remind you?"}'),
+    parseToolDecision(
+      '{"decision":"execute_tool","toolName":"reminder.add","reason":"clear reminder intent","confidence":"high","args":{"duration":"10m","message":"stretch"}}'
+    ),
     {
-      decision: "clarify",
+      decision: "execute_tool",
       toolName: "reminder.add",
-      reason: "missing duration",
-      question: "When should I remind you?"
+      reason: "clear reminder intent",
+      confidence: "high",
+      args: {
+        duration: "10m",
+        message: "stretch"
+      }
     }
   );
-});
-
-test("inferDeterministicToolDecision catches obvious calendar-view requests", () => {
-  assert.deepEqual(inferDeterministicToolDecision("what's my calendar looking like this week?"), {
-    decision: "execute",
-    toolName: "calendar.show",
-    reason: "clear calendar-view intent from deterministic phrase matching",
-    args: {}
-  });
-
-  assert.deepEqual(inferDeterministicToolDecision("Do I have any meetings or appointments today?"), {
-    decision: "execute",
-    toolName: "calendar.show",
-    reason: "clear calendar-view intent from deterministic phrase matching",
-    args: {}
-  });
-
-  assert.equal(inferDeterministicToolDecision("how's your day going?"), null);
-  assert.deepEqual(inferDeterministicToolDecision("give me the latest headlines"), {
-    decision: "execute",
-    toolName: "news.briefing",
-    reason: "clear news briefing intent from deterministic phrase matching",
-    args: {
-      query: "give me the latest headlines"
-    }
-  });
-  assert.deepEqual(inferDeterministicToolDecision("tell me more about the second one"), {
-    decision: "execute",
-    toolName: "news.follow_up",
-    reason: "clear follow-up reference to a previously listed news story",
-    args: {
-      query: "tell me more about the second one"
-    }
-  });
 });
 
 test("parseExplicitToolDecision turns incomplete tool commands into clarification prompts", () => {
