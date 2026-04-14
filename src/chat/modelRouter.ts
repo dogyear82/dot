@@ -65,12 +65,12 @@ export interface LlmService {
   inferToolDecision(
     userMessage: string,
     recentConversation?: ConversationTurnRecord[]
-  ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision }>;
+  ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string }>;
   resolvePendingToolDecision?(params: {
     userMessage: string;
     session: PendingConversationalToolSessionRecord;
     recentConversation?: ConversationTurnRecord[];
-  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision }>;
+  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string }>;
   getPowerStatus(route?: LlmRoute): LlmPowerStatus;
 }
 
@@ -255,11 +255,17 @@ export function createLlmService(params: {
         mode: getLlmMode(params.settings),
         providers: intentProviders,
         operation: "tool.infer",
-        invoke: async (provider) => parseToolDecision(await provider.generate(messages)),
+        invoke: async (provider) => {
+          const rawModelOutput = await provider.generate(messages);
+          return {
+            rawModelOutput,
+            decision: parseToolDecision(rawModelOutput)
+          };
+        },
         failurePrefix: "No LLM provider could infer a tool decision."
       });
 
-      return { route, powerStatus: getPowerStatus(route), decision: reply };
+      return { route, powerStatus: getPowerStatus(route), decision: reply.decision, rawModelOutput: reply.rawModelOutput };
     },
     async resolvePendingToolDecision({ userMessage, session, recentConversation }) {
       const messages = buildPendingToolResolutionMessages({
@@ -274,11 +280,17 @@ export function createLlmService(params: {
         mode: getLlmMode(params.settings),
         providers: intentProviders,
         operation: "tool.resume",
-        invoke: async (provider) => parseToolDecision(await provider.generate(messages)),
+        invoke: async (provider) => {
+          const rawModelOutput = await provider.generate(messages);
+          return {
+            rawModelOutput,
+            decision: parseToolDecision(rawModelOutput)
+          };
+        },
         failurePrefix: "No LLM provider could resolve a pending tool clarification."
       });
 
-      return { route, powerStatus: getPowerStatus(route), decision: reply };
+      return { route, powerStatus: getPowerStatus(route), decision: reply.decision, rawModelOutput: reply.rawModelOutput };
     },
     getPowerStatus
   };

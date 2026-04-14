@@ -378,6 +378,22 @@ export function registerMessagePipeline(params: {
                           })
                         : await chatService.inferToolDecision(content, recentConversation);
 
+                  if ("rawModelOutput" in inferred && inferred.rawModelOutput) {
+                    logger.info(
+                      {
+                        messageId: event.payload.messageId,
+                        correlationId: event.correlation.correlationId,
+                        conversationId,
+                        stage: pendingToolSession ? "tool.resume" : "tool.infer",
+                        provider: inferred.route,
+                        inputUserMessage: content,
+                        rawModelOutput: inferred.rawModelOutput,
+                        parsedDecision: inferred.decision
+                      },
+                      "Intent classification debug trace"
+                    );
+                  }
+
                   if (inferred.decision.decision === "respond") {
                     if (pendingToolSession) {
                       persistence.clearPendingConversationalToolSession(conversationId);
