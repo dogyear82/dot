@@ -181,7 +181,7 @@ test("llm service treats invalid inference output as a hard failure in normal mo
         "1minai",
         "hosted",
         true,
-        async () => '{"decision":"none","reason":"not enough confidence for a tool"}'
+        async () => '{"decision":"respond","reason":"not enough confidence for a tool","response":"Hey there."}'
       )
     ]
   });
@@ -189,7 +189,11 @@ test("llm service treats invalid inference output as a hard failure in normal mo
   const result = await service.inferToolDecision("hello there");
   assert.equal(result.route, "hosted");
   assert.equal(result.powerStatus, "engaged");
-  assert.deepEqual(result.decision, { decision: "none", reason: "not enough confidence for a tool" });
+  assert.deepEqual(result.decision, {
+    decision: "respond",
+    reason: "not enough confidence for a tool",
+    response: "Hey there."
+  });
 });
 
 test("llm service uses hosted as a first-class route in power mode", async () => {
@@ -258,6 +262,55 @@ test("llm service includes recent local conversation turns before the current us
   ]);
 });
 
+test("llm intent classification includes recent conversation so repairs can recover topic context", async () => {
+  const store = createStore();
+  const capturedMessages: ChatMessage[][] = [];
+  const recentConversation: ConversationTurnRecord[] = [
+    {
+      id: 1,
+      conversationId: "channel-1",
+      role: "user",
+      participantActorId: "owner-1",
+      content: "what's going on in ukraine right now?",
+      sourceMessageId: "m1",
+      createdAt: "2026-04-09T10:00:00.000Z"
+    },
+    {
+      id: 2,
+      conversationId: "channel-1",
+      role: "assistant",
+      participantActorId: "owner-1",
+      content: "According to Wikipedia, Ukraine is a country in Eastern Europe.",
+      sourceMessageId: "m2",
+      createdAt: "2026-04-09T10:00:05.000Z"
+    }
+  ];
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider(
+        "ollama",
+        "local",
+        true,
+        async (messages) => {
+          capturedMessages.push(messages);
+          return '{"decision":"respond","reason":"correction acknowledged","response":"Let me take another look."}';
+        }
+      )
+    ]
+  });
+
+  await service.inferToolDecision("i'm asking for current events, not history. wikipedia is not news", recentConversation);
+
+  assert.deepEqual(capturedMessages[0]?.slice(1, 3), [
+    { role: "user", content: "what's going on in ukraine right now?" },
+    { role: "assistant", content: "According to Wikipedia, Ukraine is a country in Eastern Europe." }
+  ]);
+  assert.match(capturedMessages[0]?.[3]?.content ?? "", /current events or news, prefer execute_tool world\.lookup/i);
+});
+
 test("llm service can infer a structured tool decision", async () => {
   const store = createStore();
   store.set("llm.mode", "normal");
@@ -271,7 +324,7 @@ test("llm service can infer a structured tool decision", async () => {
         "local",
         true,
         async () =>
-          '{"decision":"execute","toolName":"reminder.add","reason":"clear reminder intent","args":{"duration":"10m","message":"stretch"}}'
+          '{"decision":"execute_tool","toolName":"reminder.add","reason":"clear reminder intent","confidence":"high","args":{"duration":"10m","message":"stretch"}}'
       )
     ]
   });
@@ -279,15 +332,15 @@ test("llm service can infer a structured tool decision", async () => {
   const result = await service.inferToolDecision("remind me in ten minutes to stretch");
   assert.equal(result.route, "local");
   assert.equal(result.powerStatus, "standby");
-  assert.equal(result.decision.decision, "execute");
-  if (result.decision.decision !== "execute") {
+  assert.equal(result.decision.decision, "execute_tool");
+  if (result.decision.decision !== "execute_tool") {
     throw new Error("expected execute tool decision");
   }
   assert.equal(result.decision.toolName, "reminder.add");
   assert.deepEqual(result.decision.args, { duration: "10m", message: "stretch" });
 });
 
-test("llm service uses deterministic calendar inference for obvious schedule questions", async () => {
+test("llm service routes obvious schedule questions through the model intent classifier", async () => {
   const store = createStore();
   store.set("llm.mode", "normal");
 
@@ -295,19 +348,24 @@ test("llm service uses deterministic calendar inference for obvious schedule que
     config: createConfig(),
     settings: store,
     providers: [
-      new FakeProvider("ollama", "local", true, async () => {
-        throw new Error("model should not be called for deterministic calendar intent");
-      })
+      new FakeProvider(
+        "ollama",
+        "local",
+        true,
+        async () =>
+          '{"decision":"execute_tool","toolName":"calendar.show","reason":"owner is asking to see upcoming calendar items","confidence":"high","args":{}}'
+      )
     ]
   });
 
   const result = await service.inferToolDecision("what's my calendar looking like this week?");
-  assert.equal(result.route, "deterministic");
+  assert.equal(result.route, "local");
   assert.equal(result.powerStatus, "standby");
   assert.deepEqual(result.decision, {
-    decision: "execute",
+    decision: "execute_tool",
     toolName: "calendar.show",
-    reason: "clear calendar-view intent from deterministic phrase matching",
+    reason: "owner is asking to see upcoming calendar items",
+    confidence: "high",
     args: {}
   });
 });

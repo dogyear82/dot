@@ -15,7 +15,7 @@ import { handlePersonalityCommand, isPersonalityCommand } from "./personality.js
 import { createSpanAttributesForEvent, recordToolExecution, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
 import { isReminderCommand } from "./reminders.js";
-import { executeToolDecision, parseExplicitToolDecision, type ToolDecision } from "./toolInvocation.js";
+import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
 import type { IncomingMessage, WorldLookupSourceName } from "./types.js";
 import { evaluateAddressedness } from "./discord/addressing.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
@@ -176,30 +176,6 @@ export function registerMessagePipeline(params: {
                 }
               : undefined;
 
-            const normalizeInferredExecuteDecision = (decision: Extract<ToolDecision, { decision: "execute" }>) => {
-              if (
-                decision.toolName !== "world.lookup" &&
-                decision.toolName !== "news.briefing" &&
-                decision.toolName !== "news.follow_up"
-              ) {
-                return decision;
-              }
-
-              const conversationId = event.correlation.conversationId ?? "";
-              const retryQuery =
-                decision.toolName === "world.lookup" ? resolveCurrentEventsRetryQuery(content, conversationId, persistence) : null;
-
-              return {
-                ...decision,
-                args: {
-                  ...decision.args,
-                  // Preserve the full owner request so bucket selection keeps temporal/context cues like "right now".
-                  // If the owner is correcting a stale/history answer in an active topical-news session, retry the saved topic instead.
-                  query: retryQuery ?? content
-                }
-              };
-            };
-
             if (accessDecision.canUsePrivilegedFeatures) {
               if (!persistence.settings.hasCompletedOnboarding()) {
                 const response = content
@@ -331,28 +307,36 @@ export function registerMessagePipeline(params: {
 
               try {
                 try {
-                  const inferred = await chatService.inferToolDecision(content);
-                  if (inferred.decision.decision === "clarify") {
+                  const inferred = await chatService.inferToolDecision(
+                    content,
+                    persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT)
+                  );
+
+                  if (inferred.decision.decision === "respond") {
                     persistence.saveToolExecutionAudit({
                       messageId: event.payload.messageId,
-                      toolName: inferred.decision.toolName,
+                      toolName: "respond",
                       invocationSource: "inferred",
-                      status: "clarify",
+                      status: "executed",
                       provider: inferred.route,
-                      detail: inferred.decision.reason
+                      detail: `decision=respond; reason=${inferred.decision.reason}`
                     });
-                    recordToolExecution({ toolName: inferred.decision.toolName, status: "clarify" });
-                    pipelineOutcome = "tool_clarify";
-                    await publishReply(inferred.decision.question, inferred.route);
+                    recordToolExecution({ toolName: "respond", status: "executed" });
+                    pipelineOutcome = "owner_chat";
+                    await publishReply(inferred.decision.response, inferred.route);
                     return;
                   }
 
-                  if (inferred.decision.decision === "execute") {
-                    const normalizedDecision = normalizeInferredExecuteDecision(inferred.decision);
+                  if (inferred.decision.decision === "execute_tool") {
                     const result = await executeToolDecision({
                       calendarClient,
                       conversationId: event.correlation.conversationId ?? "",
-                      decision: normalizedDecision,
+                      decision: {
+                        decision: "execute",
+                        toolName: inferred.decision.toolName,
+                        reason: inferred.decision.reason,
+                        args: inferred.decision.args
+                      },
                       groundedAnswerService,
                       persistence,
                       worldLookupAdapters
@@ -363,7 +347,7 @@ export function registerMessagePipeline(params: {
                       invocationSource: "inferred",
                       status: result.status,
                       provider: result.route ?? inferred.route,
-                      detail: result.policyDecision?.reason ?? result.detail ?? normalizedDecision.reason
+                      detail: result.policyDecision?.reason ?? result.detail ?? inferred.decision.reason
                     });
                     recordToolExecution({ toolName: result.toolName, status: result.status });
                     logger.info(
@@ -374,27 +358,17 @@ export function registerMessagePipeline(params: {
                     await publishReply(result.reply, result.route ?? inferred.route);
                     return;
                   }
-
-                  persistence.saveToolExecutionAudit({
-                    messageId: event.payload.messageId,
-                    toolName: "none",
-                    invocationSource: "inferred",
-                    status: "skipped",
-                    provider: inferred.route,
-                    detail: inferred.decision.reason
-                  });
-                  recordToolExecution({ toolName: "none", status: "skipped" });
                 } catch (error) {
                   persistence.saveToolExecutionAudit({
                     messageId: event.payload.messageId,
-                    toolName: "inference-error",
+                    toolName: "conversation-intent",
                     invocationSource: "inferred",
                     status: "failed",
                     provider: null,
                     detail: error instanceof Error ? error.message : "unknown inference failure"
                   });
-                  recordToolExecution({ toolName: "inference-error", status: "failed" });
-                  logger.warn({ err: error, messageId: event.payload.messageId }, "Tool inference failed; falling back to chat");
+                  recordToolExecution({ toolName: "conversation-intent", status: "failed" });
+                  logger.warn({ err: error, messageId: event.payload.messageId }, "Conversational intent classification failed; falling back to chat");
                 }
 
                 saveUserConversationTurn();
@@ -477,32 +451,6 @@ export function registerMessagePipeline(params: {
       );
     });
   });
-}
-
-function resolveCurrentEventsRetryQuery(content: string, conversationId: string, persistence: Persistence): string | null {
-  if (!conversationId || !looksLikeCurrentEventsCorrection(content)) {
-    return null;
-  }
-
-  const latestSession = persistence.getLatestNewsBrowseSession(conversationId);
-  if (!latestSession || latestSession.kind !== "topic_lookup") {
-    return null;
-  }
-
-  return latestSession.query;
-}
-
-function looksLikeCurrentEventsCorrection(content: string): boolean {
-  const normalized = content
-    .trim()
-    .toLowerCase()
-    .replace(/[’‘]/g, "'")
-    .replace(/\s+/g, " ");
-
-  const asksForCurrentNews = /\b(current events|current event|news|latest|right now|recent)\b/.test(normalized);
-  const rejectsReferenceAnswer = /\b(wikipedia|history|historical|not history|not news)\b/.test(normalized);
-
-  return asksForCurrentNews && rejectsReferenceAnswer;
 }
 
 function mapInboundEventToIncomingMessage(event: InboundMessageReceivedEvent): IncomingMessage {

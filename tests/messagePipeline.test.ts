@@ -95,7 +95,11 @@ test("message pipeline turns explicit owner commands into outbound delivery requ
       return { route: "local", powerStatus: "standby", reply: "chat reply" };
     },
     async inferToolDecision() {
-      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+      return {
+        route: "local",
+        powerStatus: "standby",
+        decision: { decision: "respond", reason: "not needed", response: "chat reply" }
+      };
     },
     getPowerStatus() {
       return "standby";
@@ -318,9 +322,10 @@ test("message pipeline executes inferred world.lookup and records grounded audit
         route: "local",
         powerStatus: "standby",
         decision: {
-          decision: "execute",
+          decision: "execute_tool",
           toolName: "world.lookup",
           reason: "owner asked for public factual grounding",
+          confidence: "high",
           args: {
             query: "When is zebra mating season?"
           }
@@ -416,11 +421,12 @@ test("message pipeline preserves the full owner wording for inferred world.looku
         route: "hosted",
         powerStatus: "engaged",
         decision: {
-          decision: "execute",
+          decision: "execute_tool",
           toolName: "world.lookup",
           reason: "owner asked for current public information",
+          confidence: "high",
           args: {
-            query: "Myanmar"
+            query: "tell me what the situation is like in Myanmar right now"
           }
         }
       };
@@ -562,11 +568,12 @@ test("message pipeline saves topical current-events lookups for later follow-up 
           route: "hosted",
           powerStatus: "engaged",
           decision: {
-            decision: "execute",
+            decision: "execute_tool",
             toolName: "world.lookup",
             reason: "owner wants recent topic news",
+            confidence: "high",
             args: {
-              query: "OpenAI"
+              query: "what's the latest on OpenAI?"
             }
           }
         };
@@ -576,9 +583,10 @@ test("message pipeline saves topical current-events lookups for later follow-up 
         route: "local",
         powerStatus: "standby",
         decision: {
-          decision: "execute",
+          decision: "execute_tool",
           toolName: "news.follow_up",
           reason: "owner is following up on a saved topic story",
+          confidence: "high",
           args: {
             query: "tell me more about the second one"
           }
@@ -813,7 +821,11 @@ test("message pipeline preserves transport and conversation metadata in access a
       return { route: "local", powerStatus: "standby", reply: "chat reply" };
     },
     async inferToolDecision() {
-      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+      return {
+        route: "local",
+        powerStatus: "standby",
+        decision: { decision: "respond", reason: "not needed", response: "chat reply" }
+      };
     },
     getPowerStatus() {
       return "standby";
@@ -865,7 +877,11 @@ test("message pipeline appends an engaged power indicator when chat uses the hos
       return { route: "hosted", powerStatus: "engaged", reply: "hosted chat reply" };
     },
     async inferToolDecision() {
-      return { route: "local", powerStatus: "standby", decision: { decision: "none", reason: "not needed" } };
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        decision: { decision: "respond", reason: "not needed", response: "hosted chat reply" }
+      };
     },
     getPowerStatus(route = "none") {
       return route === "hosted" ? "engaged" : "standby";
@@ -917,6 +933,171 @@ test("message pipeline appends an engaged power indicator when chat uses the hos
     assert.equal(outbound[0]?.payload.recordConversationTurn, true);
     assert.match(outbound[0]?.payload.content ?? "", /hosted chat reply/);
     assert.match(outbound[0]?.payload.content ?? "", /\[mode: power\]/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline audits respond decisions without triggering tool execution side effects", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("respond decisions should not fall back to normal chat");
+    },
+    async inferToolDecision() {
+      return {
+        route: "local",
+        powerStatus: "standby",
+        decision: {
+          decision: "respond",
+          reason: "plain conversational chat",
+          response: "Well hey there, deary."
+        }
+      };
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-respond-audit",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "hey dot",
+          addressedContent: "hey dot",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-respond-audit"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /Well hey there, deary\./);
+
+    const audit = persistence.db
+      .prepare("SELECT tool_name, status, provider, detail FROM tool_execution_audit WHERE message_id = ?")
+      .get("msg-respond-audit") as { tool_name: string; status: string; provider: string | null; detail: string | null };
+
+    assert.equal(audit.tool_name, "respond");
+    assert.equal(audit.status, "executed");
+    assert.equal(audit.provider, "local");
+    assert.match(audit.detail ?? "", /decision=respond/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline audits conversational intent failures before falling back to normal chat", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        reply: "fallback chat reply"
+      };
+    },
+    async inferToolDecision() {
+      throw new Error("bad classifier output");
+    },
+    getPowerStatus(route = "none") {
+      return route === "hosted" ? "engaged" : "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-intent-failure",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "tell me something interesting",
+          addressedContent: "tell me something interesting",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-intent-failure"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /fallback chat reply/);
+
+    const audit = persistence.db
+      .prepare("SELECT tool_name, status, detail FROM tool_execution_audit WHERE message_id = ?")
+      .get("msg-intent-failure") as { tool_name: string; status: string; detail: string | null };
+
+    assert.equal(audit.tool_name, "conversation-intent");
+    assert.equal(audit.status, "failed");
+    assert.match(audit.detail ?? "", /bad classifier output/);
   } finally {
     unsubscribe();
     cleanup();
@@ -1313,9 +1494,10 @@ test("message pipeline executes inferred news.briefing and records briefing audi
         route: "local",
         powerStatus: "standby",
         decision: {
-          decision: "execute",
+          decision: "execute_tool",
           toolName: "news.briefing",
           reason: "owner asked for a briefing",
+          confidence: "high",
           args: {
             query: "give me the latest headlines"
           }
@@ -1459,9 +1641,10 @@ test("message pipeline resolves an inferred news follow-up against the latest sa
           route: "local",
           powerStatus: "standby",
           decision: {
-            decision: "execute",
+            decision: "execute_tool",
             toolName: "news.briefing",
             reason: "owner asked for a briefing",
+            confidence: "high",
             args: {
               query: userMessage
             }
@@ -1473,9 +1656,10 @@ test("message pipeline resolves an inferred news follow-up against the latest sa
         route: "local",
         powerStatus: "standby",
         decision: {
-          decision: "execute",
+          decision: "execute_tool",
           toolName: "news.follow_up",
           reason: "owner is referring back to a story from the latest news list",
+          confidence: "high",
           args: {
             query: userMessage
           }

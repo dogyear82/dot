@@ -11,7 +11,7 @@ import type {
   WorldLookupSourceFailure,
   WorldLookupSourceName
 } from "../types.js";
-import { buildToolInferencePrompt, inferDeterministicToolDecision, parseToolDecision, type ToolDecision } from "../toolInvocation.js";
+import { buildToolInferencePrompt, parseToolDecision, type ConversationalIntentDecision } from "../toolInvocation.js";
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
 import { OllamaChatProvider, OneMinAiChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
 
@@ -49,7 +49,10 @@ export interface LlmService {
     articles?: WorldLookupArticleRecord[];
     recentConversation?: ConversationTurnRecord[];
   }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
-  inferToolDecision(userMessage: string): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ToolDecision }>;
+  inferToolDecision(
+    userMessage: string,
+    recentConversation?: ConversationTurnRecord[]
+  ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision }>;
   getPowerStatus(route?: LlmRoute): LlmPowerStatus;
 }
 
@@ -184,26 +187,14 @@ export function createLlmService(params: {
         reply: appendGroundedLinks(reply, evidence)
       };
     },
-    async inferToolDecision(userMessage) {
-      const deterministicDecision = inferDeterministicToolDecision(userMessage);
-      if (deterministicDecision) {
-        return {
-          route: "deterministic",
-          powerStatus: getPowerStatus("deterministic"),
-          decision: deterministicDecision
-        };
-      }
-
-      const messages: ChatMessage[] = [
-        {
-          role: "system",
-          content: "Return only strict JSON. Do not add markdown fences."
-        },
-        {
-          role: "user",
-          content: buildToolInferencePrompt(userMessage)
-        }
-      ];
+    async inferToolDecision(userMessage, recentConversation) {
+      const messages = buildConversationalIntentMessages({
+        userMessage,
+        recentConversation,
+        mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
+        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
+        settings: params.settings
+      });
       const { route, reply } = await executeProviderRequest({
         mode: getLlmMode(params.settings),
         providers,
@@ -328,6 +319,33 @@ function buildMessages(params: {
     {
       role: "user",
       content: params.userMessage
+    }
+  ];
+}
+
+function buildConversationalIntentMessages(params: {
+  userMessage: string;
+  recentConversation?: ConversationTurnRecord[];
+  mode: PersonaMode;
+  balance: PersonaBalance;
+  settings: SettingsStore;
+}): ChatMessage[] {
+  return [
+    {
+      role: "system",
+      content: `${buildSystemPrompt({
+        mode: params.mode,
+        balance: params.balance,
+        settings: params.settings
+      })} ${buildCurrentDateTimeInstruction()} Return only strict JSON with either a respond or execute_tool decision. If you choose respond, the response field must be the final user-facing reply in Dot's normal voice. Do not add markdown fences.`
+    },
+    ...(params.recentConversation ?? []).map((turn) => ({
+      role: turn.role,
+      content: turn.content
+    })),
+    {
+      role: "user",
+      content: buildToolInferencePrompt(params.userMessage)
     }
   ];
 }
