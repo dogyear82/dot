@@ -240,7 +240,12 @@ function handleReminderAdd(persistence: Persistence, args: string[], now: Date):
 }
 
 export function parseDuration(input: string): number | null {
-  const match = input.match(/^(\d+)(s|m|h|d)$/i);
+  const normalized = normalizeDurationInput(input);
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/^(\d+)(s|m|h|d)$/i);
 
   if (!match) {
     return null;
@@ -265,6 +270,46 @@ export function parseDuration(input: string): number | null {
   }
 
   return value * unitMs;
+}
+
+export function normalizeDurationInput(input: string): string | null {
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+
+  const compactMatch = trimmed.match(/^(\d+)\s*(s|m|h|d)$/i);
+  if (compactMatch) {
+    return `${compactMatch[1]}${compactMatch[2]?.toLowerCase()}`;
+  }
+
+  const phraseMatch = trimmed.match(/^in\s+(\d+)\s*(seconds?|minutes?|hours?|days?)$/i) ?? trimmed.match(/^(\d+)\s*(seconds?|minutes?|hours?|days?)$/i);
+  if (!phraseMatch) {
+    return null;
+  }
+
+  const value = phraseMatch[1];
+  const unit = phraseMatch[2]?.toLowerCase();
+  if (!value || !unit) {
+    return null;
+  }
+
+  switch (unit) {
+    case "second":
+    case "seconds":
+      return `${value}s`;
+    case "minute":
+    case "minutes":
+      return `${value}m`;
+    case "hour":
+    case "hours":
+      return `${value}h`;
+    case "day":
+    case "days":
+      return `${value}d`;
+    default:
+      return null;
+  }
 }
 
 function normalizeReminderCommand(content: string) {

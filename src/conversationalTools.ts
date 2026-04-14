@@ -1,7 +1,7 @@
 import { SpanKind } from "@opentelemetry/api";
 
 import type { LlmPowerStatus, LlmRoute } from "./chat/modelRouter.js";
-import { handleReminderCommand } from "./reminders.js";
+import { handleReminderCommand, normalizeDurationInput } from "./reminders.js";
 import { withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
 import type {
@@ -91,10 +91,14 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
   "reminder.add": {
     toolName: "reminder.add",
     async execute(call, context) {
-      const duration = getOptionalStringArg(call.args, "duration");
+      const rawDuration =
+        getOptionalStringArg(call.args, "duration") ??
+        getOptionalStringArg(call.args, "time") ??
+        getOptionalStringArg(call.args, "when");
       const message = getOptionalStringArg(call.args, "message");
       const confirmed = getOptionalAffirmativeArg(call.args, "confirmed");
-      if (!duration && !message) {
+      const normalizedDuration = rawDuration ? normalizeDurationInput(rawDuration) : null;
+      if (!rawDuration && !message) {
         return {
           toolName: "reminder.add",
           status: "clarify",
@@ -105,7 +109,7 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
           detail: "presentation=final_text; missing=duration,message"
         };
       }
-      if (!duration) {
+      if (!rawDuration) {
         return {
           toolName: "reminder.add",
           status: "clarify",
@@ -114,6 +118,17 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
             text: "What duration from now should I set the reminder for? (e.g., 'in 15 hours' or give me the time offset)"
           },
           detail: "presentation=final_text; missing=duration"
+        };
+      }
+      if (!normalizedDuration) {
+        return {
+          toolName: "reminder.add",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "I need a duration from now for reminders right now, like `10 seconds`, `15 minutes`, `2 hours`, or `1 day`."
+          },
+          detail: "presentation=final_text; unsupported_duration_format=yes"
         };
       }
       if (!message) {
@@ -133,7 +148,7 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
           status: "requires_confirmation",
           presentation: "final_text",
           payload: {
-            text: `I've got a reminder to ${message} ${formatReminderTimeForConfirmation(duration)}. Want me to save it?`
+            text: `I've got a reminder to ${message} ${formatReminderTimeForConfirmation(rawDuration)}. Want me to save it?`
           },
           detail: "presentation=final_text; awaiting_confirmation=yes"
         };
@@ -143,7 +158,7 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
         status: "success",
         presentation: "final_text",
         payload: {
-          text: handleReminderCommand(context.persistence, `!reminder add ${duration} ${message}`)
+          text: handleReminderCommand(context.persistence, `!reminder add ${normalizedDuration} ${message}`)
         },
         detail: "presentation=final_text"
       };

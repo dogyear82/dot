@@ -183,10 +183,10 @@ test("conversational reminder tool requires confirmation before saving", async (
       call: {
         toolName: "reminder.add",
         args: {
-          duration: "tomorrow at 12pm",
+          duration: "15 hours",
           message: "stretch"
         },
-        userMessage: "set a reminder for tomorrow at 12pm to stretch"
+        userMessage: "set a reminder in 15 hours to stretch"
       },
       context: createContext({ persistence })
     });
@@ -197,6 +197,52 @@ test("conversational reminder tool requires confirmation before saving", async (
 
     const reminders = persistence.listPendingReminders();
     assert.equal(reminders.length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational reminder tool accepts time aliases and natural duration phrases", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const confirmation = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          time: "14 hours",
+          message: "stretch"
+        },
+        userMessage: "set a reminder in 14 hours to stretch"
+      },
+      context: createContext({ persistence })
+    });
+
+    assert.equal(confirmation.status, "requires_confirmation");
+    assert.match(String(confirmation.payload.text), /14 hours/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational reminder tool rejects unsupported absolute datetime phrasing for now", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const clarification = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          time: "9am tomorrow",
+          message: "stretch"
+        },
+        userMessage: "set a reminder for 9am tomorrow to stretch"
+      },
+      context: createContext({ persistence })
+    });
+
+    assert.equal(clarification.status, "clarify");
+    assert.match(String(clarification.payload.text), /duration from now/i);
   } finally {
     cleanup();
   }
