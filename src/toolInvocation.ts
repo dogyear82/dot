@@ -295,6 +295,9 @@ export function buildToolInferencePrompt(userMessage: string): string {
     "If the owner is asking for an available tool, return execute_tool even when some required arguments are missing.",
     "For execute_tool decisions, include only the arguments you can confidently infer and leave missing fields out of args. The tool itself will ask for clarification or start intake if needed.",
     "Use respond only when the owner is simply chatting, correcting Dot, or asking something that does not actually request an available tool.",
+    "Respond is a non-operational conversation path only.",
+    "If you choose respond, do not claim or imply that Dot sent, set, scheduled, created, updated, granted, deleted, changed, or otherwise performed a real side-effecting action.",
+    "Any reply that says Dot already performed a real action must come from a real execute_tool path instead of respond.",
     "For reminder.add and calendar.remind, do not invent missing scheduling details, indices, or reminder text. Leave missing fields out of args.",
     "When the owner gives a specific reminder date/time clearly enough, prefer args.dueAt as an ISO 8601 timestamp over a duration.",
     "Use args.dueAt only when you can confidently ground it from the owner's words and the provided current date/time reference.",
@@ -351,6 +354,9 @@ export function buildToolInferencePrompt(userMessage: string): string {
     '- "how are you?"',
     '- "you got that one wrong"',
     '- "thanks"',
+    'Allowed respond example: {"decision":"respond","reason":"owner is asking a casual question","response":"Well hey there, cupcake. I\'m right here."}',
+    'Disallowed respond example: {"decision":"respond","reason":"...","response":"I set that reminder for tomorrow."}',
+    'Disallowed respond example: {"decision":"respond","reason":"...","response":"I sent the email and granted access."}',
     `Owner message: ${JSON.stringify(userMessage)}`
   ].join("\n");
 }
@@ -369,6 +375,9 @@ export function buildPendingToolResolutionPrompt(params: {
     "If the owner is continuing the pending tool flow, return execute_tool for the SAME tool with merged or newly supplied args.",
     "Do not switch to a different tool unless the owner clearly abandons the pending flow and asks for something else entirely.",
     "If the owner is cancelling, abandoning, or changing the subject, return respond with a short final reply in Dot's normal voice.",
+    "Respond is a non-operational conversation path only.",
+    "If you choose respond, do not claim or imply that Dot already performed a real side-effecting action.",
+    "Any reply that says Dot sent, set, scheduled, created, updated, granted, deleted, changed, or otherwise completed a real action must come from execute_tool, not respond.",
     "If the owner supplies only one missing field, return only that field in args. Existing args will be merged outside the model.",
     "If the pending step is requires_confirmation and the owner confirms, return execute_tool for the same tool with args containing only {\"confirmed\":\"yes\"}.",
     "If the pending step is requires_confirmation and the owner declines or cancels, return respond with a short acknowledgment instead of executing the tool.",

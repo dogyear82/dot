@@ -5,7 +5,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { initializePersistence } from "../src/persistence.js";
-import { buildToolInferencePrompt, executeToolDecision, parseExplicitToolDecision, parseToolDecision } from "../src/toolInvocation.js";
+import {
+  buildPendingToolResolutionPrompt,
+  buildToolInferencePrompt,
+  executeToolDecision,
+  parseExplicitToolDecision,
+  parseToolDecision
+} from "../src/toolInvocation.js";
 
 function createPersistence() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-tool-invoke-"));
@@ -67,6 +73,9 @@ test("buildToolInferencePrompt documents dueAt for specific reminder times", () 
   assert.match(prompt, /prefer args\.dueAt as an ISO 8601 timestamp/i);
   assert.match(prompt, /If the owner is asking for an available tool, return execute_tool even when some required arguments are missing\./i);
   assert.match(prompt, /Use respond only when the owner is simply chatting, correcting Dot, or asking something that does not actually request an available tool\./i);
+  assert.match(prompt, /Respond is a non-operational conversation path only\./i);
+  assert.match(prompt, /do not claim or imply that Dot sent, set, scheduled, created, updated, granted, deleted, changed, or otherwise performed a real side-effecting action\./i);
+  assert.match(prompt, /Any reply that says Dot already performed a real action must come from a real execute_tool path instead of respond\./i);
   assert.match(prompt, /Interpret relative reminder phrases like `today`, `tomorrow`/i);
   assert.match(prompt, /"toolName":"reminder\.add".*"args":\{\}/i);
   assert.match(prompt, /"toolName":"calendar\.remind".*"args":\{\}/i);
@@ -74,6 +83,26 @@ test("buildToolInferencePrompt documents dueAt for specific reminder times", () 
   assert.match(prompt, /"dueAt":"2026-04-16T01:00:00\.000Z"/i);
   assert.match(prompt, /Examples that should usually map to execute_tool reminder\.add even when incomplete:/i);
   assert.match(prompt, /"i want another reminder set"/i);
+  assert.match(prompt, /Allowed respond example: .*I'm right here\./i);
+  assert.match(prompt, /Disallowed respond example: .*I set that reminder for tomorrow\./i);
+  assert.match(prompt, /Disallowed respond example: .*I sent the email and granted access\./i);
+});
+
+test("buildPendingToolResolutionPrompt keeps respond non-operational", () => {
+  const prompt = buildPendingToolResolutionPrompt({
+    userMessage: "never mind",
+    toolName: "reminder.add",
+    existingArgs: {
+      message: "walk the dog"
+    },
+    originalUserMessage: "set a reminder to walk the dog",
+    pendingStatus: "clarify",
+    pendingPrompt: "When should I set it?"
+  });
+
+  assert.match(prompt, /Respond is a non-operational conversation path only\./i);
+  assert.match(prompt, /do not claim or imply that Dot already performed a real side-effecting action\./i);
+  assert.match(prompt, /must come from execute_tool, not respond\./i);
 });
 
 test("parseExplicitToolDecision turns incomplete tool commands into clarification prompts", () => {
