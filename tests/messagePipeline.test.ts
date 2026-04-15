@@ -81,6 +81,24 @@ function createLogger() {
   };
 }
 
+function createCapturingLogger() {
+  const entries: Array<{ level: "info" | "warn" | "error"; payload?: unknown; message?: string }> = [];
+  return {
+    entries,
+    logger: {
+      info(payload?: unknown, message?: string) {
+        entries.push({ level: "info", payload, message });
+      },
+      warn(payload?: unknown, message?: string) {
+        entries.push({ level: "warn", payload, message });
+      },
+      error(payload?: unknown, message?: string) {
+        entries.push({ level: "error", payload, message });
+      }
+    }
+  };
+}
+
 test("message pipeline turns explicit owner commands into outbound delivery requests", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
@@ -2461,6 +2479,105 @@ test("message pipeline resolves an inferred news follow-up against the latest sa
     assert.equal(audit.tool_name, "news.follow_up");
     assert.match(audit.detail ?? "", /newsSession=resolved/);
     assert.match(audit.detail ?? "", /ordinal=2/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline logs intent debug traces even when raw model output is missing", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const capturedLogger = createCapturingLogger();
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("tool execution should not fall back to chat");
+    },
+    async inferToolDecision() {
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        promptMessages: [
+          { role: "system", content: "tool intent prompt" },
+          { role: "user", content: "@Dot remind me to stretch" }
+        ],
+        decision: {
+          decision: "execute_tool",
+          toolName: "reminder.add",
+          reason: "owner asked to create a reminder",
+          confidence: "high",
+          args: {
+            message: "stretch"
+          }
+        }
+      };
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: capturedLogger.logger as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-reminder-debug",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "@Dot remind me to stretch",
+          addressedContent: "@Dot remind me to stretch",
+          isDirectMessage: false,
+          mentionedBot: true,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-reminder-debug"
+          }
+        }
+      })
+    );
+
+    const trace = capturedLogger.entries.find((entry) => entry.message === "Intent classification debug trace");
+    assert.ok(trace);
+    assert.equal((trace.payload as { rawModelOutputPresent: boolean }).rawModelOutputPresent, false);
+    assert.equal((trace.payload as { rawModelOutput: null }).rawModelOutput, null);
+    assert.deepEqual(
+      (trace.payload as { promptMessages: Array<{ role: string; content: string }> }).promptMessages,
+      [
+        { role: "system", content: "tool intent prompt" },
+        { role: "user", content: "@Dot remind me to stretch" }
+      ]
+    );
+    assert.equal(
+      (trace.payload as { parsedDecision: { toolName: string } }).parsedDecision.toolName,
+      "reminder.add"
+    );
+    assert.equal(outbound.length, 1);
   } finally {
     unsubscribe();
     cleanup();

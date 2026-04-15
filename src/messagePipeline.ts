@@ -378,22 +378,24 @@ export function registerMessagePipeline(params: {
                           })
                         : await chatService.inferToolDecision(content, recentConversation);
 
-                  if ("rawModelOutput" in inferred && inferred.rawModelOutput) {
-                    logger.info(
-                      {
-                        messageId: event.payload.messageId,
-                        correlationId: event.correlation.correlationId,
-                        conversationId,
-                        stage: pendingToolSession ? "tool.resume" : "tool.infer",
-                        provider: inferred.route,
-                        inputUserMessage: content,
-                        promptMessages: "promptMessages" in inferred ? inferred.promptMessages : undefined,
-                        rawModelOutput: inferred.rawModelOutput,
-                        parsedDecision: inferred.decision
-                      },
-                      "Intent classification debug trace"
-                    );
-                  }
+                  logger.info(
+                    {
+                      messageId: event.payload.messageId,
+                      correlationId: event.correlation.correlationId,
+                      conversationId,
+                      stage: pendingToolSession ? "tool.resume" : "tool.infer",
+                      provider: inferred.route,
+                      inputUserMessage: content,
+                      promptMessages: "promptMessages" in inferred ? inferred.promptMessages : undefined,
+                      promptMessagesPresent:
+                        "promptMessages" in inferred && Array.isArray(inferred.promptMessages) && inferred.promptMessages.length > 0,
+                      rawModelOutput: "rawModelOutput" in inferred ? inferred.rawModelOutput ?? null : null,
+                      rawModelOutputPresent:
+                        "rawModelOutput" in inferred && typeof inferred.rawModelOutput === "string" && inferred.rawModelOutput.length > 0,
+                      parsedDecision: inferred.decision
+                    },
+                    "Intent classification debug trace"
+                  );
 
                   if (inferred.decision.decision === "respond") {
                     if (pendingToolSession) {
