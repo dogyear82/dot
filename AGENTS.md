@@ -33,10 +33,21 @@ Tests use Node’s built-in test runner with `tsx`. Add or update tests for ever
 
 Name files `*.test.ts` and keep fixtures local to the test file unless broadly reused.
 
+## Change Review Discipline
+For behavior changes, do not patch only the immediate defect site. Trace the full path from input formation through parsing, orchestration, execution, and final output or side effects before deciding on a fix.
+
+After the first implementation pass, perform an explicit upstream and downstream impact review:
+- verify how the changed value was formed upstream
+- verify how it is consumed downstream
+- identify adjacent branches or contracts the change can affect
+
+Remediate material findings from that review, then repeat the implement-review-remediate loop until no material issues remain.
+
 ## Required workflow before testing
 - Verify correct git branch
 - Restart docker containers
 - Confirm services are running
+- Always verify that rebuilt or restarted images are actually running the intended code before declaring the environment ready. Do not assume a restart picked up the latest changes; confirm the live container matches the expected branch/commit or contains the expected code path.
 
 Do not say "ready for testing" unless all steps are complete.
 

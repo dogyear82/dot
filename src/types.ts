@@ -1,3 +1,5 @@
+import type { ReminderIntakeState } from "./reminderIntake.js";
+
 export interface IncomingMessage {
   id: string;
   channelId: string;
@@ -179,6 +181,19 @@ export interface ToolExecutionAuditRecord {
   status: "executed" | "clarify" | "requires_confirmation" | "blocked" | "skipped" | "failed";
   provider: string | null;
   detail: string | null;
+}
+
+export interface PendingConversationalToolSessionRecord {
+  conversationId: string;
+  toolName: string;
+  args: Record<string, string | number>;
+  originalUserMessage: string;
+  pendingStatus: "clarify" | "requires_confirmation";
+  pendingPrompt: string;
+  sessionState?: ReminderIntakeState | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
 }
 
 export type WorldLookupQueryBucket = "reference" | "current_events" | "weather" | "economics" | "mixed";

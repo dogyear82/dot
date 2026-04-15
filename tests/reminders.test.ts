@@ -37,7 +37,11 @@ test("parseDuration accepts compact duration strings", () => {
   assert.equal(parseDuration("10m"), 600_000);
   assert.equal(parseDuration("2h"), 7_200_000);
   assert.equal(parseDuration("1d"), 86_400_000);
+  assert.equal(parseDuration("10 seconds"), 10_000);
+  assert.equal(parseDuration("15 hours"), 54_000_000);
+  assert.equal(parseDuration("in 2 days"), 172_800_000);
   assert.equal(parseDuration("abc"), null);
+  assert.equal(parseDuration("9am tomorrow"), null);
 });
 
 test("isReminderCommand only matches real reminder command prefixes", () => {

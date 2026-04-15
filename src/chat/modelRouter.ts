@@ -2,17 +2,23 @@ import type { AppConfig } from "../config.js";
 import { SpanKind } from "@opentelemetry/api";
 import { startLlmTimer, withSpan } from "../observability.js";
 import type { SettingsStore } from "../settings.js";
-import type { ToolRenderInstructions } from "../conversationalTools.js";
+import type { ConversationalToolName, ToolRenderInstructions } from "../conversationalTools.js";
 import type {
   ConversationTurnRecord,
   NewsBrowseSessionItemRecord,
+  PendingConversationalToolSessionRecord,
   WorldLookupArticleRecord,
   WorldLookupEvidenceRecord,
   WorldLookupQueryBucket,
   WorldLookupSourceFailure,
   WorldLookupSourceName
 } from "../types.js";
-import { buildToolInferencePrompt, parseToolDecision, type ConversationalIntentDecision } from "../toolInvocation.js";
+import {
+  buildPendingToolResolutionPrompt,
+  buildToolInferencePrompt,
+  parseToolDecision,
+  type ConversationalIntentDecision
+} from "../toolInvocation.js";
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
 import { OllamaChatProvider, OneMinAiChatProvider, type ChatMessage, type ChatProvider } from "./providers.js";
 
@@ -59,7 +65,12 @@ export interface LlmService {
   inferToolDecision(
     userMessage: string,
     recentConversation?: ConversationTurnRecord[]
-  ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision }>;
+  ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
+  resolvePendingToolDecision?(params: {
+    userMessage: string;
+    session: PendingConversationalToolSessionRecord;
+    recentConversation?: ConversationTurnRecord[];
+  }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
   getPowerStatus(route?: LlmRoute): LlmPowerStatus;
 }
 
@@ -69,6 +80,7 @@ export function createLlmService(params: {
   config: AppConfig;
   settings: SettingsStore;
   providers?: ChatProvider[];
+  intentProviders?: ChatProvider[];
 }): LlmService {
   const providers =
     params.providers ??
@@ -85,6 +97,19 @@ export function createLlmService(params: {
         params.config.MODEL_REQUEST_TIMEOUT_MS
       )
     ];
+  const intentProviders =
+    params.intentProviders ??
+    (params.config.ONEMINAI_INTENT_MODEL
+      ? [
+          new OneMinAiChatProvider(
+            params.config.ONEMINAI_BASE_URL,
+            params.config.ONEMINAI_API_KEY,
+            params.config.ONEMINAI_INTENT_MODEL,
+            params.config.MODEL_REQUEST_TIMEOUT_MS
+          ),
+          ...providers
+        ]
+      : providers);
 
   const getPowerStatus = (route: LlmRoute = "none"): LlmPowerStatus => {
     const mode = getLlmMode(params.settings);
@@ -228,13 +253,58 @@ export function createLlmService(params: {
       });
       const { route, reply } = await executeProviderRequest({
         mode: getLlmMode(params.settings),
-        providers,
+        providers: intentProviders,
         operation: "tool.infer",
-        invoke: async (provider) => parseToolDecision(await provider.generate(messages)),
+        invoke: async (provider) => {
+          const rawModelOutput = await provider.generate(messages);
+          return {
+            promptMessages: messages,
+            rawModelOutput,
+            decision: parseToolDecision(rawModelOutput)
+          };
+        },
         failurePrefix: "No LLM provider could infer a tool decision."
       });
 
-      return { route, powerStatus: getPowerStatus(route), decision: reply };
+      return {
+        route,
+        powerStatus: getPowerStatus(route),
+        decision: reply.decision,
+        rawModelOutput: reply.rawModelOutput,
+        promptMessages: reply.promptMessages
+      };
+    },
+    async resolvePendingToolDecision({ userMessage, session, recentConversation }) {
+      const messages = buildPendingToolResolutionMessages({
+        userMessage,
+        session,
+        recentConversation,
+        mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
+        balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
+        settings: params.settings
+      });
+      const { route, reply } = await executeProviderRequest({
+        mode: getLlmMode(params.settings),
+        providers: intentProviders,
+        operation: "tool.resume",
+        invoke: async (provider) => {
+          const rawModelOutput = await provider.generate(messages);
+          return {
+            promptMessages: messages,
+            rawModelOutput,
+            decision: parseToolDecision(rawModelOutput)
+          };
+        },
+        failurePrefix: "No LLM provider could resolve a pending tool clarification."
+      });
+
+      return {
+        route,
+        powerStatus: getPowerStatus(route),
+        decision: reply.decision,
+        rawModelOutput: reply.rawModelOutput,
+        promptMessages: reply.promptMessages
+      };
     },
     getPowerStatus
   };
@@ -377,6 +447,41 @@ function buildConversationalIntentMessages(params: {
     {
       role: "user",
       content: buildToolInferencePrompt(params.userMessage)
+    }
+  ];
+}
+
+function buildPendingToolResolutionMessages(params: {
+  userMessage: string;
+  session: PendingConversationalToolSessionRecord;
+  recentConversation?: ConversationTurnRecord[];
+  mode: PersonaMode;
+  balance: PersonaBalance;
+  settings: SettingsStore;
+}): ChatMessage[] {
+  return [
+    {
+      role: "system",
+      content: `${buildSystemPrompt({
+        mode: params.mode,
+        balance: params.balance,
+        settings: params.settings
+      })} ${buildCurrentDateTimeInstruction()} Return only strict JSON with either a respond or execute_tool decision. If you choose respond, the response field must be the final user-facing reply in Dot's normal voice. Do not add markdown fences.`
+    },
+    ...(params.recentConversation ?? []).map((turn) => ({
+      role: turn.role,
+      content: turn.content
+    })),
+    {
+      role: "user",
+      content: buildPendingToolResolutionPrompt({
+        userMessage: params.userMessage,
+        toolName: params.session.toolName as ConversationalToolName,
+        existingArgs: params.session.args,
+        originalUserMessage: params.session.originalUserMessage,
+        pendingStatus: params.session.pendingStatus,
+        pendingPrompt: params.session.pendingPrompt
+      })
     }
   ];
 }

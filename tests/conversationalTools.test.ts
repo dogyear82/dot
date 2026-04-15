@@ -73,7 +73,7 @@ test("conversational tool executor returns a common final_text result for remind
   }
 });
 
-test("conversational tool executor handles reminder mutations and calendar.remind through the common final_text contract", async () => {
+test("conversational tool executor handles confirmed reminder mutations and calendar.remind through the common final_text contract", async () => {
   const { persistence, cleanup } = createPersistence();
 
   try {
@@ -82,7 +82,8 @@ test("conversational tool executor handles reminder mutations and calendar.remin
         toolName: "reminder.add",
         args: {
           duration: "10m",
-          message: "stretch"
+          message: "stretch",
+          confirmed: "yes"
         },
         userMessage: "remind me to stretch in 10 minutes"
       },
@@ -133,6 +134,115 @@ test("conversational tool executor handles reminder mutations and calendar.remin
 
     assert.equal(calendarRemind.presentation, "final_text");
     assert.match(String(calendarRemind.payload.text), /Saved reminder #2/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational reminder tool returns clarify when required args are missing", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const missingDuration = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          message: "stretch"
+        },
+        userMessage: "set a reminder to stretch"
+      },
+      context: createContext({ persistence })
+    });
+    assert.equal(missingDuration.status, "clarify");
+    assert.equal(missingDuration.presentation, "final_text");
+    assert.match(String(missingDuration.payload.text), /What duration from now/i);
+
+    const missingMessage = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          duration: "10m"
+        },
+        userMessage: "set a reminder in 10 minutes"
+      },
+      context: createContext({ persistence })
+    });
+    assert.equal(missingMessage.status, "clarify");
+    assert.equal(missingMessage.presentation, "final_text");
+    assert.match(String(missingMessage.payload.text), /What should the reminder say/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational reminder tool requires confirmation before saving", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const confirmation = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          duration: "15 hours",
+          message: "stretch"
+        },
+        userMessage: "set a reminder in 15 hours to stretch"
+      },
+      context: createContext({ persistence })
+    });
+
+    assert.equal(confirmation.status, "requires_confirmation");
+    assert.equal(confirmation.presentation, "final_text");
+    assert.match(String(confirmation.payload.text), /Want me to save it\?/i);
+
+    const reminders = persistence.listPendingReminders();
+    assert.equal(reminders.length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational reminder tool accepts time aliases and natural duration phrases", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const confirmation = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          time: "14 hours",
+          message: "stretch"
+        },
+        userMessage: "set a reminder in 14 hours to stretch"
+      },
+      context: createContext({ persistence })
+    });
+
+    assert.equal(confirmation.status, "requires_confirmation");
+    assert.match(String(confirmation.payload.text), /14 hours/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational reminder tool rejects unsupported absolute datetime phrasing for now", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const clarification = await executeConversationalToolCall({
+      call: {
+        toolName: "reminder.add",
+        args: {
+          time: "9am tomorrow",
+          message: "stretch"
+        },
+        userMessage: "set a reminder for 9am tomorrow to stretch"
+      },
+      context: createContext({ persistence })
+    });
+
+    assert.equal(clarification.status, "clarify");
+    assert.match(String(clarification.payload.text), /duration from now/i);
   } finally {
     cleanup();
   }

@@ -81,6 +81,24 @@ function createLogger() {
   };
 }
 
+function createCapturingLogger() {
+  const entries: Array<{ level: "info" | "warn" | "error"; payload?: unknown; message?: string }> = [];
+  return {
+    entries,
+    logger: {
+      info(payload?: unknown, message?: string) {
+        entries.push({ level: "info", payload, message });
+      },
+      warn(payload?: unknown, message?: string) {
+        entries.push({ level: "warn", payload, message });
+      },
+      error(payload?: unknown, message?: string) {
+        entries.push({ level: "error", payload, message });
+      }
+    }
+  };
+}
+
 test("message pipeline turns explicit owner commands into outbound delivery requests", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
@@ -461,6 +479,22 @@ test("message pipeline executes inferred reminder add/show/ack through the conve
           }
         };
       },
+      async resolvePendingToolDecision({ userMessage }: { userMessage: string }) {
+        assert.equal(userMessage, "yes");
+        return {
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "execute_tool",
+            toolName: "reminder.add",
+            reason: "owner confirmed the reminder details",
+            confidence: "high",
+            args: {
+              confirmed: "yes"
+            }
+          }
+        };
+      },
       getPowerStatus() {
         return "standby";
       }
@@ -480,11 +514,19 @@ test("message pipeline executes inferred reminder add/show/ack through the conve
 
     for (const [messageId, content] of [
       ["msg-remind-1", "remind me in 10 minutes to stretch"],
+      ["msg-remind-1b", "yes"],
       ["msg-remind-2", "show my reminders"],
       ["msg-remind-3", "acknowledge reminder 1"]
     ] as const) {
       await bus.publishInboundMessage(
         inboundEvent({
+          eventId: `discord:${messageId}`,
+          correlation: {
+            correlationId: messageId,
+            causationId: null,
+            conversationId: "channel-1",
+            actorId: "owner-1"
+          },
           payload: {
             messageId,
             sender: {
@@ -507,10 +549,306 @@ test("message pipeline executes inferred reminder add/show/ack through the conve
       );
     }
 
+    assert.equal(outbound.length, 4);
+    assert.match(outbound[0]?.payload.content ?? "", /Want me to save it\?/i);
+    assert.match(outbound[1]?.payload.content ?? "", /Saved reminder #1/i);
+    assert.match(outbound[2]?.payload.content ?? "", /Pending reminders/i);
+    assert.match(outbound[3]?.payload.content ?? "", /Acknowledged reminder #1/i);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline uses deterministic reminder intake for clarification and confirmation flows", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient: {
+      async listUpcomingEvents() {
+        return [];
+      }
+    },
+    chatService: {
+      async generateOwnerReply() {
+        throw new Error("pending reminder clarification should not fall back to free chat");
+      },
+      async renderToolResult() {
+        throw new Error("final_text reminder flow should not invoke llm rendering");
+      },
+      async inferToolDecision(userMessage: string) {
+        if (userMessage !== "set a reminder to stretch") {
+          throw new Error(`unexpected fresh inference for reminder intake turn: ${userMessage}`);
+        }
+        return {
+          route: "local",
+          powerStatus: "standby",
+          decision: {
+            decision: "execute_tool",
+            toolName: "reminder.add",
+            reason: "owner wants a reminder but only supplied the message",
+            confidence: "high",
+            args: {
+              message: "stretch"
+            }
+          }
+        };
+      },
+      async resolvePendingToolDecision() {
+        throw new Error("reminder intake should not use llm pending-tool resolution");
+      },
+      getPowerStatus() {
+        return "standby";
+      }
+    } as never,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  try {
+    persistence.settings.set("onboarding.completed", "true");
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-remind-clarify-1",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "set a reminder to stretch",
+          addressedContent: "set a reminder to stretch",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-clarify-1"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /fire up that intake form/i);
+    assert.match(outbound[0]?.payload.content ?? "", /specific time or a duration from now/i);
+    assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
+      message: "stretch"
+    });
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        eventId: "discord:msg-remind-clarify-2",
+        correlation: {
+          correlationId: "msg-remind-clarify-2",
+          causationId: null,
+          conversationId: "channel-1",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-remind-clarify-2",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "duration",
+          addressedContent: "duration",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-clarify-2"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 2);
+    assert.match(outbound[1]?.payload.content ?? "", /How long from now should I set it for/i);
+    assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
+      message: "stretch"
+    });
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        eventId: "discord:msg-remind-clarify-3",
+        correlation: {
+          correlationId: "msg-remind-clarify-3",
+          causationId: null,
+          conversationId: "channel-1",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-remind-clarify-3",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "in 10 minutes",
+          addressedContent: "in 10 minutes",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-clarify-3"
+          }
+        }
+      })
+    );
+
     assert.equal(outbound.length, 3);
-    assert.match(outbound[0]?.payload.content ?? "", /Saved reminder #1/i);
-    assert.match(outbound[1]?.payload.content ?? "", /Pending reminders/i);
-    assert.match(outbound[2]?.payload.content ?? "", /Acknowledged reminder #1/i);
+    assert.match(outbound[2]?.payload.content ?? "", /Want me to save it\?/i);
+    assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
+      message: "stretch",
+      duration: "10m"
+    });
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        eventId: "discord:msg-remind-clarify-4",
+        correlation: {
+          correlationId: "msg-remind-clarify-4",
+          causationId: null,
+          conversationId: "channel-1",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-remind-clarify-4",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "yes",
+          addressedContent: "yes",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-clarify-4"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 4);
+    assert.match(outbound[3]?.payload.content ?? "", /Saved reminder #1/i);
+    assert.equal(persistence.getPendingConversationalToolSession("channel-1"), null);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline skips reminder intake questions when inference already provides dueAt", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient: {
+      async listUpcomingEvents() {
+        return [];
+      }
+    },
+    chatService: {
+      async generateOwnerReply() {
+        throw new Error("complete reminder args should not fall back to chat");
+      },
+      async renderToolResult() {
+        throw new Error("confirmation prompt should not invoke llm rendering");
+      },
+      async inferToolDecision(userMessage: string) {
+        assert.equal(userMessage, "schedule a reminder for tomorrow at 9am to walk the dog");
+        return {
+          route: "hosted",
+          powerStatus: "engaged",
+          rawModelOutput:
+            '{"decision":"execute_tool","toolName":"reminder.add","reason":"owner wants to set a reminder for a specific time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-15T16:00:00.000Z"}}',
+          promptMessages: [
+            { role: "system", content: "intent prompt" },
+            { role: "user", content: userMessage }
+          ],
+          decision: {
+            decision: "execute_tool",
+            toolName: "reminder.add",
+            reason: "owner wants to set a reminder for a specific time",
+            confidence: "high",
+            args: {
+              message: "walk the dog",
+              dueAt: "2026-04-15T16:00:00.000Z"
+            }
+          }
+        };
+      },
+      getPowerStatus(route: "none" | "deterministic" | "local" | "hosted") {
+        return route === "hosted" ? "engaged" : "standby";
+      }
+    } as never,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  try {
+    persistence.settings.set("onboarding.completed", "true");
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-remind-dueAt-1",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "schedule a reminder for tomorrow at 9am to walk the dog",
+          addressedContent: "schedule a reminder for tomorrow at 9am to walk the dog",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-dueAt-1"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.doesNotMatch(outbound[0]?.payload.content ?? "", /specific time or a duration from now/i);
+    assert.match(outbound[0]?.payload.content ?? "", /walk the dog/i);
+    assert.match(outbound[0]?.payload.content ?? "", /want me to save it\?/i);
+    assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
+      message: "walk the dog",
+      dueAt: "2026-04-15T16:00:00.000Z"
+    });
   } finally {
     unsubscribe();
     cleanup();
@@ -2237,6 +2575,105 @@ test("message pipeline resolves an inferred news follow-up against the latest sa
     assert.equal(audit.tool_name, "news.follow_up");
     assert.match(audit.detail ?? "", /newsSession=resolved/);
     assert.match(audit.detail ?? "", /ordinal=2/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
+test("message pipeline logs intent debug traces even when raw model output is missing", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const capturedLogger = createCapturingLogger();
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("tool execution should not fall back to chat");
+    },
+    async inferToolDecision() {
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        promptMessages: [
+          { role: "system", content: "tool intent prompt" },
+          { role: "user", content: "@Dot remind me to stretch" }
+        ],
+        decision: {
+          decision: "execute_tool",
+          toolName: "reminder.add",
+          reason: "owner asked to create a reminder",
+          confidence: "high",
+          args: {
+            message: "stretch"
+          }
+        }
+      };
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: capturedLogger.logger as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-reminder-debug",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "@Dot remind me to stretch",
+          addressedContent: "@Dot remind me to stretch",
+          isDirectMessage: false,
+          mentionedBot: true,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-reminder-debug"
+          }
+        }
+      })
+    );
+
+    const trace = capturedLogger.entries.find((entry) => entry.message === "Intent classification debug trace");
+    assert.ok(trace);
+    assert.equal((trace.payload as { rawModelOutputPresent: boolean }).rawModelOutputPresent, false);
+    assert.equal((trace.payload as { rawModelOutput: null }).rawModelOutput, null);
+    assert.deepEqual(
+      (trace.payload as { promptMessages: Array<{ role: string; content: string }> }).promptMessages,
+      [
+        { role: "system", content: "tool intent prompt" },
+        { role: "user", content: "@Dot remind me to stretch" }
+      ]
+    );
+    assert.equal(
+      (trace.payload as { parsedDecision: { toolName: string } }).parsedDecision.toolName,
+      "reminder.add"
+    );
+    assert.equal(outbound.length, 1);
   } finally {
     unsubscribe();
     cleanup();

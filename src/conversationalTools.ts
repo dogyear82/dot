@@ -1,7 +1,7 @@
 import { SpanKind } from "@opentelemetry/api";
 
 import type { LlmPowerStatus, LlmRoute } from "./chat/modelRouter.js";
-import { handleReminderCommand } from "./reminders.js";
+import { handleReminderCommand, normalizeDurationInput } from "./reminders.js";
 import { withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
 import type {
@@ -91,14 +91,91 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
   "reminder.add": {
     toolName: "reminder.add",
     async execute(call, context) {
-      const duration = getRequiredStringArg(call.args, "duration");
-      const message = getRequiredStringArg(call.args, "message");
+      const rawDuration =
+        getOptionalStringArg(call.args, "duration") ??
+        getOptionalStringArg(call.args, "time") ??
+        getOptionalStringArg(call.args, "when");
+      const dueAt = getOptionalStringArg(call.args, "dueAt");
+      const message = getOptionalStringArg(call.args, "message");
+      const confirmed = getOptionalAffirmativeArg(call.args, "confirmed");
+      const normalizedDuration = rawDuration ? normalizeDurationInput(rawDuration) : null;
+      if (!rawDuration && !dueAt && !message) {
+        return {
+          toolName: "reminder.add",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "When should I remind you, and what should I remind you about?"
+          },
+          detail: "presentation=final_text; missing=duration,message"
+        };
+      }
+      if (!rawDuration && !dueAt) {
+        return {
+          toolName: "reminder.add",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "What duration from now should I set the reminder for? (e.g., 'in 15 hours' or give me the time offset)"
+          },
+          detail: "presentation=final_text; missing=duration"
+        };
+      }
+      if (rawDuration && !normalizedDuration) {
+        return {
+          toolName: "reminder.add",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "I need a duration from now for reminders right now, like `10 seconds`, `15 minutes`, `2 hours`, or `1 day`."
+          },
+          detail: "presentation=final_text; unsupported_duration_format=yes"
+        };
+      }
+      if (!message) {
+        return {
+          toolName: "reminder.add",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "What should the reminder say?"
+          },
+          detail: "presentation=final_text; missing=message"
+        };
+      }
+      if (!confirmed) {
+        return {
+          toolName: "reminder.add",
+          status: "requires_confirmation",
+          presentation: "final_text",
+          payload: {
+            text: `I've got a reminder to ${message} ${
+              dueAt
+                ? formatReminderDateTimeForConfirmation(new Date(dueAt))
+                : formatReminderTimeForConfirmation(normalizedDuration ?? rawDuration ?? "that time")
+            }. Want me to save it?`
+          },
+          detail: "presentation=final_text; awaiting_confirmation=yes"
+        };
+      }
+      if (dueAt) {
+        const reminder = context.persistence.createReminder(message, dueAt);
+        return {
+          toolName: "reminder.add",
+          status: "success",
+          presentation: "final_text",
+          payload: {
+            text: `Saved reminder #${reminder.id} for ${reminder.dueAt}: ${reminder.message}`
+          },
+          detail: "presentation=final_text; mode=specific"
+        };
+      }
       return {
         toolName: "reminder.add",
         status: "success",
         presentation: "final_text",
         payload: {
-          text: handleReminderCommand(context.persistence, `!reminder add ${duration} ${message}`)
+          text: handleReminderCommand(context.persistence, `!reminder add ${normalizedDuration} ${message}`)
         },
         detail: "presentation=final_text"
       };
@@ -168,7 +245,18 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
   "calendar.remind": {
     toolName: "calendar.remind",
     async execute(call, context) {
-      const index = getRequiredNumericLikeArg(call.args, "index");
+      const index = getOptionalNumericLikeArg(call.args, "index");
+      if (index == null) {
+        return {
+          toolName: "calendar.remind",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "Which calendar item should I remind you about?"
+          },
+          detail: "presentation=final_text; missing=index"
+        };
+      }
       const leadTime = getOptionalStringArg(call.args, "leadTime");
       const content = leadTime ? `!calendar remind ${index} ${leadTime}` : `!calendar remind ${index}`;
       return {
@@ -489,6 +577,51 @@ function getRequiredNumericLikeArg(args: Record<string, string | number>, key: s
     throw new Error(`Missing required numeric tool argument: ${key}`);
   }
   return parsed;
+}
+
+function getOptionalNumericLikeArg(args: Record<string, string | number>, key: string): number | null {
+  const value = args[key];
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getOptionalAffirmativeArg(args: Record<string, string | number>, key: string): boolean {
+  const value = args[key];
+  if (typeof value === "number") {
+    return value > 0;
+  }
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case "yes":
+    case "y":
+    case "true":
+    case "1":
+    case "confirm":
+    case "confirmed":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function formatReminderTimeForConfirmation(duration: string): string {
+  const trimmed = duration.trim();
+  if (/^(in|at|on|tomorrow|today|next)\b/i.test(trimmed)) {
+    return trimmed.startsWith("in ") ? trimmed : `at ${trimmed}`;
+  }
+
+  return `in ${trimmed}`;
+}
+
+function formatReminderDateTimeForConfirmation(dueAt: Date): string {
+  const weekday = dueAt.toLocaleDateString("en-US", { weekday: "long" });
+  const month = dueAt.toLocaleDateString("en-US", { month: "long" });
+  const day = dueAt.getDate();
+  const time = dueAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return `on ${weekday}, ${month} ${day} at ${time}`;
 }
 
 function buildNewsBriefingAuditDetail(result: WorldLookupResult, preferences: NewsPreferences): string {

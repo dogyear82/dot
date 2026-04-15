@@ -15,6 +15,7 @@ test("loadConfig applies defaults for optional values", () => {
   assert.equal(config.NATS_URL, "nats://localhost:4222");
   assert.equal(config.OLLAMA_BASE_URL, "http://ollama:11434");
   assert.equal(config.OLLAMA_MODEL, "llama3.1:8b");
+  assert.equal(config.ONEMINAI_INTENT_MODEL, "");
   assert.equal(config.NEWSDATA_API_KEY, "");
   assert.equal(config.OUTLOOK_TENANT_ID, "common");
   assert.equal(config.OUTLOOK_OAUTH_SCOPES, "offline_access openid profile User.Read Calendars.Read Mail.ReadWrite Mail.Send");
@@ -34,4 +35,14 @@ test("loadConfig preserves an explicit NewsData API key", () => {
   });
 
   assert.equal(config.NEWSDATA_API_KEY, "newsdata-test-key");
+});
+
+test("loadConfig preserves an explicit intent model override", () => {
+  const config = loadConfig({
+    DISCORD_BOT_TOKEN: "token",
+    DISCORD_OWNER_USER_ID: "owner-1",
+    ONEMINAI_INTENT_MODEL: "deepseek-chat"
+  });
+
+  assert.equal(config.ONEMINAI_INTENT_MODEL, "deepseek-chat");
 });

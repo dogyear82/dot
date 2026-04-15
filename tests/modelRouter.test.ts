@@ -39,6 +39,7 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     ONEMINAI_API_KEY: "",
     ONEMINAI_BASE_URL: "",
     ONEMINAI_MODEL: "",
+    ONEMINAI_INTENT_MODEL: "",
     MODEL_REQUEST_TIMEOUT_MS: 20000,
     OUTLOOK_ACCESS_TOKEN: "",
     OUTLOOK_CLIENT_ID: "",
@@ -338,6 +339,44 @@ test("llm service can infer a structured tool decision", async () => {
   }
   assert.equal(result.decision.toolName, "reminder.add");
   assert.deepEqual(result.decision.args, { duration: "10m", message: "stretch" });
+});
+
+test("llm service prefers the dedicated hosted intent model when configured", async () => {
+  const store = createStore();
+  store.set("llm.mode", "normal");
+
+  const service = createLlmService({
+    config: createConfig({
+      ONEMINAI_INTENT_MODEL: "intent-model"
+    }),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", "local", true, async () => {
+        return '{"decision":"respond","reason":"fallback","response":"local"}';
+      }),
+      new FakeProvider("1minai", "hosted", true, async () => {
+        return '{"decision":"respond","reason":"fallback","response":"hosted-chat"}';
+      })
+    ],
+    intentProviders: [
+      new FakeProvider("1minai-intent", "hosted", true, async () => {
+        return '{"decision":"execute_tool","toolName":"reminder.add","reason":"specific reminder time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-15T13:00:00.000Z"}}';
+      })
+    ]
+  });
+
+  const result = await service.inferToolDecision("remind me tomorrow at 6am to walk the dog");
+
+  assert.equal(result.route, "hosted");
+  assert.equal(result.decision.decision, "execute_tool");
+  if (result.decision.decision !== "execute_tool") {
+    throw new Error("expected execute_tool decision");
+  }
+  assert.equal(result.decision.toolName, "reminder.add");
+  assert.deepEqual(result.decision.args, {
+    message: "walk the dog",
+    dueAt: "2026-04-15T13:00:00.000Z"
+  });
 });
 
 test("llm service routes obvious schedule questions through the model intent classifier", async () => {
