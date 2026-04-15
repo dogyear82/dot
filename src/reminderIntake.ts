@@ -35,6 +35,7 @@ export function startReminderIntake(params: {
   const now = params.now ?? new Date();
   const message = getStringArg(params.args, "message");
   const rawDuration = getStringArg(params.args, "duration") ?? getStringArg(params.args, "time") ?? getStringArg(params.args, "when");
+  const dueAt = getStringArg(params.args, "dueAt");
 
   if (!message) {
     return {
@@ -44,6 +45,38 @@ export function startReminderIntake(params: {
         engine: "reminder.add.intake",
         step: "collect_message",
         data: {}
+      }
+    };
+  }
+
+  if (dueAt) {
+    const parsedDueAt = new Date(dueAt);
+    if (!Number.isNaN(parsedDueAt.getTime()) && parsedDueAt.getTime() > now.getTime()) {
+      return {
+        kind: "requires_confirmation",
+        prompt: `I've got a reminder to ${message} on ${formatSpecificDateTimeForConfirmation(parsedDueAt)}. Want me to save it?`,
+        state: {
+          engine: "reminder.add.intake",
+          step: "confirm",
+          data: {
+            message,
+            scheduleMode: "specific",
+            dueAt
+          }
+        }
+      };
+    }
+
+    return {
+      kind: "clarify",
+      prompt: "I couldn't pin down that specific time cleanly. What day should I use? You can say `today`, `tomorrow`, or a day like `the 14th`.",
+      state: {
+        engine: "reminder.add.intake",
+        step: "collect_specific_date",
+        data: {
+          message,
+          scheduleMode: "specific"
+        }
       }
     };
   }

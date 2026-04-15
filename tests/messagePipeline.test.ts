@@ -759,6 +759,102 @@ test("message pipeline uses deterministic reminder intake for clarification and 
   }
 });
 
+test("message pipeline skips reminder intake questions when inference already provides dueAt", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient: {
+      async listUpcomingEvents() {
+        return [];
+      }
+    },
+    chatService: {
+      async generateOwnerReply() {
+        throw new Error("complete reminder args should not fall back to chat");
+      },
+      async renderToolResult() {
+        throw new Error("confirmation prompt should not invoke llm rendering");
+      },
+      async inferToolDecision(userMessage: string) {
+        assert.equal(userMessage, "schedule a reminder for tomorrow at 9am to walk the dog");
+        return {
+          route: "hosted",
+          powerStatus: "engaged",
+          rawModelOutput:
+            '{"decision":"execute_tool","toolName":"reminder.add","reason":"owner wants to set a reminder for a specific time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-15T16:00:00.000Z"}}',
+          promptMessages: [
+            { role: "system", content: "intent prompt" },
+            { role: "user", content: userMessage }
+          ],
+          decision: {
+            decision: "execute_tool",
+            toolName: "reminder.add",
+            reason: "owner wants to set a reminder for a specific time",
+            confidence: "high",
+            args: {
+              message: "walk the dog",
+              dueAt: "2026-04-15T16:00:00.000Z"
+            }
+          }
+        };
+      },
+      getPowerStatus(route: "none" | "deterministic" | "local" | "hosted") {
+        return route === "hosted" ? "engaged" : "standby";
+      }
+    } as never,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  try {
+    persistence.settings.set("onboarding.completed", "true");
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-remind-dueAt-1",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "schedule a reminder for tomorrow at 9am to walk the dog",
+          addressedContent: "schedule a reminder for tomorrow at 9am to walk the dog",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-remind-dueAt-1"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.doesNotMatch(outbound[0]?.payload.content ?? "", /specific time or a duration from now/i);
+    assert.match(outbound[0]?.payload.content ?? "", /walk the dog/i);
+    assert.match(outbound[0]?.payload.content ?? "", /want me to save it\?/i);
+    assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
+      message: "walk the dog",
+      dueAt: "2026-04-15T16:00:00.000Z"
+    });
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline preserves the full owner wording for inferred world.lookup current-events queries", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();

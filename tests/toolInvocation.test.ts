@@ -46,7 +46,7 @@ test("parseToolDecision accepts respond and execute_tool responses", () => {
 
   assert.deepEqual(
     parseToolDecision(
-      '{"decision":"execute_tool","toolName":"reminder.add","reason":"owner supplied a specific reminder time","confidence":"high","args":{"message":"return the lens protector","dueAt":"2026-04-15T01:00:00.000Z"}}'
+      '{"decision":"execute_tool","toolName":"reminder.add","reason":"owner supplied a specific reminder time","confidence":"high","args":{"message":"return the lens protector","dueAt":"2026-04-16T01:00:00.000Z"}}'
     ),
     {
       decision: "execute_tool",
@@ -55,7 +55,7 @@ test("parseToolDecision accepts respond and execute_tool responses", () => {
       confidence: "high",
       args: {
         message: "return the lens protector",
-        dueAt: "2026-04-15T01:00:00.000Z"
+        dueAt: "2026-04-16T01:00:00.000Z"
       }
     }
   );
@@ -65,8 +65,9 @@ test("buildToolInferencePrompt documents dueAt for specific reminder times", () 
   const prompt = buildToolInferencePrompt("set a reminder for tomorrow at 6pm to return the package");
 
   assert.match(prompt, /prefer args\.dueAt as an ISO 8601 timestamp/i);
+  assert.match(prompt, /Interpret relative reminder phrases like `today`, `tomorrow`/i);
   assert.match(prompt, /- reminder\.add: message, optional duration, optional dueAt/i);
-  assert.match(prompt, /"dueAt":"2026-04-15T01:00:00\.000Z"/i);
+  assert.match(prompt, /"dueAt":"2026-04-16T01:00:00\.000Z"/i);
 });
 
 test("parseExplicitToolDecision turns incomplete tool commands into clarification prompts", () => {

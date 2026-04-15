@@ -19,6 +19,39 @@ test("reminder intake starts in schedule mode selection when message is known bu
   assert.equal(outcome.state.data.message, "buy tomatoes and eggs");
 });
 
+test("reminder intake skips schedule intake when message and dueAt are already provided", () => {
+  const outcome = startReminderIntake({
+    args: {
+      message: "walk the dog",
+      dueAt: "2026-04-15T16:00:00.000Z"
+    },
+    now: NOW
+  });
+
+  assert.equal(outcome.kind, "requires_confirmation");
+  assert.equal(outcome.state.step, "confirm");
+  assert.equal(outcome.state.data.message, "walk the dog");
+  assert.equal(outcome.state.data.dueAt, "2026-04-15T16:00:00.000Z");
+  assert.match(outcome.prompt, /walk the dog/i);
+  assert.match(outcome.prompt, /want me to save it\?/i);
+});
+
+test("reminder intake asks for a specific date when provided dueAt resolves to the past", () => {
+  const outcome = startReminderIntake({
+    args: {
+      message: "walk the dog",
+      dueAt: "2026-04-14T07:00:00.000Z"
+    },
+    now: NOW
+  });
+
+  assert.equal(outcome.kind, "clarify");
+  assert.equal(outcome.state.step, "collect_specific_date");
+  assert.equal(outcome.state.data.message, "walk the dog");
+  assert.equal(outcome.state.data.scheduleMode, "specific");
+  assert.match(outcome.prompt, /What day should I use\?/i);
+});
+
 test("reminder intake duration path collects duration and returns confirmation", () => {
   const start = startReminderIntake({
     args: {
