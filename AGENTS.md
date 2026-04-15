@@ -47,6 +47,7 @@ Remediate material findings from that review, then repeat the implement-review-r
 - Verify correct git branch
 - Restart docker containers
 - Confirm services are running
+- Always verify that rebuilt or restarted images are actually running the intended code before declaring the environment ready. Do not assume a restart picked up the latest changes; confirm the live container matches the expected branch/commit or contains the expected code path.
 
 Do not say "ready for testing" unless all steps are complete.
 
