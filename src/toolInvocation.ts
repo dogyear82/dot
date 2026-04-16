@@ -357,7 +357,7 @@ export function buildPendingToolResolutionPrompt(params: {
     "If the owner is cancelling, abandoning, or changing the subject, return respond with a short final reply in your normal voice as Dot.",
     "Respond is a non-operational conversation path only. If you choose respond, do not claim or imply that you already performed a real side-effecting action.",
     "Any reply that says you sent, set, scheduled, created, updated, granted, deleted, changed, or otherwise completed a real action must come from execute_tool, not respond.",
-    "Use only the exact tool name already provided and only the exact arg keys that tool supports. Do not invent extra arg keys.",
+    "Use only the exact tool name already provided and only the exact arg keys that tool supports, except that the reserved meta-arg `confirmed` may be returned during pending confirmation. Do not invent extra arg keys.",
     "If the owner supplies only one missing field, return only that field in args. Existing args will be merged outside the model.",
     "If the pending step is requires_confirmation and the owner confirms, return execute_tool for the same tool with args containing only {\"confirmed\":\"yes\"}.",
     "If the pending step is requires_confirmation and the owner declines or cancels, return respond with a short acknowledgment instead of executing the tool.",
@@ -372,7 +372,7 @@ export function buildPendingToolResolutionPrompt(params: {
     "Return strict JSON only in one of these shapes:",
     '{"decision":"respond","reason":"...","response":"..."}',
     `{"decision":"execute_tool","toolName":"${params.toolName}","reason":"owner supplied missing information","confidence":"high","args":{"message":"stretch"}}`,
-    `{"decision":"execute_tool","toolName":"${params.toolName}","reason":"owner confirmed the pending reminder details","confidence":"high","args":{"confirmed":"yes"}}`,
+    `{"decision":"execute_tool","toolName":"${params.toolName}","reason":"owner confirmed the pending tool details","confidence":"high","args":{"confirmed":"yes"}}`,
     '{"decision":"respond","reason":"owner cancelled the pending tool flow","response":"Alright, sweetie. I won\'t do it."}'
   ].join("\n");
 }

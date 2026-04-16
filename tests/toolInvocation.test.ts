@@ -106,7 +106,7 @@ test("buildPendingToolResolutionPrompt keeps respond non-operational", () => {
   assert.match(prompt, /Respond is a non-operational conversation path only\./i);
   assert.match(prompt, /do not claim or imply that you already performed a real side-effecting action\./i);
   assert.match(prompt, /must come from execute_tool, not respond\./i);
-  assert.match(prompt, /Use only the exact tool name already provided and only the exact arg keys that tool supports\./i);
+  assert.match(prompt, /Use only the exact tool name already provided and only the exact arg keys that tool supports, except that the reserved meta-arg `confirmed` may be returned during pending confirmation\./i);
   assert.match(prompt, /owner cancelled the pending tool flow/i);
 });
 

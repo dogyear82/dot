@@ -99,6 +99,10 @@ function createCapturingLogger() {
   };
 }
 
+function futureIso(hoursAhead: number): string {
+  return new Date(Date.now() + hoursAhead * 60 * 60 * 1000).toISOString();
+}
+
 test("message pipeline turns explicit owner commands into outbound delivery requests", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
@@ -763,6 +767,7 @@ test("message pipeline skips reminder intake questions when inference already pr
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
   const outbound: OutboundMessageRequestedEvent[] = [];
+  const dueAt = futureIso(12);
 
   const unsubscribe = registerMessagePipeline({
     bus,
@@ -784,7 +789,7 @@ test("message pipeline skips reminder intake questions when inference already pr
           route: "hosted",
           powerStatus: "engaged",
           rawModelOutput:
-            '{"decision":"execute_tool","toolName":"reminder.add","reason":"owner wants to set a reminder for a specific time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-16T16:00:00.000Z"}}',
+            `{"decision":"execute_tool","toolName":"reminder.add","reason":"owner wants to set a reminder for a specific time","confidence":"high","args":{"message":"walk the dog","dueAt":"${dueAt}"}}`,
           promptMessages: [
             { role: "system", content: "intent prompt" },
             { role: "user", content: userMessage }
@@ -796,7 +801,7 @@ test("message pipeline skips reminder intake questions when inference already pr
             confidence: "high",
             args: {
               message: "walk the dog",
-              dueAt: "2026-04-16T16:00:00.000Z"
+              dueAt
             }
           }
         };
@@ -847,7 +852,7 @@ test("message pipeline skips reminder intake questions when inference already pr
     assert.match(outbound[0]?.payload.content ?? "", /want me to save it\?/i);
     assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
       message: "walk the dog",
-      dueAt: "2026-04-16T16:00:00.000Z"
+      dueAt
     });
   } finally {
     unsubscribe();

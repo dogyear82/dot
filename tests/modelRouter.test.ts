@@ -89,6 +89,10 @@ class FakeProvider implements ChatProvider {
   }
 }
 
+function futureIso(hoursAhead: number): string {
+  return new Date(Date.now() + hoursAhead * 60 * 60 * 1000).toISOString();
+}
+
 test("orderProvidersForMode routes local-only in lite mode", () => {
   const ordered = orderProvidersForMode(
     [
@@ -344,6 +348,7 @@ test("llm service can infer a structured tool decision", async () => {
 test("llm service prefers the dedicated hosted intent model when configured", async () => {
   const store = createStore();
   store.set("llm.mode", "normal");
+  const dueAt = futureIso(12);
 
   const service = createLlmService({
     config: createConfig({
@@ -360,7 +365,7 @@ test("llm service prefers the dedicated hosted intent model when configured", as
     ],
     intentProviders: [
       new FakeProvider("1minai-intent", "hosted", true, async () => {
-        return '{"decision":"execute_tool","toolName":"reminder.add","reason":"specific reminder time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-16T13:00:00.000Z"}}';
+        return `{"decision":"execute_tool","toolName":"reminder.add","reason":"specific reminder time","confidence":"high","args":{"message":"walk the dog","dueAt":"${dueAt}"}}`;
       })
     ]
   });
@@ -375,7 +380,7 @@ test("llm service prefers the dedicated hosted intent model when configured", as
   assert.equal(result.decision.toolName, "reminder.add");
   assert.deepEqual(result.decision.args, {
     message: "walk the dog",
-    dueAt: "2026-04-16T13:00:00.000Z"
+    dueAt
   });
 });
 
