@@ -38,6 +38,15 @@ export type ConversationalIntentDecision =
       args: Record<string, string | number>;
     };
 
+export type AddressedToolIntentDecision =
+  | {
+      addressed: false;
+      reason: string;
+    }
+  | ({
+      addressed: true;
+    } & ConversationalIntentDecision);
+
 export type ToolDecision =
   | {
       decision: "none";
@@ -341,6 +350,62 @@ export function buildToolInferencePrompt(userMessage: string): string {
   ].join("\n");
 }
 
+export function buildAddressedToolInferencePrompt(userMessage: string): string {
+  return [
+    "You are a neutral classifier for ambiguous Discord messages involving Dot.",
+    "Deterministic fast paths are already handled before this step and are not your job. Those include direct messages to Dot, explicit mentions of Dot, replies to Dot, valid explicit !commands, and active pending tool sessions.",
+    "You are only evaluating messages that were not resolved by those deterministic rules.",
+    "Your job:",
+    "1. Decide whether the latest message is addressed to Dot.",
+    "2. If it is addressed to Dot, decide whether Dot should respond directly or execute one of the available tools.",
+    "3. Return strict JSON only. Do not include markdown fences or extra text.",
+    "If the latest message is not directed to Dot, return addressed false.",
+    "If the latest message is directed to Dot and is ordinary conversation, return addressed true with decision respond. The response must be the final user-facing reply in Dot's normal voice.",
+    "If the latest message is directed to Dot and is an identifiable request for one of the available tools, return addressed true with decision execute_tool.",
+    "Incomplete tool requests still use execute_tool. Include only the arguments you can confidently infer and omit missing fields. The tool will collect missing information itself.",
+    "Use only the exact tool names and arg keys listed below. Do not invent tools or arg names.",
+    "If you choose execute_tool, confidence must be medium or high. Do not emit low.",
+    "Use recent conversation only to resolve follow-ups, corrections, or elliptical replies. Do not let earlier context override a clear latest message.",
+    "A respond output is conversation only. It must not claim that Dot already performed a real action or side effect such as sending, setting, scheduling, creating, updating, granting, deleting, or changing something.",
+    "If the latest message is ambiguous between conversation and a tool, prefer execute_tool when the user is reasonably clearly asking for an available tool.",
+    "Available tools and args:",
+    "- reminder.add: message, optional duration, optional dueAt",
+    "- reminder.show: no args",
+    "- reminder.ack: id",
+    "- calendar.show: no args",
+    "- calendar.remind: index, optional leadTime",
+    "- news.briefing: query",
+    "- news.follow_up: query",
+    "- world.lookup: query",
+    "Tool usage guidance:",
+    "- Use reminder.add when the user wants Dot to create a reminder.",
+    "- Use reminder.show when the user wants to see reminders.",
+    "- Use reminder.ack when the user wants to acknowledge or mark a reminder done.",
+    "- Use calendar.show when the user wants to see upcoming calendar items.",
+    "- Use calendar.remind when the user wants a reminder about a calendar item.",
+    "- Use news.briefing for generic news briefing requests.",
+    "- Use news.follow_up when the user is clearly referring back to a previously listed news story.",
+    "- Use world.lookup for public factual or current information such as current events, weather, economics, or information likely to be outdated in-model.",
+    "Return exactly one of these JSON shapes:",
+    '{"addressed":false,"reason":"..."}',
+    '{"addressed":true,"decision":"respond","reason":"...","response":"..."}',
+    '{"addressed":true,"decision":"execute_tool","toolName":"reminder.add","reason":"...","confidence":"medium","args":{}}',
+    '{"addressed":true,"decision":"execute_tool","toolName":"reminder.add","reason":"...","confidence":"high","args":{}}',
+    "Examples:",
+    'Latest message: "I want another reminder set"',
+    '{"addressed":true,"decision":"execute_tool","toolName":"reminder.add","reason":"the user is asking Dot to create a reminder but did not provide full details","confidence":"high","args":{}}',
+    'Latest message: "set a reminder for tomorrow at 9am to walk the dog"',
+    '{"addressed":true,"decision":"execute_tool","toolName":"reminder.add","reason":"the user is asking Dot to create a reminder at a specific time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-16T16:00:00.000Z"}}',
+    'Latest message: "what\'s in the news today?"',
+    '{"addressed":true,"decision":"execute_tool","toolName":"news.briefing","reason":"the user is asking Dot for a news briefing","confidence":"high","args":{"query":"what\'s in the news today?"}}',
+    'Latest message: "thanks"',
+    '{"addressed":true,"decision":"respond","reason":"the user is talking to Dot conversationally","response":"You\'re welcome."}',
+    'Latest message: "can somebody send me that link"',
+    '{"addressed":false,"reason":"the message is not clearly directed to Dot"}',
+    `Latest message: ${JSON.stringify(userMessage)}`
+  ].join("\n");
+}
+
 export function buildPendingToolResolutionPrompt(params: {
   userMessage: string;
   toolName: ConversationalToolName;
@@ -412,6 +477,92 @@ export function parseToolDecision(payload: string): ConversationalIntentDecision
   }
 
   throw new Error("Conversational intent inference returned an invalid response");
+}
+
+export function parseAddressedToolDecision(payload: string): AddressedToolIntentDecision {
+  const parsed = JSON.parse(extractJsonObject(payload)) as Partial<AddressedToolIntentDecision> &
+    Partial<ConversationalIntentDecision> & {
+    confidence?: unknown;
+  };
+  if (parsed.addressed === false && typeof parsed.reason === "string") {
+    return {
+      addressed: false,
+      reason: parsed.reason
+    };
+  }
+
+  if (
+    parsed.addressed === true &&
+    parsed.decision === "respond" &&
+    typeof parsed.reason === "string" &&
+    typeof parsed.response === "string" &&
+    parsed.response.trim().length > 0
+  ) {
+    return {
+      addressed: true,
+      decision: "respond",
+      reason: parsed.reason,
+      response: parsed.response.trim()
+    };
+  }
+
+  if (
+    parsed.addressed === true &&
+    parsed.decision === "execute_tool" &&
+    isToolName(parsed.toolName) &&
+    typeof parsed.reason === "string" &&
+    (parsed.confidence === "medium" || parsed.confidence === "high") &&
+    parsed.args &&
+    typeof parsed.args === "object"
+  ) {
+    return {
+      addressed: true,
+      decision: "execute_tool",
+      toolName: parsed.toolName,
+      reason: parsed.reason,
+      confidence: parsed.confidence,
+      args: parsed.args as Record<string, string | number>
+    };
+  }
+
+  throw new Error("Conversational intent inference returned an invalid response");
+}
+
+export function parsePendingToolDecision(payload: string): ConversationalIntentDecision {
+  const parsed = JSON.parse(extractJsonObject(payload)) as Partial<ConversationalIntentDecision> & {
+    confidence?: unknown;
+  };
+  if (
+    parsed.decision === "respond" &&
+    typeof parsed.reason === "string" &&
+    typeof parsed.response === "string" &&
+    parsed.response.trim().length > 0
+  ) {
+    return {
+      decision: "respond",
+      reason: parsed.reason,
+      response: parsed.response.trim()
+    };
+  }
+
+  if (
+    parsed.decision === "execute_tool" &&
+    isToolName(parsed.toolName) &&
+    typeof parsed.reason === "string" &&
+    (parsed.confidence === "medium" || parsed.confidence === "high") &&
+    parsed.args &&
+    typeof parsed.args === "object"
+  ) {
+    return {
+      decision: "execute_tool",
+      toolName: parsed.toolName,
+      reason: parsed.reason,
+      confidence: parsed.confidence,
+      args: parsed.args as Record<string, string | number>
+    };
+  }
+
+  throw new Error("Pending tool resolution returned an invalid response");
 }
 
 export async function executeToolDecision(params: {

@@ -6,10 +6,12 @@ import path from "node:path";
 
 import { initializePersistence } from "../src/persistence.js";
 import {
+  buildAddressedToolInferencePrompt,
   buildPendingToolResolutionPrompt,
   buildToolInferencePrompt,
   executeToolDecision,
   parseExplicitToolDecision,
+  parseAddressedToolDecision,
   parseToolDecision
 } from "../src/toolInvocation.js";
 
@@ -89,6 +91,41 @@ test("buildToolInferencePrompt documents dueAt for specific reminder times", () 
   assert.match(prompt, /repaired current-events lookup/i);
   assert.match(prompt, /respond: .*I'm right here\./i);
   assert.match(prompt, /disallowed respond: .*I set that reminder for tomorrow\./i);
+});
+
+test("parseAddressedToolDecision accepts addressed false and addressed true decisions", () => {
+  assert.deepEqual(parseAddressedToolDecision('{"addressed":false,"reason":"message is general channel chatter"}'), {
+    addressed: false,
+    reason: "message is general channel chatter"
+  });
+
+  assert.deepEqual(
+    parseAddressedToolDecision(
+      '{"addressed":true,"decision":"execute_tool","toolName":"reminder.add","reason":"the user is asking Dot to create a reminder but did not provide full details","confidence":"high","args":{}}'
+    ),
+    {
+      addressed: true,
+      decision: "execute_tool",
+      toolName: "reminder.add",
+      reason: "the user is asking Dot to create a reminder but did not provide full details",
+      confidence: "high",
+      args: {}
+    }
+  );
+});
+
+test("buildAddressedToolInferencePrompt documents the addressedness contract", () => {
+  const prompt = buildAddressedToolInferencePrompt("I want another reminder set");
+
+  assert.match(prompt, /neutral classifier for ambiguous Discord messages involving Dot/i);
+  assert.match(prompt, /deterministic fast paths are already handled before this step/i);
+  assert.match(prompt, /If the latest message is not directed to Dot, return addressed false/i);
+  assert.match(prompt, /Incomplete tool requests still use execute_tool/i);
+  assert.match(prompt, /A respond output is conversation only/i);
+  assert.match(prompt, /Return exactly one of these JSON shapes:/i);
+  assert.match(prompt, /"addressed":false/i);
+  assert.match(prompt, /"addressed":true,"decision":"execute_tool"/i);
+  assert.match(prompt, /Latest message: "I want another reminder set"/i);
 });
 
 test("buildPendingToolResolutionPrompt keeps respond non-operational", () => {

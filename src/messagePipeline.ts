@@ -19,7 +19,7 @@ import { continueReminderIntake, startReminderIntake, type ReminderIntakeState }
 import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
 import { executeConversationalToolCall, renderConversationalToolResult, type ConversationalToolName } from "./conversationalTools.js";
 import type { IncomingMessage, PendingConversationalToolSessionRecord, WorldLookupSourceName } from "./types.js";
-import { evaluateAddressedness } from "./discord/addressing.js";
+import { evaluateDeterministicAddressednessFastPath } from "./discord/addressing.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
 
 const RECENT_CHAT_HISTORY_LIMIT = 10;
@@ -75,73 +75,44 @@ export function registerMessagePipeline(params: {
             );
 
             const content = event.payload.addressedContent.trim();
-            const isExplicitCommand = content.startsWith("!");
-            let addressedDecision = {
-              addressed: isExplicitCommand,
-              reason: isExplicitCommand ? "explicit_command" : "recent_message_not_addressed_to_dot"
+            const conversationId = event.correlation.conversationId ?? "";
+            const recentConversation = persistence.listRecentConversationTurns(conversationId, RECENT_CHAT_HISTORY_LIMIT);
+            const message = mapInboundEventToIncomingMessage(event);
+            const isExplicitCommand = isValidExplicitCommand(content);
+            const getPendingToolSession = (): PendingConversationalToolSessionRecord | null => {
+              if (!conversationId) {
+                return null;
+              }
+              const session = persistence.getPendingConversationalToolSession(conversationId);
+              if (!session) {
+                return null;
+              }
+              if (new Date(session.expiresAt).getTime() <= Date.now()) {
+                persistence.clearPendingConversationalToolSession(conversationId);
+                return null;
+              }
+              return session;
             };
+            const pendingToolSession = getPendingToolSession();
+            const deterministicAddressedDecision = evaluateDeterministicAddressednessFastPath({
+              message,
+              isExplicitCommand,
+              hasPendingToolSession: Boolean(pendingToolSession)
+            });
+            let precomputedIntentDecision:
+              | {
+                  route: LlmRoute;
+                  powerStatus: ReturnType<ChatService["getPowerStatus"]>;
+                  decision: import("./toolInvocation.js").ConversationalIntentDecision;
+                }
+              | null = null;
+            let addressedRespondRequiresOwnerChat = false;
 
             span.setAttribute("dot.command.explicit", isExplicitCommand);
-
-            if (!isExplicitCommand) {
-              const message = mapInboundEventToIncomingMessage(event);
-              const recentConversation = persistence.listRecentConversationTurns(event.correlation.conversationId ?? "", RECENT_CHAT_HISTORY_LIMIT);
-              const recentMessages = persistence.listRecentNormalizedMessages(
-                event.correlation.conversationId ?? "",
-                RECENT_CHAT_HISTORY_LIMIT
-              );
-              const defaultChannelPolicy = persistence.settings.get("channels.defaultPolicy");
-              addressedDecision = evaluateAddressedness({
-                message,
-                defaultChannelPolicy,
-                recentConversation,
-                recentMessages
-              });
-
-              span.setAttribute("dot.addressed", addressedDecision.addressed);
-              span.setAttribute("dot.addressed.reason", addressedDecision.reason);
-              logger.info(
-                {
-                  messageId: event.payload.messageId,
-                  addressed: addressedDecision.addressed,
-                  addressedReason: addressedDecision.reason,
-                  actorRole: accessDecision.actorRole
-                },
-                "Evaluated message addressedness"
-              );
-
-              persistence.saveAccessAudit({
-                messageId: event.payload.messageId,
-                actorRole: accessDecision.actorRole,
-                canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
-                decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
-                addressed: addressedDecision.addressed,
-                addressedReason: addressedDecision.reason,
-                transport: event.routing.transport ?? "unknown",
-                conversationId: event.correlation.conversationId ?? "unknown"
-              });
-
-              if (!addressedDecision.addressed) {
-                pipelineOutcome = "ignored_unaddressed";
-                return;
-              }
-            } else {
-              span.setAttribute("dot.addressed", true);
-              span.setAttribute("dot.addressed.reason", addressedDecision.reason);
-              persistence.saveAccessAudit({
-                messageId: event.payload.messageId,
-                actorRole: accessDecision.actorRole,
-                canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
-                decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
-                addressed: true,
-                addressedReason: addressedDecision.reason,
-                transport: event.routing.transport ?? "unknown",
-                conversationId: event.correlation.conversationId ?? "unknown"
-              });
-            }
+            let addressed = Boolean(deterministicAddressedDecision);
+            let addressedReason = deterministicAddressedDecision?.reason ?? "llm_not_addressed";
 
             let hasSavedUserTurn = false;
-            const conversationId = event.correlation.conversationId ?? "";
 
             const saveUserConversationTurn = () => {
               if (hasSavedUserTurn || !content) {
@@ -180,21 +151,6 @@ export function registerMessagePipeline(params: {
                 }
               : undefined;
 
-            const getPendingToolSession = (): PendingConversationalToolSessionRecord | null => {
-              if (!conversationId) {
-                return null;
-              }
-              const session = persistence.getPendingConversationalToolSession(conversationId);
-              if (!session) {
-                return null;
-              }
-              if (new Date(session.expiresAt).getTime() <= Date.now()) {
-                persistence.clearPendingConversationalToolSession(conversationId);
-                return null;
-              }
-              return session;
-            };
-
             const savePendingToolSession = (params: {
               toolName: string;
               args: Record<string, string | number>;
@@ -221,6 +177,77 @@ export function registerMessagePipeline(params: {
                 expiresAt: new Date(now.getTime() + PENDING_TOOL_SESSION_TTL_MS).toISOString()
               });
             };
+
+            if (!deterministicAddressedDecision) {
+              if (!chatService.inferAddressedToolDecision) {
+                throw new Error("Chat service cannot infer addressedness for ambiguous messages");
+              }
+              const inferredAddressed = await chatService.inferAddressedToolDecision(content, recentConversation);
+              logger.info(
+                {
+                  messageId: event.payload.messageId,
+                  correlationId: event.correlation.correlationId,
+                  conversationId,
+                  stage: "address.infer",
+                  provider: inferredAddressed.route,
+                  inputUserMessage: content,
+                  promptMessages: inferredAddressed.promptMessages,
+                  promptMessagesPresent: Array.isArray(inferredAddressed.promptMessages) && inferredAddressed.promptMessages.length > 0,
+                  rawModelOutput: inferredAddressed.rawModelOutput ?? null,
+                  rawModelOutputPresent:
+                    typeof inferredAddressed.rawModelOutput === "string" && inferredAddressed.rawModelOutput.length > 0,
+                  parsedDecision: inferredAddressed.decision
+                },
+                "Intent classification debug trace"
+              );
+
+              if (inferredAddressed.decision.addressed) {
+                addressed = true;
+                addressedReason = "llm_addressed";
+                precomputedIntentDecision =
+                  inferredAddressed.decision.decision === "respond"
+                    ? null
+                    : {
+                        route: inferredAddressed.route,
+                        powerStatus: inferredAddressed.powerStatus,
+                        decision: {
+                          decision: "execute_tool",
+                          toolName: inferredAddressed.decision.toolName,
+                          reason: inferredAddressed.decision.reason,
+                          confidence: inferredAddressed.decision.confidence,
+                          args: inferredAddressed.decision.args
+                        }
+                      };
+                addressedRespondRequiresOwnerChat = inferredAddressed.decision.decision === "respond";
+              }
+            }
+
+            span.setAttribute("dot.addressed", addressed);
+            span.setAttribute("dot.addressed.reason", addressedReason);
+            logger.info(
+              {
+                messageId: event.payload.messageId,
+                addressed,
+                addressedReason,
+                actorRole: accessDecision.actorRole
+              },
+              "Evaluated message addressedness"
+            );
+            persistence.saveAccessAudit({
+              messageId: event.payload.messageId,
+              actorRole: accessDecision.actorRole,
+              canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
+              decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
+              addressed,
+              addressedReason,
+              transport: event.routing.transport ?? "unknown",
+              conversationId: event.correlation.conversationId ?? "unknown"
+            });
+
+            if (!addressed) {
+              pipelineOutcome = "ignored_unaddressed";
+              return;
+            }
 
             if (accessDecision.canUsePrivilegedFeatures) {
               if (!persistence.settings.hasCompletedOnboarding()) {
@@ -352,13 +379,31 @@ export function registerMessagePipeline(params: {
               }
 
               try {
+                if (addressedRespondRequiresOwnerChat) {
+                  saveUserConversationTurn();
+                  const updatedConversation = persistence.listRecentConversationTurns(
+                    event.correlation.conversationId ?? "",
+                    RECENT_CHAT_HISTORY_LIMIT
+                  );
+                  const response = await chatService.generateOwnerReply({
+                    userMessage: content,
+                    recentConversation: updatedConversation.slice(0, -1)
+                  });
+                  logger.info(
+                    { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
+                    "Generated owner chat response"
+                  );
+                  pipelineOutcome = "owner_chat";
+                  await publishReply(response.reply, response.route, false);
+                  return;
+                }
+
                 let activePendingToolSession: PendingConversationalToolSessionRecord | null = null;
                 try {
-                  const recentConversation = persistence.listRecentConversationTurns(conversationId, RECENT_CHAT_HISTORY_LIMIT);
-                  const pendingToolSession = getPendingToolSession();
                   activePendingToolSession = pendingToolSession;
-                  const inferred =
-                    pendingToolSession?.toolName === "reminder.add"
+                  const inferred = precomputedIntentDecision
+                    ? precomputedIntentDecision
+                    : pendingToolSession?.toolName === "reminder.add"
                       ? {
                           route: "deterministic" as const,
                           powerStatus: chatService.getPowerStatus("deterministic"),
@@ -378,24 +423,26 @@ export function registerMessagePipeline(params: {
                           })
                         : await chatService.inferToolDecision(content, recentConversation);
 
-                  logger.info(
-                    {
-                      messageId: event.payload.messageId,
-                      correlationId: event.correlation.correlationId,
-                      conversationId,
-                      stage: pendingToolSession ? "tool.resume" : "tool.infer",
-                      provider: inferred.route,
-                      inputUserMessage: content,
-                      promptMessages: "promptMessages" in inferred ? inferred.promptMessages : undefined,
-                      promptMessagesPresent:
-                        "promptMessages" in inferred && Array.isArray(inferred.promptMessages) && inferred.promptMessages.length > 0,
-                      rawModelOutput: "rawModelOutput" in inferred ? inferred.rawModelOutput ?? null : null,
-                      rawModelOutputPresent:
-                        "rawModelOutput" in inferred && typeof inferred.rawModelOutput === "string" && inferred.rawModelOutput.length > 0,
-                      parsedDecision: inferred.decision
-                    },
-                    "Intent classification debug trace"
-                  );
+                  if (!precomputedIntentDecision) {
+                    logger.info(
+                      {
+                        messageId: event.payload.messageId,
+                        correlationId: event.correlation.correlationId,
+                        conversationId,
+                        stage: pendingToolSession ? "tool.resume" : "tool.infer",
+                        provider: inferred.route,
+                        inputUserMessage: content,
+                        promptMessages: "promptMessages" in inferred ? inferred.promptMessages : undefined,
+                        promptMessagesPresent:
+                          "promptMessages" in inferred && Array.isArray(inferred.promptMessages) && inferred.promptMessages.length > 0,
+                        rawModelOutput: "rawModelOutput" in inferred ? inferred.rawModelOutput ?? null : null,
+                        rawModelOutputPresent:
+                          "rawModelOutput" in inferred && typeof inferred.rawModelOutput === "string" && inferred.rawModelOutput.length > 0,
+                        parsedDecision: inferred.decision
+                      },
+                      "Intent classification debug trace"
+                    );
+                  }
 
                   if (inferred.decision.decision === "respond") {
                     if (pendingToolSession) {
@@ -416,9 +463,6 @@ export function registerMessagePipeline(params: {
                   }
 
                   if (inferred.decision.decision === "execute_tool") {
-                    if (!chatService.renderToolResult) {
-                      throw new Error("Chat service cannot render conversational tool results");
-                    }
                     let resolvedArgs =
                       pendingToolSession && pendingToolSession.toolName === inferred.decision.toolName
                         ? { ...pendingToolSession.args, ...inferred.decision.args }
@@ -473,6 +517,9 @@ export function registerMessagePipeline(params: {
                         ...resolvedArgs,
                         ...reminderIntakeOutcome.args
                       };
+                    }
+                    if (!chatService.renderToolResult) {
+                      throw new Error("Chat service cannot render conversational tool results");
                     }
                     const result = await renderConversationalToolResult({
                       result: await executeConversationalToolCall({
@@ -640,8 +687,24 @@ function mapInboundEventToIncomingMessage(event: InboundMessageReceivedEvent): I
     content: event.payload.content,
     isDirectMessage: event.payload.isDirectMessage,
     mentionedBot: event.payload.mentionedBot,
+    repliedToMessageId: event.payload.repliedToMessageId,
+    repliedToBot: event.payload.repliedToBot,
     createdAt: event.occurredAt
   };
+}
+
+function isValidExplicitCommand(content: string): boolean {
+  return (
+    isSettingsCommand(content) ||
+    isNewsPreferencesCommand(content) ||
+    isPersonalityCommand(content) ||
+    isContactCommand(content) ||
+    isPolicyCommand(content) ||
+    isEmailCommand(content) ||
+    isCalendarCommand(content) ||
+    isReminderCommand(content) ||
+    parseExplicitToolDecision(content) !== null
+  );
 }
 
 function reminderIntakeArgsFromState(state: ReminderIntakeState): Record<string, string | number> {

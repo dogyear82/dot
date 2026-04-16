@@ -414,6 +414,69 @@ test("llm service routes obvious schedule questions through the model intent cla
   });
 });
 
+test("llm service can infer addressedness and intent for ambiguous messages with a neutral classifier prompt", async () => {
+  const store = createStore();
+  const capturedMessages: ChatMessage[][] = [];
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    providers: [
+      new FakeProvider("ollama", "local", true, async () => {
+        throw new Error("chat providers should not be used for addressedness inference");
+      })
+    ],
+    intentProviders: [
+      new FakeProvider("1minai-intent", "hosted", true, async (messages) => {
+        capturedMessages.push(messages);
+        return '{"addressed":true,"decision":"execute_tool","toolName":"reminder.add","reason":"the user is asking Dot to create a reminder but did not provide full details","confidence":"high","args":{}}';
+      })
+    ]
+  });
+
+  const result = await service.inferAddressedToolDecision?.("I want another reminder set");
+
+  assert(result);
+  assert.equal(result.route, "hosted");
+  assert.deepEqual(result.decision, {
+    addressed: true,
+    decision: "execute_tool",
+    toolName: "reminder.add",
+    reason: "the user is asking Dot to create a reminder but did not provide full details",
+    confidence: "high",
+    args: {}
+  });
+  assert.match(capturedMessages[0]?.[0]?.content ?? "", /neutral classifier for ambiguous Discord messages involving Dot/i);
+  assert.doesNotMatch(capturedMessages[0]?.[0]?.content ?? "", /auntie_dot/i);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Recent conversation:/i);
+});
+
+test("llm service can return addressed false for ambiguous shared-channel chatter", async () => {
+  const store = createStore();
+
+  const service = createLlmService({
+    config: createConfig(),
+    settings: store,
+    intentProviders: [
+      new FakeProvider(
+        "1minai-intent",
+        "hosted",
+        true,
+        async () => '{"addressed":false,"reason":"the message is not clearly directed to Dot"}'
+      )
+    ]
+  });
+
+  const result = await service.inferAddressedToolDecision?.("can somebody send me that link");
+
+  assert(result);
+  assert.equal(result.route, "hosted");
+  assert.deepEqual(result.decision, {
+    addressed: false,
+    reason: "the message is not clearly directed to Dot"
+  });
+});
+
 test("llm service can generate a grounded reply and append source links", async () => {
   const store = createStore();
   const capturedMessages: ChatMessage[][] = [];

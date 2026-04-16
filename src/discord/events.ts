@@ -50,6 +50,8 @@ export function createDiscordInboundMessageEvent(params: {
       addressedContent,
       isDirectMessage: message.isDirectMessage,
       mentionedBot: message.mentionedBot,
+      repliedToMessageId: message.repliedToMessageId ?? null,
+      repliedToBot: Boolean(message.repliedToBot),
       replyRoute: {
         transport: "discord",
         channelId: message.channelId,
