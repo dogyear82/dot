@@ -106,6 +106,7 @@ export function registerMessagePipeline(params: {
                   decision: import("./toolInvocation.js").ConversationalIntentDecision;
                 }
               | null = null;
+            let addressedRespondRequiresOwnerChat = false;
 
             span.setAttribute("dot.command.explicit", isExplicitCommand);
             let addressed = Boolean(deterministicAddressedDecision);
@@ -205,15 +206,7 @@ export function registerMessagePipeline(params: {
                 addressedReason = "llm_addressed";
                 precomputedIntentDecision =
                   inferredAddressed.decision.decision === "respond"
-                    ? {
-                        route: inferredAddressed.route,
-                        powerStatus: inferredAddressed.powerStatus,
-                        decision: {
-                          decision: "respond",
-                          reason: inferredAddressed.decision.reason,
-                          response: inferredAddressed.decision.response
-                        }
-                      }
+                    ? null
                     : {
                         route: inferredAddressed.route,
                         powerStatus: inferredAddressed.powerStatus,
@@ -225,6 +218,7 @@ export function registerMessagePipeline(params: {
                           args: inferredAddressed.decision.args
                         }
                       };
+                addressedRespondRequiresOwnerChat = inferredAddressed.decision.decision === "respond";
               }
             }
 
@@ -385,6 +379,25 @@ export function registerMessagePipeline(params: {
               }
 
               try {
+                if (addressedRespondRequiresOwnerChat) {
+                  saveUserConversationTurn();
+                  const updatedConversation = persistence.listRecentConversationTurns(
+                    event.correlation.conversationId ?? "",
+                    RECENT_CHAT_HISTORY_LIMIT
+                  );
+                  const response = await chatService.generateOwnerReply({
+                    userMessage: content,
+                    recentConversation: updatedConversation.slice(0, -1)
+                  });
+                  logger.info(
+                    { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
+                    "Generated owner chat response"
+                  );
+                  pipelineOutcome = "owner_chat";
+                  await publishReply(response.reply, response.route, false);
+                  return;
+                }
+
                 let activePendingToolSession: PendingConversationalToolSessionRecord | null = null;
                 try {
                   activePendingToolSession = pendingToolSession;

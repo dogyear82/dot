@@ -2295,6 +2295,104 @@ test("message pipeline can use LLM addressedness inference to start reminder int
   }
 });
 
+test("message pipeline routes addressed conversational responses through normal owner chat generation", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  let ownerReplyCalls = 0;
+  const chatService: ChatService = {
+    async generateOwnerReply({ userMessage }) {
+      ownerReplyCalls += 1;
+      assert.equal(userMessage, "who's ass are we punching? Dot?");
+      return { route: "local", powerStatus: "standby", reply: "Well now, honey, slow down and tell me what you're asking." };
+    },
+    async inferAddressedToolDecision() {
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        decision: {
+          addressed: true,
+          decision: "respond",
+          reason: "the user is talking to Dot conversationally",
+          response: "I am Dot, your assistant. Generic classifier text."
+        }
+      };
+    },
+    async inferToolDecision() {
+      throw new Error("addressed conversational responses should not invoke regular tool inference");
+    },
+    getPowerStatus() {
+      return "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-ambiguous-chat",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "who's ass are we punching? Dot?",
+          addressedContent: "who's ass are we punching? Dot?",
+          isDirectMessage: false,
+          mentionedBot: false,
+          repliedToMessageId: null,
+          repliedToBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: "guild-1",
+            replyTo: "msg-ambiguous-chat"
+          }
+        }
+      })
+    );
+
+    assert.equal(ownerReplyCalls, 1);
+    assert.equal(outbound.length, 1);
+    assert.equal(
+      outbound[0]?.payload.content,
+      "Well now, honey, slow down and tell me what you're asking.\n\n[mode: normal]"
+    );
+
+    const auditRow = persistence.db
+      .prepare<[string], { addressed: number | null; addressedReason: string | null }>(
+        "SELECT addressed, addressed_reason AS addressedReason FROM access_audit WHERE message_id = ?"
+      )
+      .get("msg-ambiguous-chat");
+
+    assert.equal(auditRow?.addressed, 1);
+    assert.equal(auditRow?.addressedReason, "llm_addressed");
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline treats short confirmation replies as addressed when a pending reminder session exists", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
