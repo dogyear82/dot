@@ -82,6 +82,8 @@ export interface InboundMessagePayload {
   addressedContent: string;
   isDirectMessage: boolean;
   mentionedBot: boolean;
+  repliedToMessageId?: string | null;
+  repliedToBot?: boolean;
   replyRoute: InboundReplyRoute;
 }
 

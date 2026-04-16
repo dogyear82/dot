@@ -330,6 +330,22 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
         listUpcomingEvents: async () => []
       } as never,
       chatService: {
+        inferAddressedToolDecision: async (userMessage, recentConversation) => {
+          classifiedMessages.push({
+            userMessage,
+            recentConversation: (recentConversation ?? []).map((turn) => ({ role: turn.role, content: turn.content }))
+          });
+          return {
+            route: "local",
+            powerStatus: "standby",
+            decision: {
+              addressed: true,
+              decision: "respond",
+              reason: "follow-up is addressed to Dot",
+              response: "freeform reply"
+            }
+          };
+        },
         inferToolDecision: async (userMessage, recentConversation) => {
           classifiedMessages.push({
             userMessage,
@@ -421,7 +437,7 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      assert.equal(classifiedMessages.length, 1);
+      assert.equal(classifiedMessages.filter((entry) => entry.userMessage === "and what about tomorrow?").length, 1);
       assert.equal(classifiedMessages[0]?.userMessage, "and what about tomorrow?");
       assert.deepEqual(classifiedMessages[0]?.recentConversation, [
         { role: "user", content: "!settings" },
@@ -455,7 +471,7 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      assert.equal(classifiedMessages.length, 1);
+      assert.equal(classifiedMessages.length, 3);
     } finally {
       unregisterEgress();
       unsubscribe();

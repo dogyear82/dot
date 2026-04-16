@@ -14,9 +14,13 @@ import type {
   WorldLookupSourceName
 } from "../types.js";
 import {
+  buildAddressedToolInferencePrompt,
   buildPendingToolResolutionPrompt,
   buildToolInferencePrompt,
+  parseAddressedToolDecision,
+  parsePendingToolDecision,
   parseToolDecision,
+  type AddressedToolIntentDecision,
   type ConversationalIntentDecision
 } from "../toolInvocation.js";
 import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./persona.js";
@@ -62,6 +66,10 @@ export interface LlmService {
     renderInstructions: ToolRenderInstructions;
     recentConversation?: ConversationTurnRecord[];
   }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
+  inferAddressedToolDecision?(
+    userMessage: string,
+    recentConversation?: ConversationTurnRecord[]
+  ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: AddressedToolIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
   inferToolDecision(
     userMessage: string,
     recentConversation?: ConversationTurnRecord[]
@@ -274,6 +282,34 @@ export function createLlmService(params: {
         promptMessages: reply.promptMessages
       };
     },
+    async inferAddressedToolDecision(userMessage, recentConversation) {
+      const messages = buildAddressedConversationalIntentMessages({
+        userMessage,
+        recentConversation
+      });
+      const { route, reply } = await executeProviderRequest({
+        mode: getLlmMode(params.settings),
+        providers: intentProviders,
+        operation: "address.infer",
+        invoke: async (provider) => {
+          const rawModelOutput = await provider.generate(messages);
+          return {
+            promptMessages: messages,
+            rawModelOutput,
+            decision: parseAddressedToolDecision(rawModelOutput)
+          };
+        },
+        failurePrefix: "No LLM provider could infer addressedness and intent."
+      });
+
+      return {
+        route,
+        powerStatus: getPowerStatus(route),
+        decision: reply.decision,
+        rawModelOutput: reply.rawModelOutput,
+        promptMessages: reply.promptMessages
+      };
+    },
     async resolvePendingToolDecision({ userMessage, session, recentConversation }) {
       const messages = buildPendingToolResolutionMessages({
         userMessage,
@@ -292,7 +328,7 @@ export function createLlmService(params: {
           return {
             promptMessages: messages,
             rawModelOutput,
-            decision: parseToolDecision(rawModelOutput)
+            decision: parsePendingToolDecision(rawModelOutput)
           };
         },
         failurePrefix: "No LLM provider could resolve a pending tool clarification."
@@ -447,6 +483,30 @@ function buildConversationalIntentMessages(params: {
     {
       role: "user",
       content: buildToolInferencePrompt(params.userMessage)
+    }
+  ];
+}
+
+function buildAddressedConversationalIntentMessages(params: {
+  userMessage: string;
+  recentConversation?: ConversationTurnRecord[];
+}): ChatMessage[] {
+  const recentConversationSummary =
+    (params.recentConversation ?? []).length > 0
+      ? params.recentConversation
+          ?.slice(-6)
+          .map((turn) => `${turn.role === "assistant" ? "Dot" : "User"}: ${turn.content}`)
+          .join("\n")
+      : "No recent conversation.";
+
+  return [
+    {
+      role: "system",
+      content: `You are a neutral classifier for ambiguous Discord messages involving Dot. ${buildCurrentDateTimeInstruction()} Return strict JSON only. Do not add markdown fences.`
+    },
+    {
+      role: "user",
+      content: `${buildAddressedToolInferencePrompt(params.userMessage)}\nRecent conversation:\n${recentConversationSummary}`
     }
   ];
 }
