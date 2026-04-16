@@ -34,6 +34,7 @@ export interface LlmService {
   generateOwnerReply(params: {
     userMessage: string;
     recentConversation?: ConversationTurnRecord[];
+    currentSpeakerLabel?: string;
   }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
   generateGroundedReply?(params: {
     userMessage: string;
@@ -68,16 +69,19 @@ export interface LlmService {
   }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; reply: string }>;
   inferAddressedToolDecision?(
     userMessage: string,
-    recentConversation?: ConversationTurnRecord[]
+    recentConversation?: ConversationTurnRecord[],
+    currentSpeakerLabel?: string
   ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: AddressedToolIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
   inferToolDecision(
     userMessage: string,
-    recentConversation?: ConversationTurnRecord[]
+    recentConversation?: ConversationTurnRecord[],
+    currentSpeakerLabel?: string
   ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
   resolvePendingToolDecision?(params: {
     userMessage: string;
     session: PendingConversationalToolSessionRecord;
     recentConversation?: ConversationTurnRecord[];
+    currentSpeakerLabel?: string;
   }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
   getPowerStatus(route?: LlmRoute): LlmPowerStatus;
 }
@@ -130,10 +134,11 @@ export function createLlmService(params: {
   };
 
   return {
-    async generateOwnerReply({ userMessage, recentConversation }) {
+    async generateOwnerReply({ userMessage, recentConversation, currentSpeakerLabel }) {
       const messages = buildMessages({
         userMessage,
         recentConversation,
+        currentSpeakerLabel,
         mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
         balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
         settings: params.settings
@@ -251,10 +256,11 @@ export function createLlmService(params: {
         reply
       };
     },
-    async inferToolDecision(userMessage, recentConversation) {
+    async inferToolDecision(userMessage, recentConversation, currentSpeakerLabel) {
       const messages = buildConversationalIntentMessages({
         userMessage,
         recentConversation,
+        currentSpeakerLabel,
         mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
         balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
         settings: params.settings
@@ -282,10 +288,11 @@ export function createLlmService(params: {
         promptMessages: reply.promptMessages
       };
     },
-    async inferAddressedToolDecision(userMessage, recentConversation) {
+    async inferAddressedToolDecision(userMessage, recentConversation, currentSpeakerLabel) {
       const messages = buildAddressedConversationalIntentMessages({
         userMessage,
-        recentConversation
+        recentConversation,
+        currentSpeakerLabel
       });
       const { route, reply } = await executeProviderRequest({
         mode: getLlmMode(params.settings),
@@ -310,11 +317,12 @@ export function createLlmService(params: {
         promptMessages: reply.promptMessages
       };
     },
-    async resolvePendingToolDecision({ userMessage, session, recentConversation }) {
+    async resolvePendingToolDecision({ userMessage, session, recentConversation, currentSpeakerLabel }) {
       const messages = buildPendingToolResolutionMessages({
         userMessage,
         session,
         recentConversation,
+        currentSpeakerLabel,
         mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
         balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
         settings: params.settings
@@ -436,6 +444,7 @@ async function executeProviderRequest<T>(params: {
 function buildMessages(params: {
   userMessage: string;
   recentConversation?: ConversationTurnRecord[];
+  currentSpeakerLabel?: string;
   mode: PersonaMode;
   balance: PersonaBalance;
   settings: SettingsStore;
@@ -449,10 +458,14 @@ function buildMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()}`
     },
-    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
-      content: params.userMessage
+      content: buildConversationTranscriptPrompt({
+        recentConversation: params.recentConversation,
+        currentSpeakerLabel: params.currentSpeakerLabel,
+        currentMessage: params.userMessage,
+        instruction: "Reply naturally to the latest message in Dot's active personality profile. Pay attention to which participant said what."
+      })
     }
   ];
 }
@@ -460,6 +473,7 @@ function buildMessages(params: {
 function buildConversationalIntentMessages(params: {
   userMessage: string;
   recentConversation?: ConversationTurnRecord[];
+  currentSpeakerLabel?: string;
   mode: PersonaMode;
   balance: PersonaBalance;
   settings: SettingsStore;
@@ -473,10 +487,14 @@ function buildConversationalIntentMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()} Return only strict JSON with either a respond or execute_tool decision. If you choose respond, the response field must be the final user-facing reply in Dot's normal voice. Do not add markdown fences.`
     },
-    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
-      content: buildToolInferencePrompt(params.userMessage)
+      content: buildConversationTranscriptPrompt({
+        recentConversation: params.recentConversation,
+        currentSpeakerLabel: params.currentSpeakerLabel,
+        currentMessage: params.userMessage,
+        instruction: buildToolInferencePrompt(params.userMessage, { includeLatestMessage: false })
+      })
     }
   ];
 }
@@ -484,15 +502,8 @@ function buildConversationalIntentMessages(params: {
 function buildAddressedConversationalIntentMessages(params: {
   userMessage: string;
   recentConversation?: ConversationTurnRecord[];
+  currentSpeakerLabel?: string;
 }): ChatMessage[] {
-  const recentConversationSummary =
-    (params.recentConversation ?? []).length > 0
-      ? params.recentConversation
-          ?.slice(-6)
-          .map((turn) => formatConversationTurnLine(turn))
-          .join("\n")
-      : "No recent conversation.";
-
   return [
     {
       role: "system",
@@ -500,7 +511,12 @@ function buildAddressedConversationalIntentMessages(params: {
     },
     {
       role: "user",
-      content: `${buildAddressedToolInferencePrompt(params.userMessage)}\nRecent conversation:\n${recentConversationSummary}`
+      content: buildConversationTranscriptPrompt({
+        recentConversation: params.recentConversation?.slice(-6),
+        currentSpeakerLabel: params.currentSpeakerLabel,
+        currentMessage: params.userMessage,
+        instruction: buildAddressedToolInferencePrompt(params.userMessage, { includeLatestMessage: false })
+      })
     }
   ];
 }
@@ -509,6 +525,7 @@ function buildPendingToolResolutionMessages(params: {
   userMessage: string;
   session: PendingConversationalToolSessionRecord;
   recentConversation?: ConversationTurnRecord[];
+  currentSpeakerLabel?: string;
   mode: PersonaMode;
   balance: PersonaBalance;
   settings: SettingsStore;
@@ -522,16 +539,21 @@ function buildPendingToolResolutionMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()} Return only strict JSON with either a respond or execute_tool decision. If you choose respond, the response field must be the final user-facing reply in Dot's normal voice. Do not add markdown fences.`
     },
-    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
-      content: buildPendingToolResolutionPrompt({
-        userMessage: params.userMessage,
-        toolName: params.session.toolName as ConversationalToolName,
-        existingArgs: params.session.args,
-        originalUserMessage: params.session.originalUserMessage,
-        pendingStatus: params.session.pendingStatus,
-        pendingPrompt: params.session.pendingPrompt
+      content: buildConversationTranscriptPrompt({
+        recentConversation: params.recentConversation,
+        currentSpeakerLabel: params.currentSpeakerLabel,
+        currentMessage: params.userMessage,
+        instruction: buildPendingToolResolutionPrompt({
+          userMessage: params.userMessage,
+          toolName: params.session.toolName as ConversationalToolName,
+          existingArgs: params.session.args,
+          originalUserMessage: params.session.originalUserMessage,
+          pendingStatus: params.session.pendingStatus,
+          pendingPrompt: params.session.pendingPrompt,
+          includeLatestMessage: false
+        })
       })
     }
   ];
@@ -750,6 +772,26 @@ function formatRecentConversationMessages(recentConversation?: ConversationTurnR
     role: turn.role,
     content: formatConversationTurnLine(turn)
   }));
+}
+
+function buildConversationTranscriptPrompt(params: {
+  recentConversation?: ConversationTurnRecord[];
+  currentSpeakerLabel?: string;
+  currentMessage: string;
+  instruction: string;
+}): string {
+  const transcript = formatConversationTranscript(params.recentConversation, params.currentSpeakerLabel, params.currentMessage);
+  return [`Conversation transcript:`, transcript, "", params.instruction].join("\n");
+}
+
+function formatConversationTranscript(
+  recentConversation: ConversationTurnRecord[] | undefined,
+  currentSpeakerLabel: string | undefined,
+  currentMessage: string
+): string {
+  const lines = (recentConversation ?? []).map((turn) => formatConversationTurnLine(turn));
+  lines.push(`${currentSpeakerLabel ?? "Current speaker"}: ${currentMessage}`);
+  return lines.join("\n");
 }
 
 function formatConversationTurnLine(turn: ConversationTurnRecord): string {

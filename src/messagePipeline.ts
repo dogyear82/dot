@@ -75,6 +75,7 @@ export function registerMessagePipeline(params: {
             );
 
             const content = event.payload.addressedContent.trim();
+            const currentSpeakerLabel = formatCurrentSpeakerLabel(event);
             const conversationId = event.correlation.conversationId ?? "";
             const recentConversation = persistence.listRecentConversationTurns(conversationId, RECENT_CHAT_HISTORY_LIMIT);
             const message = mapInboundEventToIncomingMessage(event);
@@ -184,7 +185,7 @@ export function registerMessagePipeline(params: {
               if (!chatService.inferAddressedToolDecision) {
                 throw new Error("Chat service cannot infer addressedness for ambiguous messages");
               }
-              const inferredAddressed = await chatService.inferAddressedToolDecision(content, recentConversation);
+              const inferredAddressed = await chatService.inferAddressedToolDecision(content, recentConversation, currentSpeakerLabel);
               logger.info(
                 {
                   messageId: event.payload.messageId,
@@ -389,7 +390,8 @@ export function registerMessagePipeline(params: {
                   );
                   const response = await chatService.generateOwnerReply({
                     userMessage: content,
-                    recentConversation: updatedConversation.slice(0, -1)
+                    recentConversation: updatedConversation.slice(0, -1),
+                    currentSpeakerLabel
                   });
                   logger.info(
                     { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
@@ -421,9 +423,10 @@ export function registerMessagePipeline(params: {
                         ? await chatService.resolvePendingToolDecision({
                             userMessage: content,
                             session: pendingToolSession,
-                            recentConversation
+                            recentConversation,
+                            currentSpeakerLabel
                           })
-                        : await chatService.inferToolDecision(content, recentConversation);
+                        : await chatService.inferToolDecision(content, recentConversation, currentSpeakerLabel);
 
                   if (!precomputedIntentDecision) {
                     logger.info(
@@ -604,7 +607,8 @@ export function registerMessagePipeline(params: {
                 );
                 const response = await chatService.generateOwnerReply({
                   userMessage: content,
-                  recentConversation: updatedConversation.slice(0, -1)
+                  recentConversation: updatedConversation.slice(0, -1),
+                  currentSpeakerLabel
                 });
                 logger.info(
                   { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
@@ -656,7 +660,8 @@ export function registerMessagePipeline(params: {
               );
               const response = await chatService.generateOwnerReply({
                 userMessage: content,
-                recentConversation: updatedConversation.slice(0, -1)
+                recentConversation: updatedConversation.slice(0, -1),
+                currentSpeakerLabel
               });
               logger.info(
                 { route: response.route, powerStatus: response.powerStatus, messageId: event.payload.messageId },
@@ -721,4 +726,17 @@ function reminderIntakeArgsFromState(state: ReminderIntakeState): Record<string,
     args.dueAt = state.data.dueAt;
   }
   return args;
+}
+
+function formatCurrentSpeakerLabel(event: InboundMessageReceivedEvent): string {
+  const displayName = event.payload.sender.displayName;
+  const actorId = event.payload.sender.actorId;
+  switch (event.payload.sender.actorRole) {
+    case "owner":
+      return displayName ? `Owner (${displayName})` : "Owner";
+    case "non-owner":
+      return displayName ? `Participant (${displayName})` : `Participant (${actorId})`;
+    default:
+      return displayName ? `User (${displayName})` : `User (${actorId})`;
+  }
 }

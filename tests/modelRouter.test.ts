@@ -261,14 +261,16 @@ test("llm service includes recent local conversation turns before the current us
 
   await service.generateOwnerReply({
     userMessage: "current question",
-    recentConversation
+    recentConversation,
+    currentSpeakerLabel: "Owner (tan)"
   });
 
-  assert.deepEqual(capturedMessages[0]?.slice(1), [
-    { role: "user", content: "Owner (tan): earlier question" },
-    { role: "assistant", content: "Dot: earlier answer" },
-    { role: "user", content: "current question" }
-  ]);
+  assert.equal(capturedMessages[0]?.length, 2);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Conversation transcript:/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Owner \(tan\): earlier question/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Dot: earlier answer/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Owner \(tan\): current question/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Reply naturally to the latest message/);
 });
 
 test("llm intent classification includes recent conversation so repairs can recover topic context", async () => {
@@ -315,13 +317,18 @@ test("llm intent classification includes recent conversation so repairs can reco
     ]
   });
 
-  await service.inferToolDecision("i'm asking for current events, not history. wikipedia is not news", recentConversation);
+  await service.inferToolDecision(
+    "i'm asking for current events, not history. wikipedia is not news",
+    recentConversation,
+    "Owner (tan)"
+  );
 
-  assert.deepEqual(capturedMessages[0]?.slice(1, 3), [
-    { role: "user", content: "Owner (tan): what's going on in ukraine right now?" },
-    { role: "assistant", content: "Dot: According to Wikipedia, Ukraine is a country in Eastern Europe." }
-  ]);
-  assert.match(capturedMessages[0]?.[3]?.content ?? "", /current events or news, prefer execute_tool world\.lookup/i);
+  assert.equal(capturedMessages[0]?.length, 2);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Conversation transcript:/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Owner \(tan\): what's going on in ukraine right now\?/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Dot: According to Wikipedia, Ukraine is a country in Eastern Europe\./);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Owner \(tan\): i'm asking for current events, not history\. wikipedia is not news/);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /current events or news, prefer execute_tool world\.lookup/i);
 });
 
 test("llm service can infer a structured tool decision", async () => {
@@ -488,7 +495,7 @@ test("llm service can infer addressedness and intent for ambiguous messages with
     ]
   });
 
-  const result = await service.inferAddressedToolDecision?.("I want another reminder set", recentConversation);
+  const result = await service.inferAddressedToolDecision?.("I want another reminder set", recentConversation, "Owner (tan)");
 
   assert(result);
   assert.equal(result.route, "hosted");
@@ -502,11 +509,12 @@ test("llm service can infer addressedness and intent for ambiguous messages with
   });
   assert.match(capturedMessages[0]?.[0]?.content ?? "", /neutral classifier for ambiguous Discord messages involving Dot/i);
   assert.doesNotMatch(capturedMessages[0]?.[0]?.content ?? "", /auntie_dot/i);
-  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Recent conversation:/i);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Conversation transcript:/i);
   assert.match(capturedMessages[0]?.[1]?.content ?? "", /Owner \(tan\): What did Alice say\?/i);
   assert.match(capturedMessages[0]?.[1]?.content ?? "", /Participant \(alice\): I can do Tuesday\./i);
   assert.match(capturedMessages[0]?.[1]?.content ?? "", /Participant \(bob\): Wednesday works better for me\./i);
   assert.match(capturedMessages[0]?.[1]?.content ?? "", /Dot: Well now, let me think on that\./i);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Owner \(tan\): I want another reminder set/);
 });
 
 test("llm service can return addressed false for ambiguous shared-channel chatter", async () => {

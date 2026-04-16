@@ -296,7 +296,12 @@ export function parseExplicitToolDecision(content: string): ToolDecision | null 
   return null;
 }
 
-export function buildToolInferencePrompt(userMessage: string): string {
+export function buildToolInferencePrompt(
+  userMessage: string,
+  options?: { includeLatestMessage?: boolean; latestMessageLabel?: string }
+): string {
+  const includeLatestMessage = options?.includeLatestMessage ?? true;
+  const latestMessageLabel = options?.latestMessageLabel ?? "Owner message";
   return [
     "Decide whether you should respond directly or execute one of the available tools.",
     "Return only strict JSON with one of two decisions: respond or execute_tool.",
@@ -346,11 +351,16 @@ export function buildToolInferencePrompt(userMessage: string): string {
     '- execute_tool complete reminder: {"decision":"execute_tool","toolName":"reminder.add","reason":"owner provided a specific reminder time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-16T16:00:00.000Z"}}',
     '- execute_tool repaired current-events lookup: {"decision":"execute_tool","toolName":"world.lookup","reason":"owner is asking for current public information","confidence":"high","args":{"query":"what is happening in Myanmar right now"}}',
     '- disallowed respond: {"decision":"respond","reason":"...","response":"I set that reminder for tomorrow."}',
-    `Owner message: ${JSON.stringify(userMessage)}`
+    ...(includeLatestMessage ? [`${latestMessageLabel}: ${JSON.stringify(userMessage)}`] : [])
   ].join("\n");
 }
 
-export function buildAddressedToolInferencePrompt(userMessage: string): string {
+export function buildAddressedToolInferencePrompt(
+  userMessage: string,
+  options?: { includeLatestMessage?: boolean; latestMessageLabel?: string }
+): string {
+  const includeLatestMessage = options?.includeLatestMessage ?? true;
+  const latestMessageLabel = options?.latestMessageLabel ?? "Latest message";
   return [
     "You are a neutral classifier for ambiguous Discord messages involving Dot.",
     "Deterministic fast paths are already handled before this step and are not your job. Those include direct messages to Dot, explicit mentions of Dot, replies to Dot, valid explicit !commands, and active pending tool sessions.",
@@ -402,7 +412,7 @@ export function buildAddressedToolInferencePrompt(userMessage: string): string {
     '{"addressed":true,"decision":"respond","reason":"the user is talking to Dot conversationally","response":"You\'re welcome."}',
     'Latest message: "can somebody send me that link"',
     '{"addressed":false,"reason":"the message is not clearly directed to Dot"}',
-    `Latest message: ${JSON.stringify(userMessage)}`
+    ...(includeLatestMessage ? [`${latestMessageLabel}: ${JSON.stringify(userMessage)}`] : [])
   ].join("\n");
 }
 
@@ -413,7 +423,11 @@ export function buildPendingToolResolutionPrompt(params: {
   originalUserMessage: string;
   pendingStatus: "clarify" | "requires_confirmation";
   pendingPrompt: string;
+  includeLatestMessage?: boolean;
+  latestMessageLabel?: string;
 }): string {
+  const includeLatestMessage = params.includeLatestMessage ?? true;
+  const latestMessageLabel = params.latestMessageLabel ?? "Latest owner reply";
   return [
     "You are resuming a pending tool flow after the tool previously asked for missing information or confirmation.",
     "Return only strict JSON with one of two decisions: respond or execute_tool.",
@@ -433,7 +447,7 @@ export function buildPendingToolResolutionPrompt(params: {
     `Original user request: ${JSON.stringify(params.originalUserMessage)}`,
     `Pending prompt: ${JSON.stringify(params.pendingPrompt)}`,
     `Existing args already captured: ${JSON.stringify(params.existingArgs)}`,
-    `Latest owner reply: ${JSON.stringify(params.userMessage)}`,
+    ...(includeLatestMessage ? [`${latestMessageLabel}: ${JSON.stringify(params.userMessage)}`] : []),
     "Return strict JSON only in one of these shapes:",
     '{"decision":"respond","reason":"...","response":"..."}',
     `{"decision":"execute_tool","toolName":"${params.toolName}","reason":"owner supplied missing information","confidence":"high","args":{"message":"stretch"}}`,
