@@ -123,6 +123,8 @@ export function registerMessagePipeline(params: {
                 conversationId,
                 role: "user",
                 participantActorId: event.payload.sender.actorId,
+                participantDisplayName: event.payload.sender.displayName,
+                participantKind: event.payload.sender.actorRole,
                 content,
                 sourceMessageId: event.payload.messageId,
                 createdAt: event.occurredAt

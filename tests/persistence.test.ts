@@ -222,3 +222,87 @@ test("initializePersistence migrates legacy access_audit tables with transport m
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("initializePersistence migrates legacy conversation_turns tables with participant identity columns", () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-persistence-conversation-legacy-"));
+  const sqlitePath = path.join(dataDir, "dot.sqlite");
+  const db = new Database(sqlitePath);
+
+  try {
+    db.exec(`
+      CREATE TABLE conversation_turns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        source_message_id TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+  } finally {
+    db.close();
+  }
+
+  const persistence = initializePersistence(dataDir, sqlitePath);
+
+  try {
+    const columns = persistence.db.prepare("PRAGMA table_info(conversation_turns)").all() as Array<{ name: string }>;
+    assert(columns.some((column) => column.name === "participant_actor_id"));
+    assert(columns.some((column) => column.name === "participant_display_name"));
+    assert(columns.some((column) => column.name === "participant_kind"));
+  } finally {
+    persistence.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("initializePersistence backfills legacy assistant turns so they are not misattributed to the human recipient", () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dot-persistence-conversation-backfill-"));
+  const sqlitePath = path.join(dataDir, "dot.sqlite");
+  const db = new Database(sqlitePath);
+
+  try {
+    db.exec(`
+      CREATE TABLE conversation_turns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        participant_actor_id TEXT,
+        content TEXT NOT NULL,
+        source_message_id TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    db.prepare(`
+      INSERT INTO conversation_turns (
+        conversation_id,
+        role,
+        participant_actor_id,
+        content,
+        source_message_id,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      "channel-1",
+      "assistant",
+      "owner-1",
+      "legacy assistant reply",
+      "m1",
+      "2026-04-09T10:00:05.000Z"
+    );
+  } finally {
+    db.close();
+  }
+
+  const persistence = initializePersistence(dataDir, sqlitePath);
+
+  try {
+    const turns = persistence.listRecentConversationTurns("channel-1", 10);
+    assert.equal(turns[0]?.participantActorId, null);
+    assert.equal(turns[0]?.participantDisplayName, "Dot");
+    assert.equal(turns[0]?.participantKind, "assistant");
+  } finally {
+    persistence.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

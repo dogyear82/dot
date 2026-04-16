@@ -130,7 +130,9 @@ async function deliverDiscordMessage(params: {
     persistence.saveConversationTurn({
       conversationId: event.correlation.conversationId ?? "",
       role: "assistant",
-      participantActorId: event.payload.participantActorId,
+      participantActorId: client.user!.id,
+      participantDisplayName: client.user!.username,
+      participantKind: "assistant",
       content: event.payload.content,
       sourceMessageId: firstSent.id,
       createdAt: firstSent.createdAt.toISOString()
