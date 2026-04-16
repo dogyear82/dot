@@ -21,6 +21,7 @@ import { executeConversationalToolCall, renderConversationalToolResult, type Con
 import type { IncomingMessage, PendingConversationalToolSessionRecord, WorldLookupSourceName } from "./types.js";
 import { evaluateDeterministicAddressednessFastPath } from "./discord/addressing.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
+import type { WeatherLookupClient } from "./weatherLookup.js";
 
 const RECENT_CHAT_HISTORY_LIMIT = 10;
 const PENDING_TOOL_SESSION_TTL_MS = 15 * 60 * 1000;
@@ -34,8 +35,9 @@ export function registerMessagePipeline(params: {
   ownerUserId: string;
   persistence: Persistence;
   worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
+  weatherClient?: WeatherLookupClient;
 }): () => void {
-  const { bus, calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence, worldLookupAdapters } = params;
+  const { bus, calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence, worldLookupAdapters, weatherClient } = params;
 
   return bus.subscribeInboundMessage(async (event) => {
     await withEventContext(event, async () => {
@@ -539,7 +541,8 @@ export function registerMessagePipeline(params: {
                           persistence,
                           groundedAnswerService,
                           worldLookupAdapters,
-                          articleReader: undefined
+                          articleReader: undefined,
+                          weatherClient
                         }
                       }),
                       userMessage: content,

@@ -324,12 +324,14 @@ export function buildToolInferencePrompt(
     "- reminder.ack: id",
     "- calendar.show: no args",
     "- calendar.remind: index, optional leadTime",
+    "- weather.lookup: location",
     "- news.briefing: query",
     "- news.follow_up: query",
     "- world.lookup: query",
+    "Use weather.lookup for weather questions. Include args.location when the user gives a city and state or city and country. If the user asks for weather without a location, still use weather.lookup and leave args empty so the tool can clarify.",
     "Use news.briefing for generic requests like latest headlines, what's in the news today, or brief me on the news.",
     "Use news.follow_up when the owner is clearly referring back to a story from the latest news list.",
-    "Use world.lookup for questions that need public factual grounding, current events, weather, economics, or information that may be outdated in-model.",
+    "Use world.lookup for questions that need public factual grounding, current events, economics, or information that may be outdated in-model.",
     "If the owner is correcting a stale or history-focused answer and asking for current events or news, prefer execute_tool world.lookup with a repaired query grounded in the recent conversation instead of a plain conversational response.",
     "When you choose world.lookup, preserve the owner's latest wording as closely as possible in args.query.",
     "Do not collapse current-events phrasing like 'right now', 'latest', 'today', or 'what is happening' into a generic topic label.",
@@ -342,6 +344,7 @@ export function buildToolInferencePrompt(
     '{"decision":"execute_tool","toolName":"reminder.add","reason":"...","confidence":"high","args":{"message":"return the lens protector","dueAt":"2026-04-16T01:00:00.000Z"}}',
     '{"decision":"execute_tool","toolName":"calendar.remind","reason":"...","confidence":"high","args":{}}',
     '{"decision":"execute_tool","toolName":"calendar.show","reason":"owner is asking to see upcoming calendar items","confidence":"high","args":{}}',
+    '{"decision":"execute_tool","toolName":"weather.lookup","reason":"owner is asking for weather information","confidence":"high","args":{"location":"Phoenix, AZ"}}',
     '{"decision":"execute_tool","toolName":"news.briefing","reason":"owner is asking for a news briefing","confidence":"high","args":{"query":"give me the latest headlines"}}',
     '{"decision":"execute_tool","toolName":"news.follow_up","reason":"owner is referring back to a story from the latest news list","confidence":"high","args":{"query":"tell me more about the second one"}}',
     '{"decision":"execute_tool","toolName":"world.lookup","reason":"owner is asking for public factual or current information","confidence":"high","args":{"query":"when is zebra mating season"}}',
@@ -349,6 +352,7 @@ export function buildToolInferencePrompt(
     '- respond: {"decision":"respond","reason":"ordinary conversation","response":"Well hey there, cupcake. I\'m right here."}',
     '- execute_tool incomplete reminder: {"decision":"execute_tool","toolName":"reminder.add","reason":"owner wants a reminder but omitted details","confidence":"high","args":{}}',
     '- execute_tool complete reminder: {"decision":"execute_tool","toolName":"reminder.add","reason":"owner provided a specific reminder time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-16T16:00:00.000Z"}}',
+    '- execute_tool weather lookup: {"decision":"execute_tool","toolName":"weather.lookup","reason":"owner is asking for the weather in a specific place","confidence":"high","args":{"location":"Phoenix, AZ"}}',
     '- execute_tool repaired current-events lookup: {"decision":"execute_tool","toolName":"world.lookup","reason":"owner is asking for current public information","confidence":"high","args":{"query":"what is happening in Myanmar right now"}}',
     '- disallowed respond: {"decision":"respond","reason":"...","response":"I set that reminder for tomorrow."}',
     ...(includeLatestMessage ? [`${latestMessageLabel}: ${JSON.stringify(userMessage)}`] : [])
@@ -384,6 +388,7 @@ export function buildAddressedToolInferencePrompt(
     "- reminder.ack: id",
     "- calendar.show: no args",
     "- calendar.remind: index, optional leadTime",
+    "- weather.lookup: location",
     "- news.briefing: query",
     "- news.follow_up: query",
     "- world.lookup: query",
@@ -393,9 +398,10 @@ export function buildAddressedToolInferencePrompt(
     "- Use reminder.ack when the user wants to acknowledge or mark a reminder done.",
     "- Use calendar.show when the user wants to see upcoming calendar items.",
     "- Use calendar.remind when the user wants a reminder about a calendar item.",
+    "- Use weather.lookup when the user wants current weather or a forecast.",
     "- Use news.briefing for generic news briefing requests.",
     "- Use news.follow_up when the user is clearly referring back to a previously listed news story.",
-    "- Use world.lookup for public factual or current information such as current events, weather, economics, or information likely to be outdated in-model.",
+    "- Use world.lookup for public factual or current information such as current events, economics, or information likely to be outdated in-model.",
     "Return exactly one of these JSON shapes:",
     '{"addressed":false,"reason":"..."}',
     '{"addressed":true,"decision":"respond","reason":"...","response":"..."}',
@@ -406,6 +412,8 @@ export function buildAddressedToolInferencePrompt(
     '{"addressed":true,"decision":"execute_tool","toolName":"reminder.add","reason":"the user is asking Dot to create a reminder but did not provide full details","confidence":"high","args":{}}',
     'Latest message: "set a reminder for tomorrow at 9am to walk the dog"',
     '{"addressed":true,"decision":"execute_tool","toolName":"reminder.add","reason":"the user is asking Dot to create a reminder at a specific time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-16T16:00:00.000Z"}}',
+    'Latest message: "what is the weather in Phoenix, AZ tomorrow?"',
+    '{"addressed":true,"decision":"execute_tool","toolName":"weather.lookup","reason":"the user is asking Dot for weather information","confidence":"high","args":{"location":"Phoenix, AZ"}}',
     'Latest message: "what\'s in the news today?"',
     '{"addressed":true,"decision":"execute_tool","toolName":"news.briefing","reason":"the user is asking Dot for a news briefing","confidence":"high","args":{"query":"what\'s in the news today?"}}',
     'Latest message: "thanks"',
@@ -700,6 +708,7 @@ function isToolName(value: unknown): value is ConversationalToolName {
     value === "reminder.ack" ||
     value === "calendar.show" ||
     value === "calendar.remind" ||
+    value === "weather.lookup" ||
     value === "news.briefing" ||
     value === "news.follow_up" ||
     value === "world.lookup"

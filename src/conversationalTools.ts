@@ -22,6 +22,7 @@ import { executeWorldLookup } from "./worldLookup.js";
 import { HtmlWorldLookupArticleReader } from "./worldLookupArticles.js";
 import { createDefaultWorldLookupAdapters } from "./worldLookupAdapters.js";
 import { getNewsPreferences } from "./newsPreferences.js";
+import { OpenMeteoWeatherClient, type WeatherLookupClient } from "./weatherLookup.js";
 
 export type ConversationalToolName =
   | "reminder.add"
@@ -29,6 +30,7 @@ export type ConversationalToolName =
   | "reminder.ack"
   | "calendar.show"
   | "calendar.remind"
+  | "weather.lookup"
   | "news.briefing"
   | "news.follow_up"
   | "world.lookup";
@@ -54,6 +56,7 @@ export interface ConversationalToolContext {
   groundedAnswerService?: GroundedAnswerService;
   worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
   articleReader?: WorldLookupArticleReader;
+  weatherClient?: WeatherLookupClient;
 }
 
 export interface ConversationalToolResult {
@@ -271,6 +274,65 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
           })
         },
         detail: "presentation=final_text"
+      };
+    }
+  },
+  "weather.lookup": {
+    toolName: "weather.lookup",
+    async execute(call, context) {
+      const location = getOptionalStringArg(call.args, "location");
+      if (!location) {
+        return {
+          toolName: "weather.lookup",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "Which city and state or city and country should I check the weather for?"
+          },
+          detail: "presentation=final_text; missing=location"
+        };
+      }
+
+      const result = await (context.weatherClient ?? new OpenMeteoWeatherClient()).lookup({ location });
+      if (result.kind === "clarify") {
+        return {
+          toolName: "weather.lookup",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: result.prompt
+          },
+          detail: `presentation=final_text; reason=${result.reason}`
+        };
+      }
+
+      return {
+        toolName: "weather.lookup",
+        status: "success",
+        presentation: "llm_render",
+        payload: {
+          mode: "weather_lookup",
+          location: result.location,
+          units: result.units,
+          current: result.current,
+          daily: result.daily
+        },
+        renderInstructions: {
+          systemPrompt:
+            "Render the supplied weather payload into Dot's natural voice. Answer the user's weather question directly using only the provided weather data.",
+          constraints: [
+            "Use only the supplied payload.",
+            "Answer only the weather question that was asked.",
+            "If the user asked about today or tomorrow, focus on that time window instead of dumping the whole forecast.",
+            "Mention the resolved location naturally.",
+            "Do not invent weather details or locations that are not present in the payload."
+          ],
+          styleHints: [
+            "Keep the answer concise.",
+            "Include temperatures with the provided units."
+          ]
+        },
+        detail: `presentation=llm_render; location=${result.location.label}; forecastDays=${result.daily.length}; units=${result.units.temperature}`
       };
     }
   },

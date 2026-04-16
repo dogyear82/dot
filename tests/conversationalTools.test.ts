@@ -219,7 +219,7 @@ test("conversational reminder tool accepts time aliases and natural duration phr
     });
 
     assert.equal(confirmation.status, "requires_confirmation");
-    assert.match(String(confirmation.payload.text), /14 hours/i);
+    assert.match(String(confirmation.payload.text), /14h/i);
   } finally {
     cleanup();
   }
@@ -243,6 +243,130 @@ test("conversational reminder tool rejects unsupported absolute datetime phrasin
 
     assert.equal(clarification.status, "clarify");
     assert.match(String(clarification.payload.text), /duration from now/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational weather tool returns llm_render payloads for resolved locations", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const result = await executeConversationalToolCall({
+      call: {
+        toolName: "weather.lookup",
+        args: {
+          location: "Phoenix, AZ"
+        },
+        userMessage: "what's the weather in Phoenix tomorrow?"
+      },
+      context: createContext({
+        persistence,
+        weatherClient: {
+          async lookup() {
+            return {
+              kind: "success",
+              location: {
+                name: "Phoenix",
+                admin1: "Arizona",
+                country: "United States",
+                countryCode: "US",
+                latitude: 33.45,
+                longitude: -112.07,
+                timezone: "America/Phoenix",
+                label: "Phoenix, Arizona, United States"
+              },
+              units: {
+                temperature: "F",
+                windSpeed: "mph"
+              },
+              current: {
+                time: "2026-04-16T09:00",
+                temperature: 78,
+                apparentTemperature: 80,
+                windSpeed: 6,
+                condition: "clear",
+                isDay: true
+              },
+              daily: [
+                {
+                  date: "2026-04-16",
+                  condition: "clear",
+                  temperatureMax: 86,
+                  temperatureMin: 62,
+                  precipitationProbabilityMax: 0
+                },
+                {
+                  date: "2026-04-17",
+                  condition: "partly cloudy",
+                  temperatureMax: 88,
+                  temperatureMin: 64,
+                  precipitationProbabilityMax: 10
+                }
+              ]
+            };
+          }
+        }
+      })
+    });
+
+    assert.equal(result.toolName, "weather.lookup");
+    assert.equal(result.status, "success");
+    assert.equal(result.presentation, "llm_render");
+    assert.equal(result.payload.mode, "weather_lookup");
+    assert.equal((result.payload.location as { name: string }).name, "Phoenix");
+    assert.equal((result.payload.units as { temperature: string }).temperature, "F");
+    assert.equal((result.payload.daily as Array<{ date: string }>).length, 2);
+    assert.match(result.renderInstructions?.systemPrompt ?? "", /weather payload/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational weather tool clarifies when location is missing or ambiguous", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const missingLocation = await executeConversationalToolCall({
+      call: {
+        toolName: "weather.lookup",
+        args: {},
+        userMessage: "what's the weather tomorrow?"
+      },
+      context: createContext({ persistence })
+    });
+
+    assert.equal(missingLocation.status, "clarify");
+    assert.match(String(missingLocation.payload.text), /Which city and state or city and country/i);
+
+    const ambiguousLocation = await executeConversationalToolCall({
+      call: {
+        toolName: "weather.lookup",
+        args: {
+          location: "Springfield"
+        },
+        userMessage: "what's the weather in Springfield?"
+      },
+      context: createContext({
+        persistence,
+        weatherClient: {
+          async lookup() {
+            return {
+              kind: "clarify",
+              reason: "ambiguous_location",
+              prompt: 'I found multiple places for "Springfield". Pick one of these: Springfield, Illinois, United States; Springfield, Missouri, United States',
+              candidates: [
+                "Springfield, Illinois, United States",
+                "Springfield, Missouri, United States"
+              ]
+            };
+          }
+        }
+      })
+    });
+
+    assert.equal(ambiguousLocation.status, "clarify");
+    assert.match(String(ambiguousLocation.payload.text), /multiple places/i);
   } finally {
     cleanup();
   }

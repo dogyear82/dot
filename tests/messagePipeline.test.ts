@@ -547,6 +547,147 @@ test("message pipeline executes inferred world.lookup and records grounded audit
   }
 });
 
+test("message pipeline executes inferred weather.lookup and records weather audit detail", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("weather lookup should not fall back to normal chat");
+    },
+    async renderToolResult(params) {
+      assert.equal((params.payload.location as { name: string }).name, "Phoenix");
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        reply: "Looks like Phoenix will be clear tomorrow with a high around 88F."
+      };
+    },
+    async inferToolDecision() {
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        decision: {
+          decision: "execute_tool",
+          toolName: "weather.lookup",
+          reason: "owner asked for weather information",
+          confidence: "high",
+          args: {
+            location: "Phoenix, AZ"
+          }
+        }
+      };
+    },
+    getPowerStatus(route) {
+      return route === "hosted" ? "engaged" : "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient: {
+      async listUpcomingEvents() {
+        return [];
+      }
+    },
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence,
+    weatherClient: {
+      async lookup() {
+        return {
+          kind: "success" as const,
+          location: {
+            name: "Phoenix",
+            admin1: "Arizona",
+            country: "United States",
+            countryCode: "US",
+            latitude: 33.45,
+            longitude: -112.07,
+            timezone: "America/Phoenix",
+            label: "Phoenix, Arizona, United States"
+          },
+          units: {
+            temperature: "F" as const,
+            windSpeed: "mph" as const
+          },
+          current: {
+            time: "2026-04-16T09:00",
+            temperature: 78,
+            apparentTemperature: 80,
+            windSpeed: 6,
+            condition: "clear",
+            isDay: true
+          },
+          daily: [
+            {
+              date: "2026-04-16",
+              condition: "clear",
+              temperatureMax: 86,
+              temperatureMin: 62,
+              precipitationProbabilityMax: 0
+            },
+            {
+              date: "2026-04-17",
+              condition: "partly cloudy",
+              temperatureMax: 88,
+              temperatureMin: 64,
+              precipitationProbabilityMax: 10
+            }
+          ]
+        };
+      }
+    }
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-weather-lookup",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "What's the weather in Phoenix, AZ tomorrow?",
+          addressedContent: "What's the weather in Phoenix, AZ tomorrow?",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-weather-lookup"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /Phoenix/);
+
+    const audit = persistence.db
+      .prepare("SELECT tool_name, status, provider, detail FROM tool_execution_audit WHERE message_id = ?")
+      .get("msg-weather-lookup") as { tool_name: string; status: string; provider: string | null; detail: string | null };
+
+    assert.equal(audit.tool_name, "weather.lookup");
+    assert.equal(audit.status, "executed");
+    assert.equal(audit.provider, "hosted");
+    assert.match(audit.detail ?? "", /location=Phoenix, Arizona, United States/);
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline executes inferred reminder add/show/ack through the conversational tool contract", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();

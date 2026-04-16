@@ -1,0 +1,275 @@
+import { z } from "zod";
+
+const OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
+const OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
+
+const geocodingResponseSchema = z.object({
+  results: z
+    .array(
+      z.object({
+        name: z.string(),
+        admin1: z.string().optional().nullable(),
+        country: z.string().optional().nullable(),
+        country_code: z.string().optional().nullable(),
+        latitude: z.number(),
+        longitude: z.number(),
+        timezone: z.string().optional().nullable()
+      })
+    )
+    .optional()
+    .default([])
+});
+
+const forecastResponseSchema = z.object({
+  current: z
+    .object({
+      time: z.string().optional().nullable(),
+      temperature_2m: z.number().optional(),
+      apparent_temperature: z.number().optional(),
+      wind_speed_10m: z.number().optional(),
+      weather_code: z.number().optional(),
+      is_day: z.number().optional()
+    })
+    .optional(),
+  daily: z
+    .object({
+      time: z.array(z.string()).optional().default([]),
+      weather_code: z.array(z.number()).optional().default([]),
+      temperature_2m_max: z.array(z.number()).optional().default([]),
+      temperature_2m_min: z.array(z.number()).optional().default([]),
+      precipitation_probability_max: z.array(z.number()).optional().default([])
+    })
+    .optional()
+});
+
+export interface WeatherLookupSuccess {
+  kind: "success";
+  location: {
+    name: string;
+    admin1: string | null;
+    country: string | null;
+    countryCode: string | null;
+    latitude: number;
+    longitude: number;
+    timezone: string | null;
+    label: string;
+  };
+  units: {
+    temperature: "F" | "C";
+    windSpeed: "mph" | "km/h";
+  };
+  current: {
+    time: string | null;
+    temperature: number | null;
+    apparentTemperature: number | null;
+    windSpeed: number | null;
+    condition: string | null;
+    isDay: boolean | null;
+  };
+  daily: Array<{
+    date: string;
+    condition: string | null;
+    temperatureMax: number | null;
+    temperatureMin: number | null;
+    precipitationProbabilityMax: number | null;
+  }>;
+}
+
+export interface WeatherLookupClarify {
+  kind: "clarify";
+  reason: "missing_location" | "ambiguous_location" | "location_not_found";
+  prompt: string;
+  candidates?: string[];
+}
+
+export type WeatherLookupResult = WeatherLookupSuccess | WeatherLookupClarify;
+
+export interface WeatherLookupClient {
+  lookup(params: { location: string; forecastDays?: number; timeoutMs?: number }): Promise<WeatherLookupResult>;
+}
+
+export class OpenMeteoWeatherClient implements WeatherLookupClient {
+  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+
+  async lookup(params: { location: string; forecastDays?: number; timeoutMs?: number }): Promise<WeatherLookupResult> {
+    const location = params.location.trim();
+    if (!location) {
+      return {
+        kind: "clarify",
+        reason: "missing_location",
+        prompt: "Which city and state or city and country should I check the weather for?"
+      };
+    }
+
+    const timeoutMs = params.timeoutMs ?? 8000;
+    const geocodingUrl = new URL(OPEN_METEO_GEOCODING_URL);
+    geocodingUrl.searchParams.set("name", location);
+    geocodingUrl.searchParams.set("count", "5");
+    geocodingUrl.searchParams.set("language", "en");
+    geocodingUrl.searchParams.set("format", "json");
+
+    const geocoding = geocodingResponseSchema.parse(await fetchJson(this.fetchImpl, geocodingUrl, timeoutMs));
+    const results = geocoding.results;
+
+    if (results.length === 0) {
+      return {
+        kind: "clarify",
+        reason: "location_not_found",
+        prompt: `I couldn't find a weather location for ${JSON.stringify(location)}. Give me a city and state or city and country.`
+      };
+    }
+
+    if (results.length !== 1) {
+      const candidates = results.slice(0, 5).map((result) => formatGeocodingLabel(result));
+      return {
+        kind: "clarify",
+        reason: "ambiguous_location",
+        prompt: `I found multiple places for ${JSON.stringify(location)}. Pick one of these: ${candidates.join("; ")}`,
+        candidates
+      };
+    }
+
+    const result = results[0]!;
+    const useImperial = (result.country_code ?? "").toUpperCase() === "US";
+    const forecastUrl = new URL(OPEN_METEO_FORECAST_URL);
+    forecastUrl.searchParams.set("latitude", String(result.latitude));
+    forecastUrl.searchParams.set("longitude", String(result.longitude));
+    forecastUrl.searchParams.set(
+      "current",
+      "temperature_2m,apparent_temperature,wind_speed_10m,weather_code,is_day"
+    );
+    forecastUrl.searchParams.set(
+      "daily",
+      "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+    );
+    forecastUrl.searchParams.set("forecast_days", String(Math.max(1, Math.min(params.forecastDays ?? 7, 7))));
+    forecastUrl.searchParams.set("timezone", "auto");
+    forecastUrl.searchParams.set("temperature_unit", useImperial ? "fahrenheit" : "celsius");
+    forecastUrl.searchParams.set("wind_speed_unit", useImperial ? "mph" : "kmh");
+
+    const forecast = forecastResponseSchema.parse(await fetchJson(this.fetchImpl, forecastUrl, timeoutMs));
+
+    return {
+      kind: "success",
+      location: {
+        name: result.name,
+        admin1: result.admin1 ?? null,
+        country: result.country ?? null,
+        countryCode: result.country_code ?? null,
+        latitude: result.latitude,
+        longitude: result.longitude,
+        timezone: result.timezone ?? null,
+        label: formatGeocodingLabel(result)
+      },
+      units: {
+        temperature: useImperial ? "F" : "C",
+        windSpeed: useImperial ? "mph" : "km/h"
+      },
+      current: {
+        time: forecast.current?.time ?? null,
+        temperature: forecast.current?.temperature_2m ?? null,
+        apparentTemperature: forecast.current?.apparent_temperature ?? null,
+        windSpeed: forecast.current?.wind_speed_10m ?? null,
+        condition: formatWeatherCode(forecast.current?.weather_code),
+        isDay:
+          typeof forecast.current?.is_day === "number"
+            ? forecast.current.is_day === 1
+            : null
+      },
+      daily: forecast.daily?.time.map((date, index) => ({
+        date,
+        condition: formatWeatherCode(forecast.daily?.weather_code?.[index]),
+        temperatureMax: forecast.daily?.temperature_2m_max?.[index] ?? null,
+        temperatureMin: forecast.daily?.temperature_2m_min?.[index] ?? null,
+        precipitationProbabilityMax: forecast.daily?.precipitation_probability_max?.[index] ?? null
+      })) ?? []
+    };
+  }
+}
+
+function formatGeocodingLabel(result: {
+  name: string;
+  admin1?: string | null;
+  country?: string | null;
+}): string {
+  return [result.name, result.admin1, result.country].filter(Boolean).join(", ");
+}
+
+function formatWeatherCode(code: number | undefined): string | null {
+  switch (code) {
+    case 0:
+      return "clear";
+    case 1:
+    case 2:
+    case 3:
+      return "partly cloudy";
+    case 45:
+    case 48:
+      return "foggy";
+    case 51:
+    case 53:
+    case 55:
+      return "drizzle";
+    case 61:
+    case 63:
+    case 65:
+      return "rain";
+    case 66:
+    case 67:
+      return "freezing rain";
+    case 71:
+    case 73:
+    case 75:
+      return "snow";
+    case 77:
+      return "snow grains";
+    case 80:
+    case 81:
+    case 82:
+      return "rain showers";
+    case 85:
+    case 86:
+      return "snow showers";
+    case 95:
+      return "thunderstorms";
+    case 96:
+    case 99:
+      return "thunderstorms with hail";
+    default:
+      return null;
+  }
+}
+
+async function fetchJson(fetchImpl: typeof fetch, url: URL, timeoutMs: number): Promise<unknown> {
+  const response = await withTimeout(
+    fetchImpl(url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json"
+      }
+    }),
+    timeoutMs
+  );
+
+  if (!response.ok) {
+    throw new Error(`weather lookup request failed with status ${response.status}`);
+  }
+
+  return response.json();
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`weather lookup timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
