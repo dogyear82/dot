@@ -71,21 +71,24 @@ test("buildToolInferencePrompt documents dueAt for specific reminder times", () 
   const prompt = buildToolInferencePrompt("set a reminder for tomorrow at 6pm to return the package");
 
   assert.match(prompt, /prefer args\.dueAt as an ISO 8601 timestamp/i);
-  assert.match(prompt, /If the owner is asking for an available tool, return execute_tool even when some required arguments are missing\./i);
-  assert.match(prompt, /Use respond only when the owner is simply chatting, correcting Dot, or asking something that does not actually request an available tool\./i);
+  assert.match(prompt, /Decide whether you should respond directly or execute one of the available tools\./i);
+  assert.match(prompt, /If the latest owner message is an identifiable request for an available tool, return execute_tool even when some required arguments are missing\./i);
+  assert.match(prompt, /If the latest owner message is ordinary conversation, commentary, thanks, correction/i);
   assert.match(prompt, /Respond is a non-operational conversation path only\./i);
-  assert.match(prompt, /do not claim or imply that Dot sent, set, scheduled, created, updated, granted, deleted, changed, or otherwise performed a real side-effecting action\./i);
-  assert.match(prompt, /Any reply that says Dot already performed a real action must come from a real execute_tool path instead of respond\./i);
+  assert.match(prompt, /do not claim or imply that you sent, set, scheduled, created, updated, granted, deleted, changed, or otherwise performed a real side-effecting action\./i);
+  assert.match(prompt, /Any reply that says you already performed a real action must come from execute_tool, not respond\./i);
+  assert.match(prompt, /Use only the exact tool names and arg keys listed below\./i);
   assert.match(prompt, /Interpret relative reminder phrases like `today`, `tomorrow`/i);
+  assert.match(prompt, /do not let earlier turns override a clear latest request\./i);
   assert.match(prompt, /"toolName":"reminder\.add".*"args":\{\}/i);
   assert.match(prompt, /"toolName":"calendar\.remind".*"args":\{\}/i);
   assert.match(prompt, /- reminder\.add: message, optional duration, optional dueAt/i);
   assert.match(prompt, /"dueAt":"2026-04-16T01:00:00\.000Z"/i);
-  assert.match(prompt, /Examples that should usually map to execute_tool reminder\.add even when incomplete:/i);
-  assert.match(prompt, /"i want another reminder set"/i);
-  assert.match(prompt, /Allowed respond example: .*I'm right here\./i);
-  assert.match(prompt, /Disallowed respond example: .*I set that reminder for tomorrow\./i);
-  assert.match(prompt, /Disallowed respond example: .*I sent the email and granted access\./i);
+  assert.match(prompt, /execute_tool incomplete reminder/i);
+  assert.match(prompt, /execute_tool complete reminder/i);
+  assert.match(prompt, /repaired current-events lookup/i);
+  assert.match(prompt, /respond: .*I'm right here\./i);
+  assert.match(prompt, /disallowed respond: .*I set that reminder for tomorrow\./i);
 });
 
 test("buildPendingToolResolutionPrompt keeps respond non-operational", () => {
@@ -101,8 +104,10 @@ test("buildPendingToolResolutionPrompt keeps respond non-operational", () => {
   });
 
   assert.match(prompt, /Respond is a non-operational conversation path only\./i);
-  assert.match(prompt, /do not claim or imply that Dot already performed a real side-effecting action\./i);
+  assert.match(prompt, /do not claim or imply that you already performed a real side-effecting action\./i);
   assert.match(prompt, /must come from execute_tool, not respond\./i);
+  assert.match(prompt, /Use only the exact tool name already provided and only the exact arg keys that tool supports\./i);
+  assert.match(prompt, /owner cancelled the pending tool flow/i);
 });
 
 test("parseExplicitToolDecision turns incomplete tool commands into clarification prompts", () => {

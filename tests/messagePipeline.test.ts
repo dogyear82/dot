@@ -784,7 +784,7 @@ test("message pipeline skips reminder intake questions when inference already pr
           route: "hosted",
           powerStatus: "engaged",
           rawModelOutput:
-            '{"decision":"execute_tool","toolName":"reminder.add","reason":"owner wants to set a reminder for a specific time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-15T16:00:00.000Z"}}',
+            '{"decision":"execute_tool","toolName":"reminder.add","reason":"owner wants to set a reminder for a specific time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-16T16:00:00.000Z"}}',
           promptMessages: [
             { role: "system", content: "intent prompt" },
             { role: "user", content: userMessage }
@@ -796,7 +796,7 @@ test("message pipeline skips reminder intake questions when inference already pr
             confidence: "high",
             args: {
               message: "walk the dog",
-              dueAt: "2026-04-15T16:00:00.000Z"
+              dueAt: "2026-04-16T16:00:00.000Z"
             }
           }
         };
@@ -847,7 +847,7 @@ test("message pipeline skips reminder intake questions when inference already pr
     assert.match(outbound[0]?.payload.content ?? "", /want me to save it\?/i);
     assert.deepEqual(persistence.getPendingConversationalToolSession("channel-1")?.args, {
       message: "walk the dog",
-      dueAt: "2026-04-15T16:00:00.000Z"
+      dueAt: "2026-04-16T16:00:00.000Z"
     });
   } finally {
     unsubscribe();

@@ -360,7 +360,7 @@ test("llm service prefers the dedicated hosted intent model when configured", as
     ],
     intentProviders: [
       new FakeProvider("1minai-intent", "hosted", true, async () => {
-        return '{"decision":"execute_tool","toolName":"reminder.add","reason":"specific reminder time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-15T13:00:00.000Z"}}';
+        return '{"decision":"execute_tool","toolName":"reminder.add","reason":"specific reminder time","confidence":"high","args":{"message":"walk the dog","dueAt":"2026-04-16T13:00:00.000Z"}}';
       })
     ]
   });
@@ -375,7 +375,7 @@ test("llm service prefers the dedicated hosted intent model when configured", as
   assert.equal(result.decision.toolName, "reminder.add");
   assert.deepEqual(result.decision.args, {
     message: "walk the dog",
-    dueAt: "2026-04-15T13:00:00.000Z"
+    dueAt: "2026-04-16T13:00:00.000Z"
   });
 });
 
