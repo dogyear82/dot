@@ -176,6 +176,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       content TEXT NOT NULL,
       is_direct_message INTEGER NOT NULL,
       mentioned_bot INTEGER NOT NULL,
+      replied_to_message_id TEXT,
+      replied_to_bot INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -367,6 +369,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
   ensureColumn(db, "access_audit", "addressed_reason", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "access_audit", "transport", "TEXT NOT NULL DEFAULT 'discord'");
   ensureColumn(db, "access_audit", "conversation_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "normalized_messages", "replied_to_message_id", "TEXT");
+  ensureColumn(db, "normalized_messages", "replied_to_bot", "INTEGER NOT NULL DEFAULT 0");
 
   const saveStatement = db.prepare(`
     INSERT OR REPLACE INTO normalized_messages (
@@ -378,6 +382,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       content,
       is_direct_message,
       mentioned_bot,
+      replied_to_message_id,
+      replied_to_bot,
       created_at
     ) VALUES (
       @id,
@@ -388,13 +394,19 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @content,
       @isDirectMessage,
       @mentionedBot,
+      @repliedToMessageId,
+      @repliedToBot,
       @createdAt
     )
   `);
 
   const listRecentNormalizedMessagesStatement = db.prepare<
     [string, number],
-    Omit<IncomingMessage, "isDirectMessage" | "mentionedBot"> & { isDirectMessage: number; mentionedBot: number }
+    Omit<IncomingMessage, "isDirectMessage" | "mentionedBot" | "repliedToBot"> & {
+      isDirectMessage: number;
+      mentionedBot: number;
+      repliedToBot: number;
+    }
   >(`
     SELECT
       id,
@@ -405,6 +417,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       content,
       is_direct_message AS isDirectMessage,
       mentioned_bot AS mentionedBot,
+      replied_to_message_id AS repliedToMessageId,
+      replied_to_bot AS repliedToBot,
       created_at AS createdAt
     FROM normalized_messages
     WHERE channel_id = ?
@@ -1192,14 +1206,17 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       saveStatement.run({
         ...message,
         isDirectMessage: message.isDirectMessage ? 1 : 0,
-        mentionedBot: message.mentionedBot ? 1 : 0
+        mentionedBot: message.mentionedBot ? 1 : 0,
+        repliedToMessageId: message.repliedToMessageId ?? null,
+        repliedToBot: message.repliedToBot ? 1 : 0
       });
     },
     listRecentNormalizedMessages(channelId, limit) {
       return listRecentNormalizedMessagesStatement.all(channelId, limit).map((message) => ({
         ...message,
         isDirectMessage: Boolean(message.isDirectMessage),
-        mentionedBot: Boolean(message.mentionedBot)
+        mentionedBot: Boolean(message.mentionedBot),
+        repliedToBot: Boolean(message.repliedToBot)
       }));
     },
     getWorkerState(key) {

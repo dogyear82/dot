@@ -38,6 +38,8 @@ test("normalizeMessage maps Discord message shape into IncomingMessage", () => {
     content: "hello dot",
     isDirectMessage: false,
     mentionedBot: true,
+    repliedToMessageId: null,
+    repliedToBot: false,
     createdAt: createdAt.toISOString()
   });
 });

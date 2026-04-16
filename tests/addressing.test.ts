@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { evaluateAddressedness, shouldTreatOwnerMessageAsAddressed } from "../src/discord/addressing.js";
-import type { ConversationTurnRecord, IncomingMessage } from "../src/types.js";
+import { evaluateDeterministicAddressednessFastPath } from "../src/discord/addressing.js";
+import type { IncomingMessage } from "../src/types.js";
 
 function message(overrides: Partial<IncomingMessage> = {}): IncomingMessage {
   return {
@@ -14,329 +14,84 @@ function message(overrides: Partial<IncomingMessage> = {}): IncomingMessage {
     content: "hello",
     isDirectMessage: false,
     mentionedBot: false,
+    repliedToMessageId: null,
+    repliedToBot: false,
     createdAt: "2026-04-09T00:00:00.000Z",
     ...overrides
   };
 }
 
-function turn(overrides: Partial<ConversationTurnRecord> = {}): ConversationTurnRecord {
-  return {
-    id: 1,
-    conversationId: "chan-1",
-    role: "assistant",
-    participantActorId: "owner-1",
-    content: "hello",
-    sourceMessageId: "source-1",
-    createdAt: "2026-04-09T00:00:00.000Z",
-    ...overrides
-  };
-}
-
-test("addressedness is true for direct messages and explicit mentions", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
+test("deterministic addressedness fast path is true for direct messages and explicit mentions", () => {
+  assert.deepEqual(
+    evaluateDeterministicAddressednessFastPath({
       message: message({ isDirectMessage: true }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [],
-      recentMessages: []
+      isExplicitCommand: false,
+      hasPendingToolSession: false
     }),
-    true
+    { addressed: true, reason: "direct_message" }
   );
 
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
+  assert.deepEqual(
+    evaluateDeterministicAddressednessFastPath({
       message: message({ mentionedBot: true }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [],
-      recentMessages: []
+      isExplicitCommand: false,
+      hasPendingToolSession: false
     }),
-    true
+    { addressed: true, reason: "explicit_mention" }
   );
 });
 
-test("addressedness still responds to clear shared-channel direct address even when policy is dm-only", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ content: "dot what about tomorrow?" }),
-      defaultChannelPolicy: "dm-only",
-      recentConversation: [],
-      recentMessages: []
+test("deterministic addressedness fast path is true for replies to Dot", () => {
+  assert.deepEqual(
+    evaluateDeterministicAddressednessFastPath({
+      message: message({ repliedToMessageId: "bot-msg-1", repliedToBot: true }),
+      isExplicitCommand: false,
+      hasPendingToolSession: false
     }),
-    true
+    { addressed: true, reason: "reply_to_dot" }
   );
 });
 
-test("addressedness is true for plain-text direct address", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ content: "Dot, what about tomorrow?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [],
-      recentMessages: []
+test("deterministic addressedness fast path is true for valid explicit commands", () => {
+  assert.deepEqual(
+    evaluateDeterministicAddressednessFastPath({
+      message: message({ content: "!settings show" }),
+      isExplicitCommand: true,
+      hasPendingToolSession: false
     }),
-    true
+    { addressed: true, reason: "explicit_command" }
   );
 });
 
-test("addressedness is true for explicit commands in shared channels", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ content: "!settings set llm.mode power" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [],
-      recentMessages: []
+test("deterministic addressedness fast path is true when a pending tool session exists", () => {
+  assert.deepEqual(
+    evaluateDeterministicAddressednessFastPath({
+      message: message({ content: "yes" }),
+      isExplicitCommand: false,
+      hasPendingToolSession: true
     }),
-    true
+    { addressed: true, reason: "active_pending_tool_session" }
   );
 });
 
-test("addressedness is true when recent assistant conversation is still active", () => {
+test("plain text direct address now falls through to LLM inference", () => {
   assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ createdAt: "2026-04-09T00:04:00.000Z", content: "and what about tomorrow?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [turn({ createdAt: "2026-04-09T00:03:00.000Z", content: "You have a meeting today." })],
-      recentMessages: [message({ id: "msg-previous", createdAt: "2026-04-09T00:02:30.000Z", content: "@Dot hello", mentionedBot: true })]
+    evaluateDeterministicAddressednessFastPath({
+      message: message({ content: "dot, what about tomorrow?" }),
+      isExplicitCommand: false,
+      hasPendingToolSession: false
     }),
-    true
+    null
   );
 });
 
-test("addressedness stays false when recent assistant context is stale or absent", () => {
+test("non-fast-path shared-channel chatter falls through to LLM inference", () => {
   assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ createdAt: "2026-04-09T00:10:01.000Z", content: "and tomorrow?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [turn({ createdAt: "2026-04-09T00:04:00.000Z" })],
-      recentMessages: []
+    evaluateDeterministicAddressednessFastPath({
+      message: message({ content: "can somebody send me that link" }),
+      isExplicitCommand: false,
+      hasPendingToolSession: false
     }),
-    false
+    null
   );
-
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ content: "and tomorrow?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [turn({ role: "user", participantActorId: "owner-1", content: "previous owner message" })],
-      recentMessages: []
-    }),
-    false
-  );
-});
-
-test("addressedness uses the most recent turn in the bounded conversation window", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ createdAt: "2026-04-09T00:04:00.000Z", content: "and tomorrow?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [
-        turn({ id: 1, createdAt: "2026-04-09T00:02:00.000Z" }),
-        turn({ id: 2, role: "user", participantActorId: "owner-1", createdAt: "2026-04-09T00:02:30.000Z", content: "thanks" })
-      ],
-      recentMessages: []
-    }),
-    false
-  );
-});
-
-test("addressedness stays false when the recent assistant reply was for a different participant", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ authorId: "user-2", authorUsername: "friend", createdAt: "2026-04-09T00:04:00.000Z", content: "and tomorrow?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [turn({ createdAt: "2026-04-09T00:03:00.000Z", participantActorId: "owner-1" })],
-      recentMessages: [message({ id: "msg-previous", createdAt: "2026-04-09T00:02:30.000Z", content: "@Dot hello", mentionedBot: true })]
-    }),
-    false
-  );
-});
-
-test("addressedness stays false when another inbound message arrived after the assistant reply", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ id: "msg-current", createdAt: "2026-04-09T00:04:00.000Z", content: "and tomorrow?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [turn({ createdAt: "2026-04-09T00:03:00.000Z" })],
-      recentMessages: [
-        message({
-          id: "msg-current",
-          createdAt: "2026-04-09T00:04:00.000Z",
-          content: "and tomorrow?"
-        }),
-        message({
-          id: "msg-other-user",
-          authorId: "user-2",
-          authorUsername: "friend",
-          createdAt: "2026-04-09T00:03:30.000Z",
-          content: "wait, what happened?"
-        })
-      ]
-    }),
-    false
-  );
-});
-
-test("addressedness requires the previous inbound message to have been explicitly addressed to Dot", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ id: "msg-current", createdAt: "2026-04-09T00:01:30.000Z", content: "and tomorrow?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [turn({ createdAt: "2026-04-09T00:01:00.000Z" })],
-      recentMessages: [
-        message({
-          id: "msg-current",
-          createdAt: "2026-04-09T00:01:30.000Z",
-          content: "and tomorrow?"
-        }),
-        message({
-          id: "msg-previous-same-author",
-          createdAt: "2026-04-09T00:00:30.000Z",
-          content: "what about tomorrow?",
-          mentionedBot: false
-        })
-      ]
-    }),
-    false
-  );
-});
-
-test("addressedness preserves a same-participant follow-up after an explicit kickoff", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ id: "msg-current", createdAt: "2026-04-09T00:01:45.000Z", content: "how are you?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [turn({ createdAt: "2026-04-09T00:01:00.000Z", content: "Well hey there, deary." })],
-      recentMessages: [
-        message({
-          id: "msg-current",
-          createdAt: "2026-04-09T00:01:45.000Z",
-          content: "how are you?"
-        }),
-        message({
-          id: "msg-kickoff",
-          createdAt: "2026-04-09T00:00:30.000Z",
-          content: "Dot hi"
-        })
-      ]
-    }),
-    true
-  );
-});
-
-test("addressedness can continue a conversation even if the immediately previous inbound was not explicit", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ id: "msg-current", createdAt: "2026-04-09T00:02:30.000Z", content: "what about tomorrow?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [turn({ createdAt: "2026-04-09T00:02:00.000Z", content: "I'm doing alright, sweetie." })],
-      recentMessages: [
-        message({
-          id: "msg-current",
-          createdAt: "2026-04-09T00:02:30.000Z",
-          content: "what about tomorrow?"
-        }),
-        message({
-          id: "msg-follow-up",
-          createdAt: "2026-04-09T00:01:30.000Z",
-          content: "how are you?"
-        }),
-        message({
-          id: "msg-kickoff",
-          createdAt: "2026-04-09T00:00:30.000Z",
-          content: "Dot hi"
-        })
-      ]
-    }),
-    true
-  );
-});
-
-test("addressedness can use the most recent assistant turn for the same participant", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ id: "msg-current", createdAt: "2026-04-09T00:02:10.000Z", content: "how are you?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [
-        turn({ id: 1, participantActorId: "owner-1", createdAt: "2026-04-09T00:01:00.000Z", content: "Well hey there, deary." }),
-        turn({ id: 2, participantActorId: "user-2", createdAt: "2026-04-09T00:01:45.000Z", content: "Hello there." })
-      ],
-      recentMessages: [
-        message({
-          id: "msg-current",
-          createdAt: "2026-04-09T00:02:10.000Z",
-          content: "how are you?"
-        }),
-        message({
-          id: "msg-kickoff",
-          createdAt: "2026-04-09T00:00:30.000Z",
-          content: "Dot hi"
-        })
-      ]
-    }),
-    true
-  );
-});
-
-test("addressedness ignores Dot's own reply message while preserving same-participant follow-up continuity", () => {
-  assert.equal(
-    shouldTreatOwnerMessageAsAddressed({
-      message: message({ id: "msg-current", createdAt: "2026-04-09T00:01:45.000Z", content: "how are you?" }),
-      defaultChannelPolicy: "mention-only",
-      recentConversation: [
-        turn({
-          id: 1,
-          participantActorId: "owner-1",
-          sourceMessageId: "msg-dot-reply",
-          createdAt: "2026-04-09T00:01:00.000Z",
-          content: "Well hey there, deary."
-        })
-      ],
-      recentMessages: [
-        message({
-          id: "msg-current",
-          createdAt: "2026-04-09T00:01:45.000Z",
-          content: "how are you?"
-        }),
-        message({
-          id: "msg-dot-reply",
-          authorId: "dot-1",
-          authorUsername: "Dot",
-          createdAt: "2026-04-09T00:01:00.000Z",
-          content: "Well hey there, deary."
-        }),
-        message({
-          id: "msg-kickoff",
-          createdAt: "2026-04-09T00:00:30.000Z",
-          content: "Dot hi"
-        })
-      ]
-    }),
-    true
-  );
-});
-
-test("addressedness diagnostics return a stable reason for ignored follow-ups", () => {
-  const decision = evaluateAddressedness({
-    message: message({ id: "msg-current", createdAt: "2026-04-09T00:01:30.000Z", content: "and tomorrow?" }),
-    defaultChannelPolicy: "mention-only",
-    recentConversation: [turn({ createdAt: "2026-04-09T00:01:00.000Z" })],
-    recentMessages: [
-      message({
-        id: "msg-current",
-        createdAt: "2026-04-09T00:01:30.000Z",
-        content: "and tomorrow?"
-      }),
-      message({
-        id: "msg-previous-same-author",
-        createdAt: "2026-04-09T00:00:30.000Z",
-        content: "what about tomorrow?",
-        mentionedBot: false
-      })
-    ]
-  });
-
-  assert.deepEqual(decision, {
-    addressed: false,
-    reason: "recent_message_not_addressed_to_dot"
-  });
 });
