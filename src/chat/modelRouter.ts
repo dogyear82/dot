@@ -449,10 +449,7 @@ function buildMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()}`
     },
-    ...(params.recentConversation ?? []).map((turn) => ({
-      role: turn.role,
-      content: turn.content
-    })),
+    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
       content: params.userMessage
@@ -476,10 +473,7 @@ function buildConversationalIntentMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()} Return only strict JSON with either a respond or execute_tool decision. If you choose respond, the response field must be the final user-facing reply in Dot's normal voice. Do not add markdown fences.`
     },
-    ...(params.recentConversation ?? []).map((turn) => ({
-      role: turn.role,
-      content: turn.content
-    })),
+    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
       content: buildToolInferencePrompt(params.userMessage)
@@ -495,7 +489,7 @@ function buildAddressedConversationalIntentMessages(params: {
     (params.recentConversation ?? []).length > 0
       ? params.recentConversation
           ?.slice(-6)
-          .map((turn) => `${turn.role === "assistant" ? "Dot" : "User"}: ${turn.content}`)
+          .map((turn) => formatConversationTurnLine(turn))
           .join("\n")
       : "No recent conversation.";
 
@@ -528,10 +522,7 @@ function buildPendingToolResolutionMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()} Return only strict JSON with either a respond or execute_tool decision. If you choose respond, the response field must be the final user-facing reply in Dot's normal voice. Do not add markdown fences.`
     },
-    ...(params.recentConversation ?? []).map((turn) => ({
-      role: turn.role,
-      content: turn.content
-    })),
+    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
       content: buildPendingToolResolutionPrompt({
@@ -594,10 +585,7 @@ function buildGroundedMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()} Use the supplied external evidence when answering. Stay in the active personality profile. Answer only the user's question. Make it clear this information was looked up, not remembered. Cite sources naturally in prose, such as 'According to Reuters...' or 'I'm seeing from CNN...'. Prefer the supplied article extracts over bare snippets whenever article text is available. Summarize in your own words. Do not quote long passages or regurgitate article paragraphs. If the evidence is missing, conflicting, or too weak, say you couldn't verify it from the available public sources and do not guess.`
     },
-    ...(params.recentConversation ?? []).map((turn) => ({
-      role: turn.role,
-      content: turn.content
-    })),
+    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
       content: [
@@ -652,10 +640,7 @@ function buildNewsBriefingMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()} You are preparing a concise news briefing. Stay in the active personality profile. Use the supplied external evidence only. Make it clear this information was looked up, not remembered. Give a short list of 4 to 5 headlines when enough evidence exists. Blend major world news with stories that seem especially relevant to the owner's stored interests when the evidence supports that mix. Keep each item brief. Cite the outlet naturally in each item. Each item must name the story itself and why it matters in one sentence. Do not answer with only links or outlet names. Do not dump raw articles or long summaries. If the evidence is weak, say you could not assemble a reliable briefing from the available sources.`
     },
-    ...(params.recentConversation ?? []).map((turn) => ({
-      role: turn.role,
-      content: turn.content
-    })),
+    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
       content: [
@@ -701,10 +686,7 @@ function buildStoryFollowUpMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()} You are following up on a previously shown news story. Stay in the active personality profile. Make it clear this information was looked up, not remembered. Answer only the requested follow-up. Cite the source naturally in prose. Prefer the supplied article extract over the saved snippet when article text is available. Summarize in your own words and do not dump article text.`
     },
-    ...(params.recentConversation ?? []).map((turn) => ({
-      role: turn.role,
-      content: turn.content
-    })),
+    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
       content: [
@@ -747,10 +729,7 @@ function buildToolRenderMessages(params: {
         settings: params.settings
       })} ${buildCurrentDateTimeInstruction()} ${params.renderInstructions.systemPrompt} Render only the supplied tool result. Do not call tools, do not invent facts, and do not broaden into free-form chat.`
     },
-    ...(params.recentConversation ?? []).map((turn) => ({
-      role: turn.role,
-      content: turn.content
-    })),
+    ...formatRecentConversationMessages(params.recentConversation),
     {
       role: "user",
       content: [
@@ -764,6 +743,47 @@ function buildToolRenderMessages(params: {
       ].join("\n")
     }
   ];
+}
+
+function formatRecentConversationMessages(recentConversation?: ConversationTurnRecord[]): ChatMessage[] {
+  return (recentConversation ?? []).map((turn) => ({
+    role: turn.role,
+    content: formatConversationTurnLine(turn)
+  }));
+}
+
+function formatConversationTurnLine(turn: ConversationTurnRecord): string {
+  return `${formatConversationSpeakerLabel(turn)}: ${turn.content}`;
+}
+
+function formatConversationSpeakerLabel(turn: ConversationTurnRecord): string {
+  if (turn.participantKind === "assistant" || turn.role === "assistant") {
+    return "Dot";
+  }
+
+  if (turn.participantKind === "owner") {
+    return turn.participantDisplayName ? `Owner (${turn.participantDisplayName})` : "Owner";
+  }
+
+  if (turn.participantKind === "non-owner") {
+    if (turn.participantDisplayName) {
+      return `Participant (${turn.participantDisplayName})`;
+    }
+    if (turn.participantActorId) {
+      return `Participant (${turn.participantActorId})`;
+    }
+    return "Participant";
+  }
+
+  if (turn.participantDisplayName) {
+    return `User (${turn.participantDisplayName})`;
+  }
+
+  if (turn.participantActorId) {
+    return `User (${turn.participantActorId})`;
+  }
+
+  return "User";
 }
 
 function appendGroundedLinks(reply: string, evidence: WorldLookupEvidenceRecord[], maxLinks = 3): string {

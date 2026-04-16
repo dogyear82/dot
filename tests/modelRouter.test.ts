@@ -265,8 +265,8 @@ test("llm service includes recent local conversation turns before the current us
   });
 
   assert.deepEqual(capturedMessages[0]?.slice(1), [
-    { role: "user", content: "earlier question" },
-    { role: "assistant", content: "earlier answer" },
+    { role: "user", content: "Owner (tan): earlier question" },
+    { role: "assistant", content: "Dot: earlier answer" },
     { role: "user", content: "current question" }
   ]);
 });
@@ -318,8 +318,8 @@ test("llm intent classification includes recent conversation so repairs can reco
   await service.inferToolDecision("i'm asking for current events, not history. wikipedia is not news", recentConversation);
 
   assert.deepEqual(capturedMessages[0]?.slice(1, 3), [
-    { role: "user", content: "what's going on in ukraine right now?" },
-    { role: "assistant", content: "According to Wikipedia, Ukraine is a country in Eastern Europe." }
+    { role: "user", content: "Owner (tan): what's going on in ukraine right now?" },
+    { role: "assistant", content: "Dot: According to Wikipedia, Ukraine is a country in Eastern Europe." }
   ]);
   assert.match(capturedMessages[0]?.[3]?.content ?? "", /current events or news, prefer execute_tool world\.lookup/i);
 });
@@ -425,6 +425,52 @@ test("llm service routes obvious schedule questions through the model intent cla
 test("llm service can infer addressedness and intent for ambiguous messages with a neutral classifier prompt", async () => {
   const store = createStore();
   const capturedMessages: ChatMessage[][] = [];
+  const recentConversation: ConversationTurnRecord[] = [
+    {
+      id: 1,
+      conversationId: "channel-1",
+      role: "user",
+      participantActorId: "owner-1",
+      participantDisplayName: "tan",
+      participantKind: "owner",
+      content: "What did Alice say?",
+      sourceMessageId: "m1",
+      createdAt: "2026-04-09T10:00:00.000Z"
+    },
+    {
+      id: 2,
+      conversationId: "channel-1",
+      role: "user",
+      participantActorId: "user-alice",
+      participantDisplayName: "alice",
+      participantKind: "non-owner",
+      content: "I can do Tuesday.",
+      sourceMessageId: "m2",
+      createdAt: "2026-04-09T10:00:05.000Z"
+    },
+    {
+      id: 3,
+      conversationId: "channel-1",
+      role: "user",
+      participantActorId: "user-bob",
+      participantDisplayName: "bob",
+      participantKind: "non-owner",
+      content: "Wednesday works better for me.",
+      sourceMessageId: "m3",
+      createdAt: "2026-04-09T10:00:10.000Z"
+    },
+    {
+      id: 4,
+      conversationId: "channel-1",
+      role: "assistant",
+      participantActorId: "bot-1",
+      participantDisplayName: "Dot",
+      participantKind: "assistant",
+      content: "Well now, let me think on that.",
+      sourceMessageId: "m4",
+      createdAt: "2026-04-09T10:00:15.000Z"
+    }
+  ];
 
   const service = createLlmService({
     config: createConfig(),
@@ -442,7 +488,7 @@ test("llm service can infer addressedness and intent for ambiguous messages with
     ]
   });
 
-  const result = await service.inferAddressedToolDecision?.("I want another reminder set");
+  const result = await service.inferAddressedToolDecision?.("I want another reminder set", recentConversation);
 
   assert(result);
   assert.equal(result.route, "hosted");
@@ -457,6 +503,10 @@ test("llm service can infer addressedness and intent for ambiguous messages with
   assert.match(capturedMessages[0]?.[0]?.content ?? "", /neutral classifier for ambiguous Discord messages involving Dot/i);
   assert.doesNotMatch(capturedMessages[0]?.[0]?.content ?? "", /auntie_dot/i);
   assert.match(capturedMessages[0]?.[1]?.content ?? "", /Recent conversation:/i);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Owner \(tan\): What did Alice say\?/i);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Participant \(alice\): I can do Tuesday\./i);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Participant \(bob\): Wednesday works better for me\./i);
+  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Dot: Well now, let me think on that\./i);
 });
 
 test("llm service can return addressed false for ambiguous shared-channel chatter", async () => {
@@ -488,6 +538,30 @@ test("llm service can return addressed false for ambiguous shared-channel chatte
 test("llm service can generate a grounded reply and append source links", async () => {
   const store = createStore();
   const capturedMessages: ChatMessage[][] = [];
+  const recentConversation: ConversationTurnRecord[] = [
+    {
+      id: 1,
+      conversationId: "channel-1",
+      role: "user",
+      participantActorId: "owner-1",
+      participantDisplayName: "tan",
+      participantKind: "owner",
+      content: "Alice was asking about zebra breeding.",
+      sourceMessageId: "m1",
+      createdAt: "2026-04-09T10:00:00.000Z"
+    },
+    {
+      id: 2,
+      conversationId: "channel-1",
+      role: "user",
+      participantActorId: "user-alice",
+      participantDisplayName: "alice",
+      participantKind: "non-owner",
+      content: "When is zebra mating season?",
+      sourceMessageId: "m2",
+      createdAt: "2026-04-09T10:00:05.000Z"
+    }
+  ];
 
   const service = createLlmService({
     config: createConfig(),
@@ -506,6 +580,7 @@ test("llm service can generate a grounded reply and append source links", async 
     selectedSources: ["wikipedia"],
     failures: [],
     outcome: "success",
+    recentConversation,
     evidence: [
       {
         source: "wikipedia",
@@ -520,11 +595,15 @@ test("llm service can generate a grounded reply and append source links", async 
 
   assert(result);
   assert.equal(result.route, "local");
+  assert.deepEqual(capturedMessages[0]?.slice(1, 3), [
+    { role: "user", content: "Owner (tan): Alice was asking about zebra breeding." },
+    { role: "user", content: "Participant (alice): When is zebra mating season?" }
+  ]);
   assert.match(result.reply, /According to Wikipedia, zebras breed seasonally\./);
   assert.match(result.reply, /Links:\n- https:\/\/en\.wikipedia\.org\/wiki\/Zebra/);
   assert.match(capturedMessages[0]?.[0]?.content ?? "", /Use the supplied external evidence when answering/);
-  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Selected sources: Wikipedia/);
-  assert.match(capturedMessages[0]?.[1]?.content ?? "", /Article extracts:\nNo article text could be extracted/);
+  assert.match(capturedMessages[0]?.[3]?.content ?? "", /Selected sources: Wikipedia/);
+  assert.match(capturedMessages[0]?.[3]?.content ?? "", /Article extracts:\nNo article text could be extracted/);
 });
 
 test("llm service includes article extracts for grounded current-events answers", async () => {
