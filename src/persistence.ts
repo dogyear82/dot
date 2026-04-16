@@ -30,7 +30,8 @@ import type {
   ReminderEvent,
   ReminderRecord,
   ServiceHealthSnapshotRecord,
-  ToolExecutionAuditRecord
+  ToolExecutionAuditRecord,
+  ConversationParticipantKind
 } from "./types.js";
 
 export interface Persistence {
@@ -47,6 +48,8 @@ export interface Persistence {
     conversationId: string;
     role: "user" | "assistant";
     participantActorId?: string | null;
+    participantDisplayName?: string | null;
+    participantKind?: ConversationParticipantKind;
     content: string;
     sourceMessageId?: string | null;
     createdAt?: string;
@@ -187,6 +190,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       conversation_id TEXT NOT NULL,
       role TEXT NOT NULL,
       participant_actor_id TEXT,
+      participant_display_name TEXT,
+      participant_kind TEXT NOT NULL DEFAULT 'unknown',
       content TEXT NOT NULL,
       source_message_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -365,6 +370,9 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
     );
   `);
   ensureColumn(db, "conversation_turns", "participant_actor_id", "TEXT");
+  ensureColumn(db, "conversation_turns", "participant_display_name", "TEXT");
+  ensureColumn(db, "conversation_turns", "participant_kind", "TEXT NOT NULL DEFAULT 'unknown'");
+  backfillConversationTurnParticipantIdentity(db);
   ensureColumn(db, "access_audit", "addressed", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "access_audit", "addressed_reason", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "access_audit", "transport", "TEXT NOT NULL DEFAULT 'discord'");
@@ -635,6 +643,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       conversation_id,
       role,
       participant_actor_id,
+      participant_display_name,
+      participant_kind,
       content,
       source_message_id,
       created_at
@@ -642,6 +652,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       @conversationId,
       @role,
       @participantActorId,
+      @participantDisplayName,
+      @participantKind,
       @content,
       @sourceMessageId,
       COALESCE(@createdAt, CURRENT_TIMESTAMP)
@@ -654,6 +666,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
       conversation_id AS conversationId,
       role,
       participant_actor_id AS participantActorId,
+      participant_display_name AS participantDisplayName,
+      participant_kind AS participantKind,
       content,
       source_message_id AS sourceMessageId,
       created_at AS createdAt
@@ -663,6 +677,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         conversation_id,
         role,
         participant_actor_id,
+        participant_display_name,
+        participant_kind,
         content,
         source_message_id,
         created_at
@@ -1281,6 +1297,8 @@ export function initializePersistence(dataDir: string, sqlitePath: string): Pers
         conversationId: record.conversationId,
         role: record.role,
         participantActorId: record.participantActorId ?? null,
+        participantDisplayName: record.participantDisplayName ?? null,
+        participantKind: record.participantKind ?? "unknown",
         content: record.content,
         sourceMessageId: record.sourceMessageId ?? null,
         createdAt: record.createdAt ?? null
@@ -1644,6 +1662,18 @@ function ensureColumn(db: Database.Database, tableName: string, columnName: stri
   }
 
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+}
+
+function backfillConversationTurnParticipantIdentity(db: Database.Database) {
+  db.prepare(`
+    UPDATE conversation_turns
+    SET
+      participant_actor_id = NULL,
+      participant_display_name = COALESCE(NULLIF(participant_display_name, ''), 'Dot'),
+      participant_kind = 'assistant'
+    WHERE role = 'assistant'
+      AND (participant_kind IS NULL OR participant_kind = '' OR participant_kind = 'unknown')
+  `).run();
 }
 
 function newsBrowseSessionKey(conversationId: string): string {

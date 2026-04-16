@@ -229,6 +229,8 @@ test("llm service includes recent local conversation turns before the current us
       conversationId: "channel-1",
       role: "user",
       participantActorId: "owner-1",
+      participantDisplayName: "tan",
+      participantKind: "owner",
       content: "earlier question",
       sourceMessageId: "m1",
       createdAt: "2026-04-09T10:00:00.000Z"
@@ -237,7 +239,9 @@ test("llm service includes recent local conversation turns before the current us
       id: 2,
       conversationId: "channel-1",
       role: "assistant",
-      participantActorId: "owner-1",
+      participantActorId: "bot-1",
+      participantDisplayName: "Dot",
+      participantKind: "assistant",
       content: "earlier answer",
       sourceMessageId: "m2",
       createdAt: "2026-04-09T10:00:05.000Z"
@@ -276,6 +280,8 @@ test("llm intent classification includes recent conversation so repairs can reco
       conversationId: "channel-1",
       role: "user",
       participantActorId: "owner-1",
+      participantDisplayName: "tan",
+      participantKind: "owner",
       content: "what's going on in ukraine right now?",
       sourceMessageId: "m1",
       createdAt: "2026-04-09T10:00:00.000Z"
@@ -284,7 +290,9 @@ test("llm intent classification includes recent conversation so repairs can reco
       id: 2,
       conversationId: "channel-1",
       role: "assistant",
-      participantActorId: "owner-1",
+      participantActorId: "bot-1",
+      participantDisplayName: "Dot",
+      participantKind: "assistant",
       content: "According to Wikipedia, Ukraine is a country in Eastern Europe.",
       sourceMessageId: "m2",
       createdAt: "2026-04-09T10:00:05.000Z"

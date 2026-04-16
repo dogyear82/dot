@@ -414,12 +414,26 @@ test("Discord ingress publishes through the bus and preserves command-seeded fol
 
       const turnsAfterCommand = persistence.listRecentConversationTurns("chan-1", 10);
       assert.deepEqual(
-        turnsAfterCommand.map((turn) => ({ role: turn.role, participantActorId: turn.participantActorId, content: turn.content })),
+        turnsAfterCommand.map((turn) => ({
+          role: turn.role,
+          participantActorId: turn.participantActorId,
+          participantDisplayName: turn.participantDisplayName,
+          participantKind: turn.participantKind,
+          content: turn.content
+        })),
         [
-          { role: "user", participantActorId: "owner-1", content: "!settings" },
+          {
+            role: "user",
+            participantActorId: "owner-1",
+            participantDisplayName: "owner",
+            participantKind: "owner",
+            content: "!settings"
+          },
           {
             role: "assistant",
-            participantActorId: "owner-1",
+            participantActorId: "bot-1",
+            participantDisplayName: "Dot",
+            participantKind: "assistant",
             content:
               "Settings commands:\n- `!settings show`\n- `!settings set <key> <value>`\nUser-editable keys:\n- `persona.mode`\n- `persona.balance`\n- `channels.defaultPolicy`\n- `reminders.escalationPolicy`\n- `llm.mode`\n\n[mode: normal]"
           }
@@ -555,6 +569,9 @@ test("Discord outbound delivery chunks oversized replies and stores one assistan
     const turns = persistence.listRecentConversationTurns("chan-1", 10);
     const assistantTurns = turns.filter((turn) => turn.role === "assistant");
     assert.equal(assistantTurns.length, 1);
+    assert.equal(assistantTurns[0]?.participantActorId, "bot-1");
+    assert.equal(assistantTurns[0]?.participantDisplayName, "Dot");
+    assert.equal(assistantTurns[0]?.participantKind, "assistant");
     assert.equal(assistantTurns[0]?.content, fullReply);
   } finally {
     unregisterConsumer();

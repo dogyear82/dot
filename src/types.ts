@@ -1,5 +1,7 @@
 import type { ReminderIntakeState } from "./reminderIntake.js";
 
+export type ConversationParticipantKind = "assistant" | "owner" | "non-owner" | "unknown";
+
 export interface IncomingMessage {
   id: string;
   channelId: string;
@@ -19,6 +21,8 @@ export interface ConversationTurnRecord {
   conversationId: string;
   role: "user" | "assistant";
   participantActorId: string | null;
+  participantDisplayName: string | null;
+  participantKind: ConversationParticipantKind;
   content: string;
   sourceMessageId: string | null;
   createdAt: string;
