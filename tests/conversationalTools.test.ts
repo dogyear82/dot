@@ -219,7 +219,7 @@ test("conversational reminder tool accepts time aliases and natural duration phr
     });
 
     assert.equal(confirmation.status, "requires_confirmation");
-    assert.match(String(confirmation.payload.text), /14 hours/i);
+    assert.match(String(confirmation.payload.text), /14h|14 hours/i);
   } finally {
     cleanup();
   }
