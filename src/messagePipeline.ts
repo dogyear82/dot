@@ -549,7 +549,10 @@ export function registerMessagePipeline(params: {
                       renderService: { renderToolResult: chatService.renderToolResult! },
                       recentConversation
                     });
-                    if (result.status === "clarify" || result.status === "requires_confirmation") {
+                    if (
+                      (result.status === "clarify" || result.status === "requires_confirmation") &&
+                      shouldPersistPendingToolSession(result.toolName)
+                    ) {
                       savePendingToolSession({
                         toolName: result.toolName,
                         args: resolvedArgs,
@@ -729,6 +732,10 @@ function reminderIntakeArgsFromState(state: ReminderIntakeState): Record<string,
     args.dueAt = state.data.dueAt;
   }
   return args;
+}
+
+function shouldPersistPendingToolSession(toolName: ConversationalToolName): boolean {
+  return toolName !== "weather.lookup";
 }
 
 function formatCurrentSpeakerLabel(event: InboundMessageReceivedEvent): string {

@@ -688,6 +688,197 @@ test("message pipeline executes inferred weather.lookup and records weather audi
   }
 });
 
+test("message pipeline keeps weather clarifications stateless and re-runs fresh inference on the follow-up turn", async () => {
+  const { persistence, cleanup } = createPersistence();
+  const bus = createInMemoryEventBus();
+  const outbound: OutboundMessageRequestedEvent[] = [];
+  let inferToolDecisionCalls = 0;
+  const calendarClient: OutlookCalendarClient = {
+    async listUpcomingEvents() {
+      return [];
+    }
+  };
+  const chatService: ChatService = {
+    async generateOwnerReply() {
+      throw new Error("weather clarification flow should not fall back to normal chat");
+    },
+    async renderToolResult(params) {
+      assert.equal((params.payload.location as { name: string }).name, "Phoenix");
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        reply: "Phoenix looks clear tomorrow with a high around 88F."
+      };
+    },
+    async inferToolDecision() {
+      inferToolDecisionCalls += 1;
+      if (inferToolDecisionCalls === 1) {
+        return {
+          route: "hosted",
+          powerStatus: "engaged",
+          decision: {
+            decision: "execute_tool",
+            toolName: "weather.lookup",
+            reason: "owner asked for weather without a location",
+            confidence: "high",
+            args: {}
+          }
+        };
+      }
+
+      return {
+        route: "hosted",
+        powerStatus: "engaged",
+        decision: {
+          decision: "execute_tool",
+          toolName: "weather.lookup",
+          reason: "owner supplied the missing location",
+          confidence: "high",
+          args: {
+            location: "Phoenix, AZ"
+          }
+        }
+      };
+    },
+    getPowerStatus(route) {
+      return route === "hosted" ? "engaged" : "standby";
+    }
+  };
+
+  persistence.settings.set("onboarding.completed", "true");
+  bus.subscribeOutboundMessage(async (event) => {
+    outbound.push(event);
+  });
+
+  const unsubscribe = registerMessagePipeline({
+    bus,
+    calendarClient,
+    chatService,
+    logger: createLogger() as never,
+    outlookOAuthClient: {} as never,
+    ownerUserId: "owner-1",
+    persistence,
+    weatherClient: {
+      async lookup(params) {
+        if (params.location === "Phoenix, AZ") {
+          return {
+            kind: "success" as const,
+            location: {
+              name: "Phoenix",
+              admin1: "Arizona",
+              country: "United States",
+              countryCode: "US",
+              latitude: 33.45,
+              longitude: -112.07,
+              timezone: "America/Phoenix",
+              label: "Phoenix, Arizona, United States"
+            },
+            units: {
+              temperature: "F" as const,
+              windSpeed: "mph" as const
+            },
+            current: {
+              time: "2026-04-16T09:00",
+              temperature: 78,
+              apparentTemperature: 80,
+              windSpeed: 6,
+              condition: "clear",
+              isDay: true
+            },
+            daily: [
+              {
+                date: "2026-04-16",
+                condition: "clear",
+                temperatureMax: 86,
+                temperatureMin: 62,
+                precipitationProbabilityMax: 0
+              }
+            ]
+          };
+        }
+
+        return {
+          kind: "clarify" as const,
+          reason: "missing_location",
+          prompt: "Which city and state or city and country should I check the weather for?"
+        };
+      }
+    }
+  });
+
+  try {
+    await bus.publishInboundMessage(
+      inboundEvent({
+        payload: {
+          messageId: "msg-weather-clarify-1",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "What's the weather tomorrow?",
+          addressedContent: "What's the weather tomorrow?",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-weather-clarify-1"
+          }
+        }
+      })
+    );
+
+    assert.equal(outbound.length, 1);
+    assert.match(outbound[0]?.payload.content ?? "", /Which city and state or city and country/i);
+    assert.equal(
+      persistence.getPendingConversationalToolSession("channel-1"),
+      null
+    );
+
+    await bus.publishInboundMessage(
+      inboundEvent({
+        eventId: "discord:msg-weather-clarify-2",
+        correlation: {
+          correlationId: "msg-weather-clarify-2",
+          conversationId: "channel-1",
+          actorId: "owner-1"
+        },
+        payload: {
+          messageId: "msg-weather-clarify-2",
+          sender: {
+            actorId: "owner-1",
+            displayName: "tan",
+            actorRole: "owner"
+          },
+          content: "Phoenix, AZ",
+          addressedContent: "Phoenix, AZ",
+          isDirectMessage: true,
+          mentionedBot: false,
+          replyRoute: {
+            transport: "discord",
+            channelId: "channel-1",
+            guildId: null,
+            replyTo: "msg-weather-clarify-2"
+          }
+        }
+      })
+    );
+
+    assert.equal(inferToolDecisionCalls, 2);
+    assert.equal(outbound.length, 2);
+    assert.match(outbound[1]?.payload.content ?? "", /Phoenix looks clear tomorrow/i);
+    assert.equal(
+      persistence.getPendingConversationalToolSession("channel-1"),
+      null
+    );
+  } finally {
+    unsubscribe();
+    cleanup();
+  }
+});
+
 test("message pipeline executes inferred reminder add/show/ack through the conversational tool contract", async () => {
   const { persistence, cleanup } = createPersistence();
   const bus = createInMemoryEventBus();
