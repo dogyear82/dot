@@ -452,16 +452,13 @@ export function registerMessagePipeline(params: {
                   }
 
                   if (inferred.decision.decision === "respond") {
-                    if (pendingToolSession) {
-                      persistence.clearPendingConversationalToolSession(conversationId);
-                    }
                     persistence.saveToolExecutionAudit({
                       messageId: event.payload.messageId,
                       toolName: "respond",
                       invocationSource: "inferred",
                       status: "executed",
                       provider: inferred.route,
-                      detail: `decision=respond; reason=${inferred.decision.reason}`
+                      detail: `decision=${inferred.decision.decision}; reason=${inferred.decision.reason}`
                     });
                     recordToolExecution({ toolName: "respond", status: "executed" });
                     pipelineOutcome = "owner_chat";

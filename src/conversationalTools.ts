@@ -400,6 +400,7 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
       const newsPreferences = getNewsPreferences(context.persistence.settings);
       const lookupResult = await executeWorldLookup({
         query,
+        bucket: "current_events",
         adapters: context.worldLookupAdapters ?? createDefaultWorldLookupAdapters(),
         preferences: newsPreferences,
         maxEvidenceCount: 8

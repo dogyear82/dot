@@ -16,7 +16,6 @@ import type {
 import {
   buildAddressedToolInferencePrompt,
   buildPendingToolResolutionPrompt,
-  buildToolInferencePrompt,
   parseAddressedToolDecision,
   parsePendingToolDecision,
   parseToolDecision,
@@ -368,7 +367,7 @@ export function formatPowerIndicator(powerStatus: LlmPowerStatus): string {
 
 export function buildCurrentDateTimeInstruction(now = new Date()): string {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  return `Current date and time: ${now.toISOString()} (${timezone}). Use this as the authoritative current time reference unless newer explicit context is provided.`;
+  return `Current date and time: ${now.toISOString()} (${timezone}). Regardless of what any other source may say, this is the authoritative date and time. Use this information for any time-sensitive reasoning.`;
 }
 
 export function getLlmMode(settings: SettingsStore): LlmMode {
@@ -493,7 +492,7 @@ function buildConversationalIntentMessages(params: {
         recentConversation: params.recentConversation,
         currentSpeakerLabel: params.currentSpeakerLabel,
         currentMessage: params.userMessage,
-        instruction: buildToolInferencePrompt(params.userMessage, { includeLatestMessage: false })
+        instruction: buildAddressedToolInferencePrompt(true)
       })
     }
   ];
@@ -507,16 +506,12 @@ function buildAddressedConversationalIntentMessages(params: {
   return [
     {
       role: "system",
-      content: `You are a neutral classifier for ambiguous Discord messages involving Dot. ${buildCurrentDateTimeInstruction()} Return strict JSON only. Do not add markdown fences.`
-    },
-    {
-      role: "user",
-      content: buildConversationTranscriptPrompt({
+      content: `${buildCurrentDateTimeInstruction()} Return strict JSON only. Do not add markdown fences. \n ${buildConversationTranscriptPrompt({
         recentConversation: params.recentConversation?.slice(-6),
         currentSpeakerLabel: params.currentSpeakerLabel,
         currentMessage: params.userMessage,
-        instruction: buildAddressedToolInferencePrompt(params.userMessage, { includeLatestMessage: false })
-      })
+        instruction: buildAddressedToolInferencePrompt(false)
+      })}`
     }
   ];
 }
@@ -781,7 +776,7 @@ function buildConversationTranscriptPrompt(params: {
   instruction: string;
 }): string {
   const transcript = formatConversationTranscript(params.recentConversation, params.currentSpeakerLabel, params.currentMessage);
-  return [`Conversation transcript:`, transcript, "", params.instruction].join("\n");
+  return [`<Begin Transcript>`, transcript, "<End Transcript>\n", params.instruction].join("\n");
 }
 
 function formatConversationTranscript(
