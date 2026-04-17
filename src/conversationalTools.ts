@@ -22,6 +22,11 @@ import { executeWorldLookup } from "./worldLookup.js";
 import { HtmlWorldLookupArticleReader } from "./worldLookupArticles.js";
 import { createDefaultWorldLookupAdapters } from "./worldLookupAdapters.js";
 import { getNewsPreferences } from "./newsPreferences.js";
+import {
+  OpenMeteoWeatherClient,
+  type WeatherLookupCandidate,
+  type WeatherLookupClient
+} from "./weatherLookup.js";
 
 export type ConversationalToolName =
   | "reminder.add"
@@ -29,6 +34,7 @@ export type ConversationalToolName =
   | "reminder.ack"
   | "calendar.show"
   | "calendar.remind"
+  | "weather.lookup"
   | "news.briefing"
   | "news.follow_up"
   | "world.lookup";
@@ -54,6 +60,7 @@ export interface ConversationalToolContext {
   groundedAnswerService?: GroundedAnswerService;
   worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
   articleReader?: WorldLookupArticleReader;
+  weatherClient?: WeatherLookupClient;
 }
 
 export interface ConversationalToolResult {
@@ -274,6 +281,118 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
       };
     }
   },
+  "weather.lookup": {
+    toolName: "weather.lookup",
+    async execute(call, context) {
+      const location = getOptionalStringArg(call.args, "location");
+      const city = getOptionalStringArg(call.args, "city");
+      const admin1 = getOptionalStringArg(call.args, "admin1");
+      const country = getOptionalStringArg(call.args, "country");
+      const weatherClient = context.weatherClient ?? new OpenMeteoWeatherClient();
+      const cachedCandidates = readWeatherLookupCandidateCache(context.persistence, call.conversationId);
+
+      if (cachedCandidates.length > 0) {
+        const cachedMatch = weatherClient.resolveCachedCandidate(cachedCandidates, {
+          location,
+          city,
+          admin1,
+          country
+        });
+
+        if (cachedMatch) {
+          const result = await weatherClient.forecastForCandidate({ candidate: cachedMatch });
+          clearWeatherLookupCandidateCache(context.persistence, call.conversationId);
+          return {
+            toolName: "weather.lookup",
+            status: "success",
+            presentation: "llm_render",
+            payload: {
+              mode: "weather_lookup",
+              location: result.location,
+              units: result.units,
+              current: result.current,
+              daily: result.daily
+            },
+            renderInstructions: {
+              systemPrompt:
+                "Render the supplied weather payload into Dot's natural voice. Answer the user's weather question directly using only the provided weather data.",
+              constraints: [
+                "Use only the supplied payload.",
+                "Answer only the weather question that was asked.",
+                "If the user asked about today or tomorrow, focus on that time window instead of dumping the whole forecast.",
+                "Mention the resolved location naturally.",
+                "Do not invent weather details or locations that are not present in the payload."
+              ],
+              styleHints: [
+                "Keep the answer concise.",
+                "Include temperatures with the provided units."
+              ]
+            },
+            detail: `presentation=llm_render; location=${result.location.label}; forecastDays=${result.daily.length}; units=${result.units.temperature}; source=cached_candidate`
+          };
+        }
+      }
+
+      if (!location && !city) {
+        return {
+          toolName: "weather.lookup",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: "Which city and state or province and country should I check the weather for?"
+          },
+          detail: "presentation=final_text; missing=location"
+        };
+      }
+
+      const searchLocation = location ?? [city, admin1, country].filter(Boolean).join(", ");
+      const result = await weatherClient.lookup({ location: searchLocation });
+      if (result.kind === "clarify") {
+        if (result.reason === "ambiguous_location" && result.candidates?.length && call.conversationId) {
+          saveWeatherLookupCandidateCache(context.persistence, call.conversationId, result.candidates);
+        }
+        return {
+          toolName: "weather.lookup",
+          status: "clarify",
+          presentation: "final_text",
+          payload: {
+            text: result.prompt
+          },
+          detail: `presentation=final_text; reason=${result.reason}; candidates=${result.candidates?.length ?? 0}`
+        };
+      }
+
+      clearWeatherLookupCandidateCache(context.persistence, call.conversationId);
+      return {
+        toolName: "weather.lookup",
+        status: "success",
+        presentation: "llm_render",
+        payload: {
+          mode: "weather_lookup",
+          location: result.location,
+          units: result.units,
+          current: result.current,
+          daily: result.daily
+        },
+        renderInstructions: {
+          systemPrompt:
+            "Render the supplied weather payload into Dot's natural voice. Answer the user's weather question directly using only the provided weather data.",
+          constraints: [
+            "Use only the supplied payload.",
+            "Answer only the weather question that was asked.",
+            "If the user asked about today or tomorrow, focus on that time window instead of dumping the whole forecast.",
+            "Mention the resolved location naturally.",
+            "Do not invent weather details or locations that are not present in the payload."
+          ],
+          styleHints: [
+            "Keep the answer concise.",
+            "Include temperatures with the provided units."
+          ]
+        },
+        detail: `presentation=llm_render; location=${result.location.label}; forecastDays=${result.daily.length}; units=${result.units.temperature}; source=direct_lookup`
+      };
+    }
+  },
   "news.briefing": {
     toolName: "news.briefing",
     async execute(call, context) {
@@ -281,6 +400,7 @@ const DEFAULT_CONVERSATIONAL_TOOLS: Record<ConversationalToolName, Conversationa
       const newsPreferences = getNewsPreferences(context.persistence.settings);
       const lookupResult = await executeWorldLookup({
         query,
+        bucket: "current_events",
         adapters: context.worldLookupAdapters ?? createDefaultWorldLookupAdapters(),
         preferences: newsPreferences,
         maxEvidenceCount: 8
@@ -748,6 +868,71 @@ function parseOrdinalReference(normalized: string): number | null {
   }
 
   return null;
+}
+
+const WEATHER_LOOKUP_CACHE_TTL_MS = 15 * 60 * 1000;
+
+function weatherLookupCandidateCacheKey(conversationId: string): string {
+  return `weatherLookupCandidates:${conversationId}`;
+}
+
+function readWeatherLookupCandidateCache(persistence: Persistence, conversationId?: string): WeatherLookupCandidate[] {
+  if (!conversationId) {
+    return [];
+  }
+
+  const raw = persistence.getWorkerState(weatherLookupCandidateCacheKey(conversationId));
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      savedAt?: string;
+      candidates?: WeatherLookupCandidate[];
+    };
+
+    if (!Array.isArray(parsed.candidates) || parsed.candidates.length === 0) {
+      return [];
+    }
+
+    const savedAt = parsed.savedAt ? Date.parse(parsed.savedAt) : Number.NaN;
+    if (Number.isFinite(savedAt) && Date.now() - savedAt > WEATHER_LOOKUP_CACHE_TTL_MS) {
+      persistence.clearWorkerState(weatherLookupCandidateCacheKey(conversationId));
+      return [];
+    }
+
+    return parsed.candidates;
+  } catch {
+    persistence.clearWorkerState(weatherLookupCandidateCacheKey(conversationId));
+    return [];
+  }
+}
+
+function saveWeatherLookupCandidateCache(
+  persistence: Persistence,
+  conversationId: string | undefined,
+  candidates: WeatherLookupCandidate[]
+): void {
+  if (!conversationId) {
+    return;
+  }
+
+  persistence.setWorkerState(
+    weatherLookupCandidateCacheKey(conversationId),
+    JSON.stringify({
+      savedAt: new Date().toISOString(),
+      candidates
+    })
+  );
+}
+
+function clearWeatherLookupCandidateCache(persistence: Persistence, conversationId?: string): void {
+  if (!conversationId) {
+    return;
+  }
+
+  persistence.clearWorkerState(weatherLookupCandidateCacheKey(conversationId));
 }
 
 export async function renderConversationalToolResult(params: {

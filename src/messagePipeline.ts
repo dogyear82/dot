@@ -21,6 +21,7 @@ import { executeConversationalToolCall, renderConversationalToolResult, type Con
 import type { IncomingMessage, PendingConversationalToolSessionRecord, WorldLookupSourceName } from "./types.js";
 import { evaluateDeterministicAddressednessFastPath } from "./discord/addressing.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
+import type { WeatherLookupClient } from "./weatherLookup.js";
 
 const RECENT_CHAT_HISTORY_LIMIT = 10;
 const PENDING_TOOL_SESSION_TTL_MS = 15 * 60 * 1000;
@@ -34,8 +35,9 @@ export function registerMessagePipeline(params: {
   ownerUserId: string;
   persistence: Persistence;
   worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
+  weatherClient?: WeatherLookupClient;
 }): () => void {
-  const { bus, calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence, worldLookupAdapters } = params;
+  const { bus, calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence, worldLookupAdapters, weatherClient } = params;
 
   return bus.subscribeInboundMessage(async (event) => {
     await withEventContext(event, async () => {
@@ -450,16 +452,13 @@ export function registerMessagePipeline(params: {
                   }
 
                   if (inferred.decision.decision === "respond") {
-                    if (pendingToolSession) {
-                      persistence.clearPendingConversationalToolSession(conversationId);
-                    }
                     persistence.saveToolExecutionAudit({
                       messageId: event.payload.messageId,
                       toolName: "respond",
                       invocationSource: "inferred",
                       status: "executed",
                       provider: inferred.route,
-                      detail: `decision=respond; reason=${inferred.decision.reason}`
+                      detail: `decision=${inferred.decision.decision}; reason=${inferred.decision.reason}`
                     });
                     recordToolExecution({ toolName: "respond", status: "executed" });
                     pipelineOutcome = "owner_chat";
@@ -539,14 +538,18 @@ export function registerMessagePipeline(params: {
                           persistence,
                           groundedAnswerService,
                           worldLookupAdapters,
-                          articleReader: undefined
+                          articleReader: undefined,
+                          weatherClient
                         }
                       }),
                       userMessage: content,
                       renderService: { renderToolResult: chatService.renderToolResult! },
                       recentConversation
                     });
-                    if (result.status === "clarify" || result.status === "requires_confirmation") {
+                    if (
+                      (result.status === "clarify" || result.status === "requires_confirmation") &&
+                      shouldPersistPendingToolSession(result.toolName)
+                    ) {
                       savePendingToolSession({
                         toolName: result.toolName,
                         args: resolvedArgs,
@@ -726,6 +729,10 @@ function reminderIntakeArgsFromState(state: ReminderIntakeState): Record<string,
     args.dueAt = state.data.dueAt;
   }
   return args;
+}
+
+function shouldPersistPendingToolSession(toolName: ConversationalToolName): boolean {
+  return toolName !== "weather.lookup";
 }
 
 function formatCurrentSpeakerLabel(event: InboundMessageReceivedEvent): string {

@@ -219,7 +219,7 @@ test("conversational reminder tool accepts time aliases and natural duration phr
     });
 
     assert.equal(confirmation.status, "requires_confirmation");
-    assert.match(String(confirmation.payload.text), /14 hours/i);
+    assert.match(String(confirmation.payload.text), /14h/i);
   } finally {
     cleanup();
   }
@@ -243,6 +243,285 @@ test("conversational reminder tool rejects unsupported absolute datetime phrasin
 
     assert.equal(clarification.status, "clarify");
     assert.match(String(clarification.payload.text), /duration from now/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational weather tool returns llm_render payloads for resolved locations", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const result = await executeConversationalToolCall({
+      call: {
+        toolName: "weather.lookup",
+        args: {
+          location: "Phoenix, AZ"
+        },
+        userMessage: "what's the weather in Phoenix tomorrow?"
+      },
+      context: createContext({
+        persistence,
+        weatherClient: {
+          async lookup() {
+            return {
+              kind: "success",
+              location: {
+                name: "Phoenix",
+                admin1: "Arizona",
+                country: "United States",
+                countryCode: "US",
+                latitude: 33.45,
+                longitude: -112.07,
+                timezone: "America/Phoenix",
+                label: "Phoenix, Arizona, United States"
+              },
+              units: {
+                temperature: "F",
+                windSpeed: "mph"
+              },
+              current: {
+                time: "2026-04-16T09:00",
+                temperature: 78,
+                apparentTemperature: 80,
+                windSpeed: 6,
+                condition: "clear",
+                isDay: true
+              },
+              daily: [
+                {
+                  date: "2026-04-16",
+                  condition: "clear",
+                  temperatureMax: 86,
+                  temperatureMin: 62,
+                  precipitationProbabilityMax: 0
+                },
+                {
+                  date: "2026-04-17",
+                  condition: "partly cloudy",
+                  temperatureMax: 88,
+                  temperatureMin: 64,
+                  precipitationProbabilityMax: 10
+                }
+              ]
+            };
+          },
+          async forecastForCandidate({ candidate }) {
+            return {
+              kind: "success",
+              location: candidate,
+              units: {
+                temperature: "F",
+                windSpeed: "mph"
+              },
+              current: {
+                time: "2026-04-16T09:00",
+                temperature: 78,
+                apparentTemperature: 80,
+                windSpeed: 6,
+                condition: "clear",
+                isDay: true
+              },
+              daily: [
+                {
+                  date: "2026-04-16",
+                  condition: "clear",
+                  temperatureMax: 86,
+                  temperatureMin: 62,
+                  precipitationProbabilityMax: 0
+                }
+              ]
+            };
+          },
+          resolveCachedCandidate() {
+            return null;
+          }
+        }
+      })
+    });
+
+    assert.equal(result.toolName, "weather.lookup");
+    assert.equal(result.status, "success");
+    assert.equal(result.presentation, "llm_render");
+    assert.equal(result.payload.mode, "weather_lookup");
+    assert.equal((result.payload.location as { name: string }).name, "Phoenix");
+    assert.equal((result.payload.units as { temperature: string }).temperature, "F");
+    assert.equal((result.payload.daily as Array<{ date: string }>).length, 2);
+    assert.match(result.renderInstructions?.systemPrompt ?? "", /weather payload/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("conversational weather tool clarifies when location is missing or ambiguous", async () => {
+  const { persistence, cleanup } = createPersistence();
+
+  try {
+    const missingLocation = await executeConversationalToolCall({
+      call: {
+        toolName: "weather.lookup",
+        args: {},
+        userMessage: "what's the weather tomorrow?"
+      },
+      context: createContext({ persistence })
+    });
+
+    assert.equal(missingLocation.status, "clarify");
+    assert.match(String(missingLocation.payload.text), /Which city and state or province and country/i);
+
+    const ambiguousLocation = await executeConversationalToolCall({
+      call: {
+        toolName: "weather.lookup",
+        args: {
+          location: "Springfield"
+        },
+        userMessage: "what's the weather in Springfield?"
+      },
+      context: createContext({
+        persistence,
+        weatherClient: {
+          async lookup() {
+            return {
+              kind: "clarify",
+              reason: "ambiguous_location",
+              prompt:
+                'I found multiple places for "Springfield". Tell me the city, state or province, and country. I found: Springfield, Illinois, United States; Springfield, Missouri, United States',
+              candidates: [
+                {
+                  name: "Springfield",
+                  admin1: "Illinois",
+                  country: "United States",
+                  countryCode: "US",
+                  latitude: 1,
+                  longitude: 1,
+                  timezone: "America/Chicago",
+                  label: "Springfield, Illinois, United States"
+                },
+                {
+                  name: "Springfield",
+                  admin1: "Missouri",
+                  country: "United States",
+                  countryCode: "US",
+                  latitude: 2,
+                  longitude: 2,
+                  timezone: "America/Chicago",
+                  label: "Springfield, Missouri, United States"
+                }
+              ]
+            };
+          },
+          async forecastForCandidate({ candidate }) {
+            return {
+              kind: "success",
+              location: candidate,
+              units: {
+                temperature: "F",
+                windSpeed: "mph"
+              },
+              current: {
+                time: "2026-04-16T09:00",
+                temperature: 78,
+                apparentTemperature: 80,
+                windSpeed: 6,
+                condition: "clear",
+                isDay: true
+              },
+              daily: [
+                {
+                  date: "2026-04-16",
+                  condition: "clear",
+                  temperatureMax: 86,
+                  temperatureMin: 62,
+                  precipitationProbabilityMax: 0
+                }
+              ]
+            };
+          },
+          resolveCachedCandidate() {
+            return null;
+          }
+        }
+      })
+    });
+
+    assert.equal(ambiguousLocation.status, "clarify");
+    assert.match(String(ambiguousLocation.payload.text), /multiple places/i);
+
+    persistence.setWorkerState(
+      "weatherLookupCandidates:channel-1",
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        candidates: [
+          {
+            name: "San Gabriel",
+            admin1: "California",
+            country: "United States",
+            countryCode: "US",
+            latitude: 34.09611,
+            longitude: -118.10583,
+            timezone: "America/Los_Angeles",
+            label: "San Gabriel, California, United States"
+          }
+        ]
+      })
+    );
+
+    const cachedResolution = await executeConversationalToolCall({
+      call: {
+        toolName: "weather.lookup",
+        args: {
+          city: "San Gabriel",
+          admin1: "California",
+          country: "United States"
+        },
+        userMessage: "San Gabriel California",
+        conversationId: "channel-1"
+      },
+      context: createContext({
+        persistence,
+        weatherClient: {
+          async lookup() {
+            throw new Error("cached resolution should not fall back to geocoding");
+          },
+          async forecastForCandidate({ candidate }) {
+            return {
+              kind: "success",
+              location: candidate,
+              units: {
+                temperature: "F",
+                windSpeed: "mph"
+              },
+              current: {
+                time: "2026-04-16T09:00",
+                temperature: 78,
+                apparentTemperature: 80,
+                windSpeed: 6,
+                condition: "clear",
+                isDay: true
+              },
+              daily: [
+                {
+                  date: "2026-04-16",
+                  condition: "clear",
+                  temperatureMax: 86,
+                  temperatureMin: 62,
+                  precipitationProbabilityMax: 0
+                }
+              ]
+            };
+          },
+          resolveCachedCandidate(candidates, params) {
+            assert.equal(params.city, "San Gabriel");
+            assert.equal(params.admin1, "California");
+            assert.equal(params.country, "United States");
+            return candidates[0] ?? null;
+          }
+        }
+      })
+    });
+
+    assert.equal(cachedResolution.status, "success");
+    assert.equal(cachedResolution.presentation, "llm_render");
   } finally {
     cleanup();
   }

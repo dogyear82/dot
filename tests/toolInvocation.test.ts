@@ -8,7 +8,6 @@ import { initializePersistence } from "../src/persistence.js";
 import {
   buildAddressedToolInferencePrompt,
   buildPendingToolResolutionPrompt,
-  buildToolInferencePrompt,
   executeToolDecision,
   parseExplicitToolDecision,
   parseAddressedToolDecision,
@@ -67,30 +66,21 @@ test("parseToolDecision accepts respond and execute_tool responses", () => {
       }
     }
   );
-});
 
-test("buildToolInferencePrompt documents dueAt for specific reminder times", () => {
-  const prompt = buildToolInferencePrompt("set a reminder for tomorrow at 6pm to return the package");
-
-  assert.match(prompt, /prefer args\.dueAt as an ISO 8601 timestamp/i);
-  assert.match(prompt, /Decide whether you should respond directly or execute one of the available tools\./i);
-  assert.match(prompt, /If the latest owner message is an identifiable request for an available tool, return execute_tool even when some required arguments are missing\./i);
-  assert.match(prompt, /If the latest owner message is ordinary conversation, commentary, thanks, correction/i);
-  assert.match(prompt, /Respond is a non-operational conversation path only\./i);
-  assert.match(prompt, /do not claim or imply that you sent, set, scheduled, created, updated, granted, deleted, changed, or otherwise performed a real side-effecting action\./i);
-  assert.match(prompt, /Any reply that says you already performed a real action must come from execute_tool, not respond\./i);
-  assert.match(prompt, /Use only the exact tool names and arg keys listed below\./i);
-  assert.match(prompt, /Interpret relative reminder phrases like `today`, `tomorrow`/i);
-  assert.match(prompt, /do not let earlier turns override a clear latest request\./i);
-  assert.match(prompt, /"toolName":"reminder\.add".*"args":\{\}/i);
-  assert.match(prompt, /"toolName":"calendar\.remind".*"args":\{\}/i);
-  assert.match(prompt, /- reminder\.add: message, optional duration, optional dueAt/i);
-  assert.match(prompt, /"dueAt":"2026-04-16T01:00:00\.000Z"/i);
-  assert.match(prompt, /execute_tool incomplete reminder/i);
-  assert.match(prompt, /execute_tool complete reminder/i);
-  assert.match(prompt, /repaired current-events lookup/i);
-  assert.match(prompt, /respond: .*I'm right here\./i);
-  assert.match(prompt, /disallowed respond: .*I set that reminder for tomorrow\./i);
+  assert.deepEqual(
+    parseToolDecision(
+      '{"decision":"execute_tool","toolName":"weather.lookup","reason":"owner is asking for weather information","confidence":"high","args":{"location":"Phoenix, AZ"}}'
+    ),
+    {
+      decision: "execute_tool",
+      toolName: "weather.lookup",
+      reason: "owner is asking for weather information",
+      confidence: "high",
+      args: {
+        location: "Phoenix, AZ"
+      }
+    }
+  );
 });
 
 test("parseAddressedToolDecision accepts addressed false and addressed true decisions", () => {
@@ -115,17 +105,24 @@ test("parseAddressedToolDecision accepts addressed false and addressed true deci
 });
 
 test("buildAddressedToolInferencePrompt documents the addressedness contract", () => {
-  const prompt = buildAddressedToolInferencePrompt("I want another reminder set");
+  const prompt = buildAddressedToolInferencePrompt(false);
 
-  assert.match(prompt, /neutral classifier for ambiguous Discord messages involving Dot/i);
-  assert.match(prompt, /deterministic fast paths are already handled before this step/i);
-  assert.match(prompt, /If the latest message is not directed to Dot, return addressed false/i);
-  assert.match(prompt, /Incomplete tool requests still use execute_tool/i);
-  assert.match(prompt, /A respond output is conversation only/i);
-  assert.match(prompt, /Return exactly one of these JSON shapes:/i);
+  assert.match(prompt, /Your name is Dot, and you are a neutral intent classifier/i);
+  assert.match(prompt, /If the latest message is not addressed to you, reply with:/i);
+  assert.match(prompt, /If the latest message is requesting a tool or needs a tool to formulate a reponse, reply with:/i);
+  assert.match(prompt, /If the latest message is requesting a tool but is missing some or all of the required information to execute the tool, reply with:/i);
   assert.match(prompt, /"addressed":false/i);
   assert.match(prompt, /"addressed":true,"decision":"execute_tool"/i);
-  assert.match(prompt, /Latest message: "I want another reminder set"/i);
+  assert.match(prompt, /"toolName":"news\.briefing".*"Ukraine today"/i);
+  assert.match(prompt, /toolName":"prompt_injection\.alert"/i);
+  assert.match(prompt, /- weather\.lookup: optional location, optional city, optional admin1, optional country/i);
+});
+
+test("buildAddressedToolInferencePrompt can force addressed true for deterministic fast paths", () => {
+  const prompt = buildAddressedToolInferencePrompt(true);
+
+  assert.match(prompt, /always set 'addressed' to true/i);
+  assert.doesNotMatch(prompt, /"addressed":false/);
 });
 
 test("buildPendingToolResolutionPrompt keeps respond non-operational", () => {

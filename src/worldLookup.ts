@@ -79,8 +79,9 @@ export async function executeWorldLookup(params: {
   timeoutMs?: number;
   preferences?: NewsPreferences;
   maxEvidenceCount?: number;
+  bucket?: WorldLookupQueryBucket;
 }): Promise<WorldLookupResult> {
-  const bucket = classifyWorldLookupQuery(params.query);
+  const bucket = params.bucket ?? classifyWorldLookupQuery(params.query);
   const basePlan = selectWorldLookupSourcePlan(bucket);
   const timeoutMs = params.timeoutMs ?? basePlan.timeoutMs;
   const selectedSources = selectWorldLookupSources(bucket, params.query, basePlan.sources);

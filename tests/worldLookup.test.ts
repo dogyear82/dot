@@ -128,6 +128,69 @@ test("executeWorldLookup runs selected sources in parallel and tolerates partial
   assert.equal(result.outcome, "partial_failure");
 });
 
+test("executeWorldLookup honors an explicit bucket override instead of reclassifying the query text", async () => {
+  const touched: string[] = [];
+
+  const result = await executeWorldLookup({
+    query: "Hormuz Strait situation April 2026",
+    bucket: "current_events",
+    timeoutMs: 100,
+    adapters: {
+      newsdata: {
+        source: "newsdata",
+        async lookup() {
+          touched.push("newsdata");
+          return {
+            source: "newsdata",
+            evidence: [
+              createWorldLookupEvidence({
+                source: "newsdata",
+                title: "Shipping insurers raise rates after Hormuz disruption",
+                url: "https://example.test/hormuz-newsdata",
+                snippet: "Tanker traffic slows after renewed regional tensions.",
+                publishedAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+                confidence: "high"
+              })
+            ]
+          };
+        }
+      },
+      gdelt: {
+        source: "gdelt",
+        async lookup() {
+          touched.push("gdelt");
+          return {
+            source: "gdelt",
+            evidence: []
+          };
+        }
+      },
+      wikipedia: {
+        source: "wikipedia",
+        async lookup() {
+          touched.push("wikipedia");
+          return {
+            source: "wikipedia",
+            evidence: [
+              createWorldLookupEvidence({
+                source: "wikipedia",
+                title: "Strait of Hormuz",
+                url: "https://example.test/hormuz-wikipedia",
+                snippet: "Reference article for the strait."
+              })
+            ]
+          };
+        }
+      }
+    }
+  });
+
+  assert.equal(result.bucket, "current_events");
+  assert.deepEqual(result.selectedSources, ["newsdata", "gdelt"]);
+  assert.deepEqual(touched.sort(), ["gdelt", "newsdata"]);
+  assert.equal(result.evidence[0]?.source, "newsdata");
+});
+
 test("executeWorldLookup tolerates an unconfigured NewsData adapter while using the remaining current-events sources", async () => {
   const result = await executeWorldLookup({
     query: "What is happening in Myanmar right now?",
