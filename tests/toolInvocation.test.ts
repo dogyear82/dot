@@ -100,11 +100,14 @@ test("buildToolInferencePrompt documents dueAt for specific reminder times", () 
   assert.match(prompt, /"toolName":"reminder\.add".*"args":\{\}/i);
   assert.match(prompt, /"toolName":"calendar\.remind".*"args":\{\}/i);
   assert.match(prompt, /- reminder\.add: message, optional duration, optional dueAt/i);
-  assert.match(prompt, /- weather\.lookup: location/i);
+  assert.match(prompt, /- weather\.lookup: optional location, optional city, optional admin1, optional country/i);
   assert.match(prompt, /Use weather\.lookup for weather questions/i);
+  assert.match(prompt, /structured args\.city, args\.admin1, and args\.country/i);
   assert.match(prompt, /"dueAt":"2026-04-16T01:00:00\.000Z"/i);
   assert.match(prompt, /"toolName":"weather\.lookup".*"location":"Phoenix, AZ"/i);
+  assert.match(prompt, /"toolName":"weather\.lookup".*"city":"San Gabriel".*"admin1":"California".*"country":"United States"/i);
   assert.match(prompt, /execute_tool weather lookup/i);
+  assert.match(prompt, /execute_tool weather clarification follow-up/i);
   assert.match(prompt, /execute_tool incomplete reminder/i);
   assert.match(prompt, /execute_tool complete reminder/i);
   assert.match(prompt, /repaired current-events lookup/i);
@@ -147,6 +150,7 @@ test("buildAddressedToolInferencePrompt documents the addressedness contract", (
   assert.match(prompt, /Latest message: "I want another reminder set"/i);
   assert.match(prompt, /Use weather\.lookup when the user wants current weather or a forecast/i);
   assert.match(prompt, /Latest message: "what is the weather in Phoenix, AZ tomorrow\?"/i);
+  assert.match(prompt, /Latest message: "San Gabriel California"/i);
 });
 
 test("buildPendingToolResolutionPrompt keeps respond non-operational", () => {

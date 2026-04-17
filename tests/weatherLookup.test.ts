@@ -110,4 +110,43 @@ test("OpenMeteoWeatherClient clarifies ambiguous or missing locations", async ()
   assert.equal(ambiguous.kind, "clarify");
   assert.equal(ambiguous.reason, "ambiguous_location");
   assert.match(ambiguous.prompt, /multiple places/i);
+  assert.equal(ambiguous.candidates?.[0]?.label, "Springfield, Illinois, United States");
+});
+
+test("OpenMeteoWeatherClient can resolve a cached candidate from structured follow-up fields", async () => {
+  const client = new OpenMeteoWeatherClient(async () => {
+    throw new Error("fetch should not be called");
+  });
+
+  const match = client.resolveCachedCandidate(
+    [
+      {
+        name: "San Gabriel",
+        admin1: "California",
+        country: "United States",
+        countryCode: "US",
+        latitude: 34.09611,
+        longitude: -118.10583,
+        timezone: "America/Los_Angeles",
+        label: "San Gabriel, California, United States"
+      },
+      {
+        name: "San Gabriel",
+        admin1: "Carchi",
+        country: "Ecuador",
+        countryCode: "EC",
+        latitude: 0.59354,
+        longitude: -77.83066,
+        timezone: "America/Guayaquil",
+        label: "San Gabriel, Carchi, Ecuador"
+      }
+    ],
+    {
+      city: "San Gabriel",
+      admin1: "California",
+      country: "United States"
+    }
+  );
+
+  assert.equal(match?.label, "San Gabriel, California, United States");
 });

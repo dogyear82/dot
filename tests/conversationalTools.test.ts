@@ -305,6 +305,36 @@ test("conversational weather tool returns llm_render payloads for resolved locat
                 }
               ]
             };
+          },
+          async forecastForCandidate({ candidate }) {
+            return {
+              kind: "success",
+              location: candidate,
+              units: {
+                temperature: "F",
+                windSpeed: "mph"
+              },
+              current: {
+                time: "2026-04-16T09:00",
+                temperature: 78,
+                apparentTemperature: 80,
+                windSpeed: 6,
+                condition: "clear",
+                isDay: true
+              },
+              daily: [
+                {
+                  date: "2026-04-16",
+                  condition: "clear",
+                  temperatureMax: 86,
+                  temperatureMin: 62,
+                  precipitationProbabilityMax: 0
+                }
+              ]
+            };
+          },
+          resolveCachedCandidate() {
+            return null;
           }
         }
       })
@@ -337,7 +367,7 @@ test("conversational weather tool clarifies when location is missing or ambiguou
     });
 
     assert.equal(missingLocation.status, "clarify");
-    assert.match(String(missingLocation.payload.text), /Which city and state or city and country/i);
+    assert.match(String(missingLocation.payload.text), /Which city and state or province and country/i);
 
     const ambiguousLocation = await executeConversationalToolCall({
       call: {
@@ -354,12 +384,61 @@ test("conversational weather tool clarifies when location is missing or ambiguou
             return {
               kind: "clarify",
               reason: "ambiguous_location",
-              prompt: 'I found multiple places for "Springfield". Pick one of these: Springfield, Illinois, United States; Springfield, Missouri, United States',
+              prompt:
+                'I found multiple places for "Springfield". Tell me the city, state or province, and country. I found: Springfield, Illinois, United States; Springfield, Missouri, United States',
               candidates: [
-                "Springfield, Illinois, United States",
-                "Springfield, Missouri, United States"
+                {
+                  name: "Springfield",
+                  admin1: "Illinois",
+                  country: "United States",
+                  countryCode: "US",
+                  latitude: 1,
+                  longitude: 1,
+                  timezone: "America/Chicago",
+                  label: "Springfield, Illinois, United States"
+                },
+                {
+                  name: "Springfield",
+                  admin1: "Missouri",
+                  country: "United States",
+                  countryCode: "US",
+                  latitude: 2,
+                  longitude: 2,
+                  timezone: "America/Chicago",
+                  label: "Springfield, Missouri, United States"
+                }
               ]
             };
+          },
+          async forecastForCandidate({ candidate }) {
+            return {
+              kind: "success",
+              location: candidate,
+              units: {
+                temperature: "F",
+                windSpeed: "mph"
+              },
+              current: {
+                time: "2026-04-16T09:00",
+                temperature: 78,
+                apparentTemperature: 80,
+                windSpeed: 6,
+                condition: "clear",
+                isDay: true
+              },
+              daily: [
+                {
+                  date: "2026-04-16",
+                  condition: "clear",
+                  temperatureMax: 86,
+                  temperatureMin: 62,
+                  precipitationProbabilityMax: 0
+                }
+              ]
+            };
+          },
+          resolveCachedCandidate() {
+            return null;
           }
         }
       })
@@ -367,6 +446,82 @@ test("conversational weather tool clarifies when location is missing or ambiguou
 
     assert.equal(ambiguousLocation.status, "clarify");
     assert.match(String(ambiguousLocation.payload.text), /multiple places/i);
+
+    persistence.setWorkerState(
+      "weatherLookupCandidates:channel-1",
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        candidates: [
+          {
+            name: "San Gabriel",
+            admin1: "California",
+            country: "United States",
+            countryCode: "US",
+            latitude: 34.09611,
+            longitude: -118.10583,
+            timezone: "America/Los_Angeles",
+            label: "San Gabriel, California, United States"
+          }
+        ]
+      })
+    );
+
+    const cachedResolution = await executeConversationalToolCall({
+      call: {
+        toolName: "weather.lookup",
+        args: {
+          city: "San Gabriel",
+          admin1: "California",
+          country: "United States"
+        },
+        userMessage: "San Gabriel California",
+        conversationId: "channel-1"
+      },
+      context: createContext({
+        persistence,
+        weatherClient: {
+          async lookup() {
+            throw new Error("cached resolution should not fall back to geocoding");
+          },
+          async forecastForCandidate({ candidate }) {
+            return {
+              kind: "success",
+              location: candidate,
+              units: {
+                temperature: "F",
+                windSpeed: "mph"
+              },
+              current: {
+                time: "2026-04-16T09:00",
+                temperature: 78,
+                apparentTemperature: 80,
+                windSpeed: 6,
+                condition: "clear",
+                isDay: true
+              },
+              daily: [
+                {
+                  date: "2026-04-16",
+                  condition: "clear",
+                  temperatureMax: 86,
+                  temperatureMin: 62,
+                  precipitationProbabilityMax: 0
+                }
+              ]
+            };
+          },
+          resolveCachedCandidate(candidates, params) {
+            assert.equal(params.city, "San Gabriel");
+            assert.equal(params.admin1, "California");
+            assert.equal(params.country, "United States");
+            return candidates[0] ?? null;
+          }
+        }
+      })
+    });
+
+    assert.equal(cachedResolution.status, "success");
+    assert.equal(cachedResolution.presentation, "llm_render");
   } finally {
     cleanup();
   }

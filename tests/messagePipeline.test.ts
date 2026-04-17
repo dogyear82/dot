@@ -643,6 +643,36 @@ test("message pipeline executes inferred weather.lookup and records weather audi
             }
           ]
         };
+      },
+      async forecastForCandidate({ candidate }) {
+        return {
+          kind: "success" as const,
+          location: candidate,
+          units: {
+            temperature: "F" as const,
+            windSpeed: "mph" as const
+          },
+          current: {
+            time: "2026-04-16T09:00",
+            temperature: 78,
+            apparentTemperature: 80,
+            windSpeed: 6,
+            condition: "clear",
+            isDay: true
+          },
+          daily: [
+            {
+              date: "2026-04-16",
+              condition: "clear",
+              temperatureMax: 86,
+              temperatureMin: 62,
+              precipitationProbabilityMax: 0
+            }
+          ]
+        };
+      },
+      resolveCachedCandidate() {
+        return null;
       }
     }
   });
@@ -721,7 +751,7 @@ test("message pipeline keeps weather clarifications stateless and re-runs fresh 
             toolName: "weather.lookup",
             reason: "owner asked for weather without a location",
             confidence: "high",
-            args: {}
+            args: {} as Record<string, string | number>
           }
         };
       }
@@ -800,8 +830,38 @@ test("message pipeline keeps weather clarifications stateless and re-runs fresh 
         return {
           kind: "clarify" as const,
           reason: "missing_location",
-          prompt: "Which city and state or city and country should I check the weather for?"
+          prompt: "Which city and state or province and country should I check the weather for?"
         };
+      },
+      async forecastForCandidate({ candidate }) {
+        return {
+          kind: "success" as const,
+          location: candidate,
+          units: {
+            temperature: "F" as const,
+            windSpeed: "mph" as const
+          },
+          current: {
+            time: "2026-04-16T09:00",
+            temperature: 78,
+            apparentTemperature: 80,
+            windSpeed: 6,
+            condition: "clear",
+            isDay: true
+          },
+          daily: [
+            {
+              date: "2026-04-16",
+              condition: "clear",
+              temperatureMax: 86,
+              temperatureMin: 62,
+              precipitationProbabilityMax: 0
+            }
+          ]
+        };
+      },
+      resolveCachedCandidate() {
+        return null;
       }
     }
   });
@@ -831,7 +891,7 @@ test("message pipeline keeps weather clarifications stateless and re-runs fresh 
     );
 
     assert.equal(outbound.length, 1);
-    assert.match(outbound[0]?.payload.content ?? "", /Which city and state or city and country/i);
+    assert.match(outbound[0]?.payload.content ?? "", /Which city and state or province and country/i);
     assert.equal(
       persistence.getPendingConversationalToolSession("channel-1"),
       null
@@ -843,7 +903,8 @@ test("message pipeline keeps weather clarifications stateless and re-runs fresh 
         correlation: {
           correlationId: "msg-weather-clarify-2",
           conversationId: "channel-1",
-          actorId: "owner-1"
+          actorId: "owner-1",
+          causationId: null
         },
         payload: {
           messageId: "msg-weather-clarify-2",
