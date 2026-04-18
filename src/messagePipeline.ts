@@ -110,7 +110,7 @@ export function registerMessagePipeline(params: {
                             logger,
                             messageId: event.payload.messageId
                         });
-                        const { addressed, addressedReason, addressedRespondRequiresOwnerChat, precomputedIntentDecision } = routingDecision;
+                        const { addressed, addressedReason, precomputedIntentDecision } = routingDecision;
 
                         span.setAttribute("dot.addressed", addressed);
                         span.setAttribute("dot.addressed.reason", addressedReason);

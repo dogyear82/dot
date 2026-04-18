@@ -20,7 +20,6 @@ export async function resolveMessageRoute(params: {
         return {
             addressed: true,
             addressedReason: deterministicAddressedDecision.reason,
-            addressedRespondRequiresOwnerChat: false,
             precomputedIntentDecision: null
         };
     }
@@ -57,7 +56,6 @@ export async function resolveMessageRoute(params: {
         return {
             addressed: false,
             addressedReason: "llm_not_addressed",
-            addressedRespondRequiresOwnerChat: false,
             precomputedIntentDecision: null
         };
     }
@@ -65,7 +63,6 @@ export async function resolveMessageRoute(params: {
     return {
         addressed: true,
         addressedReason: "llm_addressed",
-        addressedRespondRequiresOwnerChat: inferredAddressed.decision.decision === "respond",
         precomputedIntentDecision:
             inferredAddressed.decision.decision === "respond"
                 ? null

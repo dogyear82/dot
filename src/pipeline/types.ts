@@ -21,7 +21,6 @@ export interface PrecomputedIntentDecision {
 export interface AddressedRouteResult {
     addressed: boolean;
     addressedReason: string;
-    addressedRespondRequiresOwnerChat: boolean;
     precomputedIntentDecision: PrecomputedIntentDecision | null;
 }
 
