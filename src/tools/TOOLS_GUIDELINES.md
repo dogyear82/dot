@@ -6,14 +6,4 @@ Every tool for Dot should live in it's own folder under /src/tools.  For example
 
 ## Tool Architecture
 
-### Inbound Contract
-
-Every tool will accept the following payload:
-
-```json
-
-{
-
-}
-
-```
+Each tool object shall have 3 public facing endpoints; name, description, and execute (function). Name and description are just strings that are hardcoded into the tool.  Execute(args: string[]):string is where the tool actual does its work, and it'll arrange it's result however it sees fit and returns it as a string back to the 
