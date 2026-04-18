@@ -18,7 +18,7 @@ import { createReplyPublisher } from "./pipeline/publish.js";
 import { resolveMessageRoute } from "./pipeline/routing.js";
 import { executeConversationResponse } from "./pipeline/conversationResponse.js";
 import { executeInferredToolOrConversation } from "./pipeline/toolExecution.js";
-import { handleOwnerCommand, isOwnerOnlyCommand } from "./pipeline/commandHandler.js";
+import { handleCommand } from "./pipeline/commandHandler.js";
 
 export function registerMessagePipeline(params: {
     bus: EventBus;
@@ -150,7 +150,7 @@ export function registerMessagePipeline(params: {
                             }
 
                             if (isExplicitCommand) {
-                                const commandResult = await handleOwnerCommand({
+                                const commandResult = await handleCommand({
                                     bus,
                                     calendarClient,
                                     content,
@@ -200,12 +200,6 @@ export function registerMessagePipeline(params: {
                                 );
                             }
 
-                            return;
-                        }
-
-                        if (isExplicitCommand && isOwnerOnlyCommand(content)) {
-                            pipelineOutcome = "owner_only_denied";
-                            await publisher.publishReply("That command is owner-only.", "none", false);
                             return;
                         }
 

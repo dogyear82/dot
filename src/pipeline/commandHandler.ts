@@ -23,7 +23,7 @@ export type CommandHandlerOutcome =
         recordConversationTurn?: boolean;
     };
 
-export async function handleOwnerCommand(params: {
+export async function handleCommand(params: {
     bus: EventBus;
     calendarClient: OutlookCalendarClient;
     content: string;
