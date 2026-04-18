@@ -7,18 +7,13 @@ import {
     type ConversationalToolName
 } from "../conversationalTools.js";
 import { recordToolExecution } from "../observability.js";
-import { continueReminderIntake, startReminderIntake, type ReminderIntakeState } from "../reminderIntake.js";
+import { startReminderIntake } from "../reminderIntake.js";
 import type { Persistence } from "../persistence.js";
 import type { GroundedAnswerService } from "../toolInvocation.js";
-import type {
-    PendingConversationalToolSessionRecord,
-    WorldLookupSourceName
-} from "../types.js";
+import type { WorldLookupSourceName } from "../types.js";
 import type { WorldLookupAdapter } from "../worldLookup.js";
 import type { WeatherLookupClient } from "../weatherLookup.js";
 import type { PrecomputedIntentDecision, ReplyPublisher } from "./types.js";
-
-const PENDING_TOOL_SESSION_TTL_MS = 15 * 60 * 1000;
 
 export async function executeInferredToolOrConversation(params: {
     calendarClient: import("../outlookCalendar.js").OutlookCalendarClient;
@@ -40,30 +35,11 @@ export async function executeInferredToolOrConversation(params: {
     try {
         const inferred = params.precomputedIntentDecision
             ? params.precomputedIntentDecision
-            : params.pendingToolSession?.toolName === "reminder.add"
-                ? {
-                    route: "deterministic" as const,
-                    powerStatus: params.chatService.getPowerStatus("deterministic"),
-                    decision: {
-                        decision: "execute_tool" as const,
-                        toolName: "reminder.add" as const,
-                        reason: "continue deterministic reminder intake",
-                        confidence: "high" as const,
-                        args: {}
-                    }
-                }
-                : params.pendingToolSession && params.chatService.resolvePendingToolDecision
-                    ? await params.chatService.resolvePendingToolDecision({
-                        userMessage: params.content,
-                        session: params.pendingToolSession,
-                        recentConversation: params.recentConversation,
-                        currentSpeakerLabel: params.currentSpeakerLabel
-                    })
-                    : await params.chatService.inferToolDecision(
-                        params.content,
-                        params.recentConversation,
-                        params.currentSpeakerLabel
-                    );
+            : await params.chatService.inferToolDecision(
+                params.content,
+                params.recentConversation,
+                params.currentSpeakerLabel
+            );
 
         if (!params.precomputedIntentDecision) {
             params.logger.info(
@@ -71,7 +47,7 @@ export async function executeInferredToolOrConversation(params: {
                     messageId: params.event.payload.messageId,
                     correlationId: params.event.correlation.correlationId,
                     conversationId: params.conversationId,
-                    stage: params.pendingToolSession ? "tool.resume" : "tool.infer",
+                    stage: "tool.infer",
                     provider: inferred.route,
                     inputUserMessage: params.content,
                     promptMessages: "promptMessages" in inferred ? inferred.promptMessages : undefined,
@@ -105,35 +81,14 @@ export async function executeInferredToolOrConversation(params: {
             return { pipelineOutcome: "owner_chat" };
         }
 
-        let resolvedArgs =
-            params.pendingToolSession && params.pendingToolSession.toolName === inferred.decision.toolName
-                ? { ...params.pendingToolSession.args, ...inferred.decision.args }
-                : inferred.decision.args;
+        let resolvedArgs = inferred.decision.args;
 
         if (inferred.decision.toolName === "reminder.add") {
-            const reminderIntakeOutcome =
-                params.pendingToolSession?.sessionState?.engine === "reminder.add.intake"
-                    ? continueReminderIntake({
-                        state: params.pendingToolSession.sessionState,
-                        userMessage: params.content
-                    })
-                    : startReminderIntake({
-                        args: resolvedArgs
-                    });
+            const reminderIntakeOutcome = startReminderIntake({
+                args: resolvedArgs
+            });
 
             if (reminderIntakeOutcome.kind === "clarify" || reminderIntakeOutcome.kind === "requires_confirmation") {
-                const reminderIntakeArgs = reminderIntakeArgsFromState(reminderIntakeOutcome.state);
-                savePendingToolSession({
-                    persistence: params.persistence,
-                    conversationId: params.conversationId,
-                    toolName: "reminder.add",
-                    args: reminderIntakeArgs,
-                    originalUserMessage: params.content,
-                    pendingStatus: reminderIntakeOutcome.kind,
-                    pendingPrompt: reminderIntakeOutcome.prompt,
-                    sessionState: reminderIntakeOutcome.state,
-                    prior: params.pendingToolSession
-                });
                 params.persistence.saveToolExecutionAudit({
                     messageId: params.event.payload.messageId,
                     toolName: "reminder.add",
@@ -190,24 +145,6 @@ export async function executeInferredToolOrConversation(params: {
             recentConversation: params.recentConversation
         });
 
-        if (
-            (result.status === "clarify" || result.status === "requires_confirmation") &&
-            shouldPersistPendingToolSession(result.toolName)
-        ) {
-            savePendingToolSession({
-                persistence: params.persistence,
-                conversationId: params.conversationId,
-                toolName: result.toolName,
-                args: resolvedArgs,
-                originalUserMessage: params.content,
-                pendingStatus: result.status,
-                pendingPrompt: result.reply,
-                prior: params.pendingToolSession
-            });
-        } else if (params.pendingToolSession) {
-            params.persistence.clearPendingConversationalToolSession(params.conversationId);
-        }
-
         params.persistence.saveToolExecutionAudit({
             messageId: params.event.payload.messageId,
             toolName: result.toolName,
@@ -243,23 +180,6 @@ export async function executeInferredToolOrConversation(params: {
         });
         recordToolExecution({ toolName: "conversation-intent", status: "failed" });
 
-        if (activePendingToolSession) {
-            params.logger.warn(
-                {
-                    err: error,
-                    messageId: params.event.payload.messageId,
-                    toolName: activePendingToolSession.toolName
-                },
-                "Pending tool clarification failed; keeping the clarification active"
-            );
-            await params.publisher.publishReply(
-                "I lost the thread on that tool follow-up. Answer my last clarification directly and I'll try again.",
-                "none"
-            );
-
-            return { pipelineOutcome: "tool_clarify" };
-        }
-
         params.logger.warn(
             { err: error, messageId: params.event.payload.messageId },
             "Conversational intent classification failed; falling back to chat"
@@ -279,52 +199,4 @@ export async function executeInferredToolOrConversation(params: {
 
         return { pipelineOutcome: "owner_chat" };
     }
-}
-
-function reminderIntakeArgsFromState(state: ReminderIntakeState): Record<string, string | number> {
-    const args: Record<string, string | number> = {};
-    if (state.data.message) {
-        args.message = state.data.message;
-    }
-    if (state.data.duration) {
-        args.duration = state.data.duration;
-    }
-    if (state.data.dueAt) {
-        args.dueAt = state.data.dueAt;
-    }
-    return args;
-}
-
-function shouldPersistPendingToolSession(toolName: ConversationalToolName): boolean {
-    return toolName !== "weather.lookup";
-}
-
-function savePendingToolSession(params: {
-    persistence: Persistence;
-    conversationId: string;
-    toolName: string;
-    args: Record<string, string | number>;
-    originalUserMessage: string;
-    pendingStatus: "clarify" | "requires_confirmation";
-    pendingPrompt: string;
-    sessionState?: ReminderIntakeState | null;
-    prior?: PendingConversationalToolSessionRecord | null;
-}): void {
-    if (!params.conversationId) {
-        return;
-    }
-
-    const now = new Date();
-    params.persistence.savePendingConversationalToolSession({
-        conversationId: params.conversationId,
-        toolName: params.toolName,
-        args: params.args,
-        originalUserMessage: params.prior?.originalUserMessage ?? params.originalUserMessage,
-        pendingStatus: params.pendingStatus,
-        pendingPrompt: params.pendingPrompt,
-        sessionState: params.sessionState ?? params.prior?.sessionState ?? null,
-        createdAt: params.prior?.createdAt ?? now.toISOString(),
-        updatedAt: now.toISOString(),
-        expiresAt: new Date(now.getTime() + PENDING_TOOL_SESSION_TTL_MS).toISOString()
-    });
 }

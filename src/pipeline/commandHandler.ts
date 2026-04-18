@@ -12,11 +12,16 @@ import { executeToolDecision, parseExplicitToolDecision } from "../toolInvocatio
 import type { WorldLookupSourceName } from "../types.js";
 import type { WorldLookupAdapter } from "../worldLookup.js";
 import type { GroundedAnswerService } from "../toolInvocation.js";
-import type { ReplyPublisher } from "./types.js";
 
 export type CommandHandlerOutcome =
     | { handled: false }
-    | { handled: true; pipelineOutcome: string };
+    | {
+        handled: true;
+        pipelineOutcome: string;
+        reply: string;
+        route: import("../chat/modelRouter.js").LlmRoute;
+        recordConversationTurn?: boolean;
+    };
 
 export async function handleOwnerCommand(params: {
     bus: EventBus;
@@ -27,62 +32,76 @@ export async function handleOwnerCommand(params: {
     groundedAnswerService?: GroundedAnswerService;
     outlookOAuthClient: MicrosoftOutlookOAuthClient;
     persistence: Persistence;
-    publisher: ReplyPublisher;
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
 }): Promise<CommandHandlerOutcome> {
     const content = params.content;
 
     if (content.startsWith("!settings")) {
-        await params.publisher.publishReply(handleSettingsCommand(params.persistence.settings, content));
-        return { handled: true, pipelineOutcome: "settings_command" };
+        return {
+            handled: true,
+            pipelineOutcome: "settings_command",
+            reply: handleSettingsCommand(params.persistence.settings, content),
+            route: "none"
+        };
     }
 
     if (content.startsWith("!news prefs")) {
-        await params.publisher.publishReply(handleNewsPreferencesCommand(params.persistence, content));
-        return { handled: true, pipelineOutcome: "news_preferences_command" };
+        return {
+            handled: true,
+            pipelineOutcome: "news_preferences_command",
+            reply: handleNewsPreferencesCommand(params.persistence, content),
+            route: "none"
+        };
     }
 
     if (content.startsWith("!personality")) {
-        await params.publisher.publishReply(handlePersonalityCommand(params.persistence, content));
-        return { handled: true, pipelineOutcome: "personality_command" };
+        return {
+            handled: true,
+            pipelineOutcome: "personality_command",
+            reply: handlePersonalityCommand(params.persistence, content),
+            route: "none"
+        };
     }
 
     if (content.startsWith("!contact")) {
-        await params.publisher.publishReply(
-            handleContactCommand({
+        return {
+            handled: true,
+            pipelineOutcome: "contact_command",
+            reply: handleContactCommand({
                 content,
                 conversationId: params.conversationId,
                 persistence: params.persistence
             }),
-            "none"
-        );
-        return { handled: true, pipelineOutcome: "contact_command" };
+            route: "none"
+        };
     }
 
     if (content.startsWith("!policy")) {
-        await params.publisher.publishReply(
-            handlePolicyCommand({
+        return {
+            handled: true,
+            pipelineOutcome: "policy_command",
+            reply: handlePolicyCommand({
                 content,
                 conversationId: params.conversationId,
                 persistence: params.persistence
             }),
-            "none"
-        );
-        return { handled: true, pipelineOutcome: "policy_command" };
+            route: "none"
+        };
     }
 
     if (content.startsWith("!email")) {
-        await params.publisher.publishReply(
-            await handleEmailCommand({
+        return {
+            handled: true,
+            pipelineOutcome: "email_command",
+            reply: await handleEmailCommand({
                 actorId: params.event.payload.sender.actorId,
                 bus: params.bus,
                 content,
                 conversationId: params.conversationId,
                 persistence: params.persistence
             }),
-            "none"
-        );
-        return { handled: true, pipelineOutcome: "email_command" };
+            route: "none"
+        };
     }
 
     const explicitToolDecision = parseExplicitToolDecision(content);
@@ -96,8 +115,12 @@ export async function handleOwnerCommand(params: {
             detail: explicitToolDecision.reason
         });
         recordToolExecution({ toolName: explicitToolDecision.toolName, status: "clarify" });
-        await params.publisher.publishReply(explicitToolDecision.question, "none");
-        return { handled: true, pipelineOutcome: "tool_clarify" };
+        return {
+            handled: true,
+            pipelineOutcome: "tool_clarify",
+            reply: explicitToolDecision.question,
+            route: "none"
+        };
     }
 
     if (explicitToolDecision?.decision === "execute") {
@@ -118,23 +141,26 @@ export async function handleOwnerCommand(params: {
             detail: result.policyDecision?.reason ?? result.detail ?? explicitToolDecision.reason
         });
         recordToolExecution({ toolName: result.toolName, status: result.status });
-        await params.publisher.publishReply(result.reply, result.route ?? "none");
         return {
             handled: true,
-            pipelineOutcome: result.status === "executed" ? "tool_execute" : "tool_clarify"
+            pipelineOutcome: result.status === "executed" ? "tool_execute" : "tool_clarify",
+            reply: result.reply,
+            route: result.route ?? "none"
         };
     }
 
     if (content.startsWith("!calendar")) {
-        await params.publisher.publishReply(
-            await handleCalendarCommand({
+        return {
+            handled: true,
+            pipelineOutcome: "calendar_command",
+            reply: await handleCalendarCommand({
                 calendarClient: params.calendarClient,
                 content,
                 oauthClient: params.outlookOAuthClient,
                 persistence: params.persistence
-            })
-        );
-        return { handled: true, pipelineOutcome: "calendar_command" };
+            }),
+            route: "none"
+        };
     }
 
     return { handled: false };

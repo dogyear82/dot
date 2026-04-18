@@ -159,7 +159,6 @@ export function registerMessagePipeline(params: {
                                     groundedAnswerService,
                                     outlookOAuthClient,
                                     persistence,
-                                    publisher,
                                     worldLookupAdapters
                                 });
                                 if (commandResult.handled) {
@@ -169,21 +168,6 @@ export function registerMessagePipeline(params: {
                             }
 
                             try {
-                                if (addressedRespondRequiresOwnerChat) {
-                                    await executeConversationResponse({
-                                        chatService,
-                                        content,
-                                        conversationId,
-                                        currentSpeakerLabel,
-                                        logger,
-                                        logMessage: "Generated owner chat response",
-                                        messageId: event.payload.messageId,
-                                        persistence,
-                                        publisher
-                                    });
-                                    pipelineOutcome = "owner_chat";
-                                    return;
-                                }
                                 const inferredResult = await executeInferredToolOrConversation({
                                     calendarClient,
                                     chatService,
