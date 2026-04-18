@@ -1,17 +1,11 @@
-import { recordToolExecution } from "../observability.js";
-import type { Persistence } from "../persistence.js";
-import { handleContactCommand, handlePolicyCommand } from "../contacts.js";
-import { executeTool } from "../toolExecutor.js";
 import type { EventBus } from "../eventBus.js";
-import { handleNewsPreferencesCommand } from "../newsPreferences.js";
-import { handleSettingsCommand } from "../onboarding.js";
-import { handleCalendarCommand, type OutlookCalendarClient } from "../outlookCalendar.js";
+import type { OutlookCalendarClient } from "../outlookCalendar.js";
 import type { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
-import { handlePersonalityCommand } from "../personality.js";
-import { executeToolDecision, parseExplicitToolDecision } from "../toolInvocation.js";
+import type { Persistence } from "../persistence.js";
 import type { WorldLookupSourceName } from "../types.js";
 import type { WorldLookupAdapter } from "../worldLookup.js";
 import type { GroundedAnswerService } from "../toolInvocation.js";
+import { createCommandRegistry } from "../commands/registry.js";
 
 export type CommandHandlerOutcome =
     | { handled: false }
@@ -34,128 +28,53 @@ export async function handleCommand(params: {
     persistence: Persistence;
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
 }): Promise<CommandHandlerOutcome> {
-    const content = params.content;
-
-    if (content.startsWith("!settings")) {
-        return {
-            handled: true,
-            pipelineOutcome: "settings_command",
-            reply: handleSettingsCommand(params.persistence.settings, content),
-            route: "none"
-        };
+    const commands = createCommandRegistry({
+        actorId: params.event.payload.sender.actorId,
+        bus: params.bus,
+        calendarClient: params.calendarClient,
+        conversationId: params.conversationId,
+        event: params.event,
+        groundedAnswerService: params.groundedAnswerService,
+        outlookOAuthClient: params.outlookOAuthClient,
+        persistence: params.persistence,
+        worldLookupAdapters: params.worldLookupAdapters
+    });
+    const command = commands.find((candidate) => candidate.matches(params.content));
+    if (!command) {
+        return { handled: false };
     }
 
-    if (content.startsWith("!news prefs")) {
-        return {
-            handled: true,
-            pipelineOutcome: "news_preferences_command",
-            reply: handleNewsPreferencesCommand(params.persistence, content),
-            route: "none"
-        };
-    }
-
-    if (content.startsWith("!personality")) {
-        return {
-            handled: true,
-            pipelineOutcome: "personality_command",
-            reply: handlePersonalityCommand(params.persistence, content),
-            route: "none"
-        };
-    }
-
-    if (content.startsWith("!contact")) {
-        return {
-            handled: true,
-            pipelineOutcome: "contact_command",
-            reply: handleContactCommand({
-                content,
-                conversationId: params.conversationId,
-                persistence: params.persistence
-            }),
-            route: "none"
-        };
-    }
-
-    if (content.startsWith("!policy")) {
-        return {
-            handled: true,
-            pipelineOutcome: "policy_command",
-            reply: handlePolicyCommand({
-                content,
-                conversationId: params.conversationId,
-                persistence: params.persistence
-            }),
-            route: "none"
-        };
-    }
-
-    if (content.startsWith("!email")) {
-        const result = await executeTool("email.command", [`content=${content}`], {
-            actorId: params.event.payload.sender.actorId,
-            bus: params.bus,
-            conversationId: params.conversationId,
-            persistence: params.persistence
-        });
-        return {
-            handled: true,
-            pipelineOutcome: "email_command",
-            reply: result.success ? result.result : result.reason,
-            route: "none"
-        };
-    }
-
-    const explicitToolDecision = parseExplicitToolDecision(content);
-    if (explicitToolDecision?.decision === "execute") {
-        const result = await executeToolDecision({
-            calendarClient: params.calendarClient,
-            conversationId: params.conversationId,
-            decision: explicitToolDecision,
-            groundedAnswerService: params.groundedAnswerService,
-            persistence: params.persistence,
-            worldLookupAdapters: params.worldLookupAdapters
-        });
-        params.persistence.saveToolExecutionAudit({
-            messageId: params.event.payload.messageId,
-            toolName: result.toolName,
-            invocationSource: "explicit",
-            status: result.status,
-            provider: result.route ?? null,
-            detail: result.detail ?? explicitToolDecision.reason
-        });
-        recordToolExecution({ toolName: result.toolName, status: result.status });
-        return {
-            handled: true,
-            pipelineOutcome: result.status === "executed" ? "tool_execute" : "tool_failed",
-            reply: result.reply,
-            route: result.route ?? "none"
-        };
-    }
-
-    if (content.startsWith("!calendar")) {
-        return {
-            handled: true,
-            pipelineOutcome: "calendar_command",
-            reply: await handleCalendarCommand({
-                calendarClient: params.calendarClient,
-                content,
-                oauthClient: params.outlookOAuthClient,
-                persistence: params.persistence
-            }),
-            route: "none"
-        };
-    }
-
-    return { handled: false };
+    return {
+        handled: true,
+        pipelineOutcome: "command_executed",
+        reply: await command.execute(params.content),
+        route: "none"
+    };
 }
 
 export function isOwnerOnlyCommand(content: string): boolean {
-    return (
-        content.startsWith("!settings") ||
-        content.startsWith("!personality") ||
-        content.startsWith("!contact") ||
-        content.startsWith("!policy") ||
-        content.startsWith("!reminder") ||
-        content.startsWith("!remind") ||
-        content.startsWith("!calendar")
-    );
+    const commands = createCommandRegistry({
+        actorId: "",
+        bus: {} as EventBus,
+        calendarClient: {} as OutlookCalendarClient,
+        conversationId: "",
+        event: {} as import("../events.js").InboundMessageReceivedEvent,
+        outlookOAuthClient: {} as MicrosoftOutlookOAuthClient,
+        persistence: {} as Persistence
+    });
+    const command = commands.find((candidate) => candidate.matches(content));
+    return command?.ownerOnly === true;
+}
+
+export function isRegisteredExplicitCommand(content: string): boolean {
+    const commands = createCommandRegistry({
+        actorId: "",
+        bus: {} as EventBus,
+        calendarClient: {} as OutlookCalendarClient,
+        conversationId: "",
+        event: {} as import("../events.js").InboundMessageReceivedEvent,
+        outlookOAuthClient: {} as MicrosoftOutlookOAuthClient,
+        persistence: {} as Persistence
+    });
+    return commands.some((candidate) => candidate.matches(content));
 }

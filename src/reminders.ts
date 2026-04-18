@@ -57,6 +57,15 @@ export function handleReminderCommand(persistence: Persistence, content: string,
   return "Invalid reminder command. Use `!reminder help`.";
 }
 
+export function isReminderCommand(content: string): boolean {
+    const normalized = content.trim().toLowerCase();
+    return (
+        normalized === "!reminder" ||
+        normalized.startsWith("!reminder ") ||
+        normalized.startsWith("!remind ")
+    );
+}
+
 export function getNextReminderNotificationAt(
   reminder: ReminderRecord,
   escalationPolicy: string,

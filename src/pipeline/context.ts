@@ -1,15 +1,8 @@
-import { isEmailCommand } from "../tools/email/command.js";
 import type { InboundMessageReceivedEvent } from "../events.js";
 import type { Persistence } from "../persistence.js";
-import { isNewsPreferencesCommand } from "../newsPreferences.js";
-import { isSettingsCommand } from "../onboarding.js";
-import { isCalendarCommand } from "../outlookCalendar.js";
-import { isPersonalityCommand } from "../personality.js";
-import { isReminderCommand } from "../reminders.js";
-import { parseExplicitToolDecision } from "../toolInvocation.js";
 import type { IncomingMessage, PendingConversationalToolSessionRecord } from "../types.js";
-import { isContactCommand, isPolicyCommand } from "../contacts.js";
 import type { PipelineContext } from "./types.js";
+import { isRegisteredExplicitCommand } from "./commandHandler.js";
 
 const RECENT_CHAT_HISTORY_LIMIT = 10;
 const PENDING_TOOL_SESSION_TTL_MS = 15 * 60 * 1000;
@@ -68,17 +61,7 @@ function mapInboundEventToIncomingMessage(event: InboundMessageReceivedEvent): I
 }
 
 function isValidExplicitCommand(content: string): boolean {
-    return (
-        isSettingsCommand(content) ||
-        isNewsPreferencesCommand(content) ||
-        isPersonalityCommand(content) ||
-        isContactCommand(content) ||
-        isPolicyCommand(content) ||
-        isEmailCommand(content) ||
-        isCalendarCommand(content) ||
-        isReminderCommand(content) ||
-        parseExplicitToolDecision(content) !== null
-    );
+    return isRegisteredExplicitCommand(content);
 }
 
 function formatCurrentSpeakerLabel(event: InboundMessageReceivedEvent): string {
