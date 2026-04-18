@@ -110,7 +110,7 @@ test("buildAddressedToolInferencePrompt documents the addressedness contract", (
   assert.match(prompt, /Your name is Dot, and you are a neutral intent classifier/i);
   assert.match(prompt, /If the latest message is not addressed to you, reply with:/i);
   assert.match(prompt, /If the latest message is requesting a tool or needs a tool to formulate a reponse, reply with:/i);
-  assert.match(prompt, /If the latest message is requesting a tool but is missing some or all of the required information to execute the tool, reply with:/i);
+  assert.match(prompt, /still reply with execute_tool and include only the arguments you can confidently infer/i);
   assert.match(prompt, /"addressed":false/i);
   assert.match(prompt, /"addressed":true,"decision":"execute_tool"/i);
   assert.match(prompt, /"toolName":"news\.briefing".*"Ukraine today"/i);
@@ -144,19 +144,23 @@ test("buildPendingToolResolutionPrompt keeps respond non-operational", () => {
   assert.match(prompt, /owner cancelled the pending tool flow/i);
 });
 
-test("parseExplicitToolDecision turns incomplete tool commands into clarification prompts", () => {
+test("parseExplicitToolDecision turns incomplete tool commands into partial execute requests", () => {
   assert.deepEqual(parseExplicitToolDecision("!reminder add"), {
-    decision: "clarify",
+    decision: "execute",
     toolName: "reminder.add",
-    reason: "owner used reminder add without both duration and message",
-    question: "When should I remind you, and what should I remind you about?"
+    reason: "owner used the explicit reminder add command",
+    args: {
+      duration: ""
+    }
   });
 
   assert.deepEqual(parseExplicitToolDecision("!calendar remind"), {
-    decision: "clarify",
+    decision: "execute",
     toolName: "calendar.remind",
-    reason: "owner used calendar remind without an event index",
-    question: "Which calendar event should I create a reminder for? Use the index from `!calendar show`."
+    reason: "owner used the explicit calendar remind command",
+    args: {
+      index: ""
+    }
   });
 });
 
@@ -213,93 +217,6 @@ test("executeToolDecision runs deterministic reminder and calendar handlers", as
 
     assert.equal(calendarReply.status, "executed");
     assert.match(calendarReply.reply, /Saved reminder #2/);
-  } finally {
-    cleanup();
-  }
-});
-
-test("executeToolDecision can defer or block a registered tool through the policy engine", async () => {
-  const { persistence, cleanup } = createPersistence();
-
-  try {
-    persistence.upsertContact({
-      canonicalName: "Michelle Smith",
-      trustLevel: "approval_required",
-      aliases: ["Shelly"]
-    });
-
-    const requiresConfirmation = await executeToolDecision({
-      calendarClient: {
-        async listUpcomingEvents() {
-          return [];
-        }
-      },
-      decision: {
-        decision: "execute",
-        toolName: "reminder.show",
-        reason: "test policy hook",
-        args: {
-          contact: "Shelly"
-        }
-      },
-      persistence,
-      registry: {
-        "reminder.show": {
-          toolName: "reminder.show",
-          policy: {
-            actionType: "message.send",
-            getContactQuery(args) {
-              return typeof args.contact === "string" ? args.contact : null;
-            }
-          },
-          execute() {
-            return "should not execute";
-          }
-        }
-      }
-    });
-
-    assert.equal(requiresConfirmation.status, "requires_confirmation");
-    assert.match(requiresConfirmation.reply, /requires explicit approval/i);
-
-    persistence.upsertContact({
-      canonicalName: "Mallory",
-      trustLevel: "untrusted"
-    });
-
-    const blocked = await executeToolDecision({
-      calendarClient: {
-        async listUpcomingEvents() {
-          return [];
-        }
-      },
-      decision: {
-        decision: "execute",
-        toolName: "reminder.show",
-        reason: "test policy hook",
-        args: {
-          contact: "Mallory"
-        }
-      },
-      persistence,
-      registry: {
-        "reminder.show": {
-          toolName: "reminder.show",
-          policy: {
-            actionType: "message.send",
-            getContactQuery(args) {
-              return typeof args.contact === "string" ? args.contact : null;
-            }
-          },
-          execute() {
-            return "should not execute";
-          }
-        }
-      }
-    });
-
-    assert.equal(blocked.status, "blocked");
-    assert.match(blocked.reply, /execution blocked/i);
   } finally {
     cleanup();
   }

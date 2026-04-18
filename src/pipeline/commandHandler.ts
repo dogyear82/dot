@@ -105,24 +105,6 @@ export async function handleOwnerCommand(params: {
     }
 
     const explicitToolDecision = parseExplicitToolDecision(content);
-    if (explicitToolDecision?.decision === "clarify") {
-        params.persistence.saveToolExecutionAudit({
-            messageId: params.event.payload.messageId,
-            toolName: explicitToolDecision.toolName,
-            invocationSource: "explicit",
-            status: "clarify",
-            provider: null,
-            detail: explicitToolDecision.reason
-        });
-        recordToolExecution({ toolName: explicitToolDecision.toolName, status: "clarify" });
-        return {
-            handled: true,
-            pipelineOutcome: "tool_clarify",
-            reply: explicitToolDecision.question,
-            route: "none"
-        };
-    }
-
     if (explicitToolDecision?.decision === "execute") {
         const result = await executeToolDecision({
             calendarClient: params.calendarClient,
@@ -138,12 +120,12 @@ export async function handleOwnerCommand(params: {
             invocationSource: "explicit",
             status: result.status,
             provider: result.route ?? null,
-            detail: result.policyDecision?.reason ?? result.detail ?? explicitToolDecision.reason
+            detail: result.detail ?? explicitToolDecision.reason
         });
         recordToolExecution({ toolName: result.toolName, status: result.status });
         return {
             handled: true,
-            pipelineOutcome: result.status === "executed" ? "tool_execute" : "tool_clarify",
+            pipelineOutcome: result.status === "executed" ? "tool_execute" : "tool_failed",
             reply: result.reply,
             route: result.route ?? "none"
         };

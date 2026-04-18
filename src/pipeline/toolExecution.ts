@@ -1,15 +1,10 @@
 import type { Logger } from "pino";
 
-import type { ChatService, LlmRoute } from "../chat/modelRouter.js";
-import {
-    executeConversationalToolCall,
-    renderConversationalToolResult,
-    type ConversationalToolName
-} from "../conversationalTools.js";
+import type { ChatService } from "../chat/modelRouter.js";
 import { recordToolExecution } from "../observability.js";
-import { startReminderIntake } from "../reminderIntake.js";
 import type { Persistence } from "../persistence.js";
 import type { GroundedAnswerService } from "../toolInvocation.js";
+import { executeTool } from "../toolExecutor.js";
 import type { WorldLookupSourceName } from "../types.js";
 import type { WorldLookupAdapter } from "../worldLookup.js";
 import type { WeatherLookupClient } from "../weatherLookup.js";
@@ -81,94 +76,46 @@ export async function executeInferredToolOrConversation(params: {
             return { pipelineOutcome: "owner_chat" };
         }
 
-        let resolvedArgs = inferred.decision.args;
-
-        if (inferred.decision.toolName === "reminder.add") {
-            const reminderIntakeOutcome = startReminderIntake({
-                args: resolvedArgs
-            });
-
-            if (reminderIntakeOutcome.kind === "clarify" || reminderIntakeOutcome.kind === "requires_confirmation") {
-                params.persistence.saveToolExecutionAudit({
-                    messageId: params.event.payload.messageId,
-                    toolName: "reminder.add",
-                    invocationSource: "inferred",
-                    status: reminderIntakeOutcome.kind,
-                    provider: inferred.route,
-                    detail: `deterministic_intake=yes; step=${reminderIntakeOutcome.state.step}`
-                });
-                recordToolExecution({ toolName: "reminder.add", status: reminderIntakeOutcome.kind });
-                params.logger.info(
-                    {
-                        route: inferred.route,
-                        messageId: params.event.payload.messageId,
-                        toolName: "reminder.add",
-                        intakeStep: reminderIntakeOutcome.state.step,
-                        status: reminderIntakeOutcome.kind
-                    },
-                    "Advanced deterministic reminder intake"
-                );
-                await params.publisher.publishReply(reminderIntakeOutcome.prompt, inferred.route);
-
-                return { pipelineOutcome: "tool_clarify" };
+        const result = await executeTool(
+            inferred.decision.toolName,
+            Object.entries(inferred.decision.args).map(([key, value]) => `${key}=${String(value)}`),
+            {
+                calendarClient: params.calendarClient,
+                persistence: params.persistence,
+                conversationId: params.conversationId,
+                userMessage: params.content,
+                worldLookupAdapters: params.worldLookupAdapters,
+                weatherClient: params.weatherClient
             }
+        );
 
-            resolvedArgs = {
-                ...resolvedArgs,
-                ...reminderIntakeOutcome.args
-            };
-        }
-
-        if (!params.chatService.renderToolResult) {
-            throw new Error("Chat service cannot render conversational tool results");
-        }
-
-        const result = await renderConversationalToolResult({
-            result: await executeConversationalToolCall({
-                call: {
-                    toolName: inferred.decision.toolName as ConversationalToolName,
-                    args: resolvedArgs,
-                    userMessage: params.content,
-                    conversationId: params.conversationId
-                },
-                context: {
-                    calendarClient: params.calendarClient,
-                    persistence: params.persistence,
-                    groundedAnswerService: params.groundedAnswerService,
-                    worldLookupAdapters: params.worldLookupAdapters,
-                    articleReader: undefined,
-                    weatherClient: params.weatherClient
-                }
-            }),
-            userMessage: params.content,
-            renderService: { renderToolResult: params.chatService.renderToolResult },
-            recentConversation: params.recentConversation
-        });
+        const reply = result.success ? result.result : result.reason;
+        const executionStatus = result.success ? "executed" : "failed";
 
         params.persistence.saveToolExecutionAudit({
             messageId: params.event.payload.messageId,
-            toolName: result.toolName,
+            toolName: inferred.decision.toolName,
             invocationSource: "inferred",
-            status: result.status === "success" ? "executed" : result.status,
-            provider: result.route ?? "none",
-            detail: result.detail ?? inferred.decision.reason
+            status: executionStatus,
+            provider: inferred.route,
+            detail: inferred.decision.reason
         });
         recordToolExecution({
-            toolName: result.toolName,
-            status: result.status === "success" ? "executed" : result.status
+            toolName: inferred.decision.toolName,
+            status: executionStatus
         });
         params.logger.info(
             {
-                route: result.route ?? inferred.route,
+                route: inferred.route,
                 messageId: params.event.payload.messageId,
-                toolName: result.toolName,
-                status: result.status
+                toolName: inferred.decision.toolName,
+                status: executionStatus
             },
             "Executed inferred tool decision"
         );
-        await params.publisher.publishReply(result.reply, result.route ?? "none");
+        await params.publisher.publishReply(reply, inferred.route);
 
-        return { pipelineOutcome: result.status === "success" ? "tool_execute" : "tool_clarify" };
+        return { pipelineOutcome: result.success ? "tool_execute" : "tool_failed" };
     } catch (error) {
         params.persistence.saveToolExecutionAudit({
             messageId: params.event.payload.messageId,
