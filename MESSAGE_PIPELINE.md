@@ -8,7 +8,6 @@ A message enters one end of the pipe as an inbound event. A small number of vali
 
 - ignore the message
 - publish a conversational reply
-- publish a deterministic command reply
 - publish a tool-result reply
 - publish a safe error fallback
 
@@ -20,10 +19,7 @@ The pipeline should orchestrate these stages. It should not own the detailed imp
 Inbound event
 -> Context
 -> Addressedness
--> Access and policy
--> Deterministic command routing or conversational intent routing
 -> Tool execution or chat generation
--> Rendering
 -> Publish
 ```
 
@@ -39,102 +35,44 @@ Input:
 Output:
 - message processing context
 
-### 2. Addressedness
+### 2. Message Routing
 
-Determine whether Dot is being addressed.
+Determines which route the message should take, handled in 2 phases; To determine if Dot is being addressed and if so, should Dot respond with conversation or execute a tool? The first kind of routing is simple. If a user enters an explicit command, such as "!calendar show" then the message is routed to whatever tool the command is meant to invoke.
 
-This should use:
-- deterministic fast paths first
-- LLM inference only when deterministic rules do not resolve addressedness
+If the message is not an explicit command, then we first need to determine if Dot is being addressed before taking action against the incoming message. If Dot is not being addressed, then the message stops in it's tracks. No further processing is needed. The first check is purely deterministic, and involves check if a user issued an explicit command, such as:
 
-Input:
-- message processing context
+```
 
-Output:
-- addressed or not addressed
-- if addressed, a routing-ready conversational intent result
+!calendar show
 
-### 3. Access And Policy
+```
+Any message that begins with an explicit command will be routed down the tool execution path.
 
-Determine what the sender is allowed to do.
+Failing the tool check, the message, along with a transcript of the chat, is sent to an LLM to determine addressedness, and if addressed, to respond with conversation or execute a tool. It is at this stage that the message wills top if it is determined that addressedness is false. The LLM should follow the following rules to determine if a conversational reply, or a tool execution, is the right path for the message.
 
-This stage decides:
-- owner vs non-owner behavior
-- privileged deterministic command eligibility
-- policy restrictions that must be enforced before execution
+The message should receive a conversational reply if:
 
-Input:
-- addressed message context
-- actor and access context
+- The user did not request a tool use, nor is data from a tool necessary to answer the user's query.
+- The message is just chitchat.
+- The user requested a tool, or a data from a tool is necessary to answer the user's query, but Dot does not have the necessary data to execute the tool. In this instance the LLM should choose to respond with conversation to ilicit the data required to execute the tool and answer the question.
 
-Output:
-- allowed route set
+The message should receive a tool execution reply if BOTH of the following are true:
 
-### 4. Deterministic Command Routing
+- The user asked for a tool, or provided followup information to a previous tool request, or if data from a tool is necessary to answer the users query.
+- The LLM is able to extract the necessary data, from the recent chat transcript, including the most recent message, to invoke the necessary tool.
 
-Handle explicit deterministic commands before conversational inference.
 
-Examples:
-- owner-only command handlers
-- explicit tool commands
-- other hard-routed command paths
+### 3. Conversation Response Path
 
-Input:
-- message content
-- access context
+Messages routed down the conversation response path will come with instructions on how to respond. Such logic is handled in a response service. The message pipeline merely hands off the chat transcript to the response service and awaits it's response.
 
-Output:
-- handled or not handled
-- optional reply payload
 
-### 5. Conversational Intent Routing
+### 4. Tool Execution Path
 
-If the message was not already handled deterministically:
+Messages routed down the tool execution path will also call the response service, except this time to respond with tool execution. When forming the tool execution response, the LLM will also provide the tool name and any arguments or parameters the tool needs to successfully run. The tool execution logic is handled inside of the tool. The message pipeline merely hands the tool execution payload to the response service and awaits it's response.
 
-- decide whether Dot should `respond` or `execute_tool`
-- if `execute_tool`, produce a structured tool call payload
 
-This stage should not implement tool logic. It should only classify and route.
-
-Input:
-- current message
-- recent transcript or conversation context
-
-Output:
-- conversational reply intent
-- or structured tool intent
-
-### 6. Tool Execution
-
-Execute the selected tool deterministically.
-
-The tool may:
-- succeed with structured result data
-- return a clarification reply when required information is missing
-- fail safely
-
-The pipeline should treat tool clarifications as ordinary replies, not as a special intake engine.
-
-Input:
-- tool name
-- structured args
-
-Output:
-- tool result contract
-
-### 7. Rendering
-
-If the tool result needs natural language rendering, render it in Dot's voice.
-
-If not, pass through direct final text.
-
-Input:
-- tool result
-
-Output:
-- final outbound reply text
-
-### 8. Publish
+### 5. Publish
 
 Publish the outbound message event and persist only the conversation and audit data that should survive processing.
 
@@ -143,6 +81,7 @@ Input:
 
 Output:
 - outbound event
+
 
 ## Boundary Rules
 
@@ -173,7 +112,7 @@ That terminal outcome may be:
 - no reply
 - a direct reply
 - a rendered tool reply
-- a safe fallback
+
 
 ## Implications For Cleanup
 
@@ -184,11 +123,8 @@ As the codebase is decomposed, `messagePipeline.ts` should move toward:
 - stage-specific collaborators for:
   - context building
   - addressedness
-  - access and policy
-  - command routing
   - conversational intent routing
   - tool execution
-  - rendering
   - publishing
 
 The file should read as a pipeline coordinator, not as the implementation site for every concern in the system.
