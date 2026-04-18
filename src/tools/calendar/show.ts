@@ -1,4 +1,3 @@
-import { handleCalendarCommand } from "../../outlookCalendar.js";
 import type { Tool } from "../types.js";
 
 export const calendarShowTool: Tool = {
@@ -12,13 +11,20 @@ export const calendarShowTool: Tool = {
             };
         }
 
+        const events = await context.calendarClient.listUpcomingEvents();
+        if (events.length === 0) {
+            return {
+                success: true,
+                result: "No upcoming Outlook calendar events were found in the configured lookahead window."
+            };
+        }
+
         return {
             success: true,
-            result: await handleCalendarCommand({
-                calendarClient: context.calendarClient,
-                content: "!calendar show",
-                persistence: context.persistence
-            })
+            result: [
+                "Upcoming Outlook events:",
+                ...events.map((event, index) => `- #${index + 1} ${event.subject} (${event.startAt} to ${event.endAt})`)
+            ].join("\n")
         };
     }
 };

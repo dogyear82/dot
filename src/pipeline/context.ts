@@ -1,4 +1,4 @@
-import { isEmailCommand } from "../emailWorkflow.js";
+import { isEmailCommand } from "../tools/email/command.js";
 import type { InboundMessageReceivedEvent } from "../events.js";
 import type { Persistence } from "../persistence.js";
 import { isNewsPreferencesCommand } from "../newsPreferences.js";

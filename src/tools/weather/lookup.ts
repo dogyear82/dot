@@ -1,4 +1,4 @@
-import { OpenMeteoWeatherClient, type WeatherLookupCandidate } from "../../weatherLookup.js";
+import { OpenMeteoWeatherClient, type WeatherLookupCandidate } from "./openMeteoClient.js";
 import type { Tool } from "../types.js";
 import { getStringArg } from "../shared/args.js";
 import { formatWeatherReply } from "../shared/formatting.js";

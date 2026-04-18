@@ -1,4 +1,4 @@
-import { HtmlWorldLookupArticleReader } from "../../worldLookupArticles.js";
+import { HtmlWorldLookupArticleReader } from "../shared/worldLookupArticles.js";
 import type { NewsBrowseSessionItemRecord } from "../../types.js";
 import type { Tool } from "../types.js";
 import { getStringArg } from "../shared/args.js";

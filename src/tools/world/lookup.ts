@@ -1,7 +1,7 @@
-import { HtmlWorldLookupArticleReader } from "../../worldLookupArticles.js";
-import { getNewsPreferences } from "../../newsPreferences.js";
-import { executeWorldLookup } from "../../worldLookup.js";
-import { createDefaultWorldLookupAdapters } from "../../worldLookupAdapters.js";
+import { HtmlWorldLookupArticleReader } from "../shared/worldLookupArticles.js";
+import { getNewsPreferences } from "../shared/newsPreferences.js";
+import { executeWorldLookup } from "../shared/worldLookup.js";
+import { createDefaultWorldLookupAdapters } from "../shared/worldLookupAdapters.js";
 import type { Tool } from "../types.js";
 import { getStringArg } from "../shared/args.js";
 import { buildWorldLookupReply } from "../shared/formatting.js";

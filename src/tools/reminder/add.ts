@@ -1,4 +1,4 @@
-import { normalizeDurationInput, handleReminderCommand } from "../../reminders.js";
+import { normalizeDurationInput, parseDuration } from "../../reminders.js";
 import type { Tool } from "../types.js";
 import { getStringArg } from "../shared/args.js";
 
@@ -47,9 +47,19 @@ export const reminderAddTool: Tool = {
             };
         }
 
+        const durationMs = parseDuration(normalizedDuration);
+        if (durationMs == null) {
+            return {
+                success: false,
+                reason: "I need a duration like 10 seconds, 15 minutes, 2 hours, or 1 day."
+            };
+        }
+
+        const computedDueAt = new Date(Date.now() + durationMs).toISOString();
+        const reminder = context.persistence.createReminder(message, computedDueAt);
         return {
             success: true,
-            result: handleReminderCommand(context.persistence, `!reminder add ${normalizedDuration} ${message}`)
+            result: `Saved reminder #${reminder.id} for ${reminder.dueAt}: ${reminder.message}`
         };
     }
 };

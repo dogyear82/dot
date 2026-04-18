@@ -1,9 +1,10 @@
+import type { EventBus } from "../eventBus.js";
 import type { OutlookCalendarClient } from "../outlookCalendar.js";
 import type { Persistence } from "../persistence.js";
 import type { WorldLookupSourceName } from "../types.js";
-import type { WorldLookupAdapter } from "../worldLookup.js";
-import type { WorldLookupArticleReader } from "../worldLookupArticles.js";
-import type { WeatherLookupClient } from "../weatherLookup.js";
+import type { WorldLookupAdapter } from "./shared/worldLookup.js";
+import type { WorldLookupArticleReader } from "./shared/worldLookupArticles.js";
+import type { WeatherLookupClient } from "./weather/openMeteoClient.js";
 
 export type ToolName =
     | "prompt_injection.alert"
@@ -12,6 +13,7 @@ export type ToolName =
     | "reminder.ack"
     | "calendar.show"
     | "calendar.remind"
+    | "email.command"
     | "weather.lookup"
     | "news.briefing"
     | "news.follow_up"
@@ -28,6 +30,8 @@ export type ToolResult =
     };
 
 export interface ToolContext {
+    actorId?: string;
+    bus?: EventBus;
     calendarClient?: OutlookCalendarClient;
     persistence: Persistence;
     conversationId?: string;

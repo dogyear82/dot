@@ -1,7 +1,7 @@
 import { recordToolExecution } from "../observability.js";
 import type { Persistence } from "../persistence.js";
 import { handleContactCommand, handlePolicyCommand } from "../contacts.js";
-import { handleEmailCommand } from "../emailWorkflow.js";
+import { executeTool } from "../toolExecutor.js";
 import type { EventBus } from "../eventBus.js";
 import { handleNewsPreferencesCommand } from "../newsPreferences.js";
 import { handleSettingsCommand } from "../onboarding.js";
@@ -90,16 +90,16 @@ export async function handleOwnerCommand(params: {
     }
 
     if (content.startsWith("!email")) {
+        const result = await executeTool("email.command", [`content=${content}`], {
+            actorId: params.event.payload.sender.actorId,
+            bus: params.bus,
+            conversationId: params.conversationId,
+            persistence: params.persistence
+        });
         return {
             handled: true,
             pipelineOutcome: "email_command",
-            reply: await handleEmailCommand({
-                actorId: params.event.payload.sender.actorId,
-                bus: params.bus,
-                content,
-                conversationId: params.conversationId,
-                persistence: params.persistence
-            }),
+            reply: result.success ? result.result : result.reason,
             route: "none"
         };
     }

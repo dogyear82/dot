@@ -1,5 +1,6 @@
 import { calendarRemindTool } from "./tools/calendar/remind.js";
 import { calendarShowTool } from "./tools/calendar/show.js";
+import { emailCommandTool } from "./tools/email/commandTool.js";
 import { newsBriefingTool } from "./tools/news/briefing.js";
 import { newsFollowUpTool } from "./tools/news/followUp.js";
 import { promptInjectionAlertTool } from "./tools/promptInjection/alert.js";
@@ -17,6 +18,7 @@ const tools = {
     [reminderAckTool.name]: reminderAckTool,
     [calendarShowTool.name]: calendarShowTool,
     [calendarRemindTool.name]: calendarRemindTool,
+    [emailCommandTool.name]: emailCommandTool,
     [weatherLookupTool.name]: weatherLookupTool,
     [newsBriefingTool.name]: newsBriefingTool,
     [newsFollowUpTool.name]: newsFollowUpTool,

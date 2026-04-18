@@ -1,4 +1,3 @@
-import { handleReminderCommand } from "../../reminders.js";
 import type { Tool } from "../types.js";
 import { getPositiveIntArg } from "../shared/args.js";
 
@@ -14,9 +13,12 @@ export const reminderAckTool: Tool = {
             };
         }
 
+        const acknowledged = context.persistence.acknowledgeReminder(id);
         return {
             success: true,
-            result: handleReminderCommand(context.persistence, `!reminder ack ${id}`)
+            result: acknowledged
+                ? `Acknowledged reminder #${id}.`
+                : `Reminder #${id} was not found or is already acknowledged.`
         };
     }
 };
