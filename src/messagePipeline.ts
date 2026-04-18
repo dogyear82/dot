@@ -3,19 +3,13 @@ import { SpanKind } from "@opentelemetry/api";
 
 import { evaluateAccess } from "./auth.js";
 import { appendPowerIndicator, type ChatService } from "./chat/modelRouter.js";
-import { handleContactCommand, handlePolicyCommand, isContactCommand, isPolicyCommand } from "./contacts.js";
-import { handleEmailCommand, isEmailCommand } from "./emailWorkflow.js";
 import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
-import { handleNewsPreferencesCommand, isNewsPreferencesCommand } from "./newsPreferences.js";
-import { getOnboardingPrompt, handleOnboardingReply, handleSettingsCommand, isSettingsCommand } from "./onboarding.js";
-import { handleCalendarCommand, isCalendarCommand, type OutlookCalendarClient } from "./outlookCalendar.js";
+import { getOnboardingPrompt, handleOnboardingReply } from "./onboarding.js";
+import type { OutlookCalendarClient } from "./outlookCalendar.js";
 import type { MicrosoftOutlookOAuthClient } from "./outlookOAuth.js";
-import { handlePersonalityCommand, isPersonalityCommand } from "./personality.js";
-import { createSpanAttributesForEvent, recordToolExecution, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
+import { createSpanAttributesForEvent, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
-import { isReminderCommand } from "./reminders.js";
-import { executeToolDecision, parseExplicitToolDecision } from "./toolInvocation.js";
 import type { WorldLookupSourceName } from "./types.js";
 import type { WorldLookupAdapter } from "./worldLookup.js";
 import type { WeatherLookupClient } from "./weatherLookup.js";
@@ -24,6 +18,7 @@ import { createReplyPublisher } from "./pipeline/publish.js";
 import { resolveMessageRoute } from "./pipeline/routing.js";
 import { executeConversationResponse } from "./pipeline/conversationResponse.js";
 import { executeInferredToolOrConversation } from "./pipeline/toolExecution.js";
+import { handleOwnerCommand, isOwnerOnlyCommand } from "./pipeline/commandHandler.js";
 
 export function registerMessagePipeline(params: {
   bus: EventBus;
@@ -50,13 +45,13 @@ export function registerMessagePipeline(params: {
           }
         },
         async (span) => {
-          const accessDecision = evaluateAccess({
+          let pipelineOutcome = "ignored";
+          let accessDecision = evaluateAccess({
             authorId: event.payload.sender.actorId,
             ownerUserId,
             isDirectMessage: event.payload.isDirectMessage,
             mentionedBot: event.payload.mentionedBot
           });
-          let pipelineOutcome = "ignored";
           const stopPipelineTimer = startPipelineTimer({
             actorRole: accessDecision.actorRole,
             outcome: () => pipelineOutcome
@@ -80,6 +75,18 @@ export function registerMessagePipeline(params: {
               persistence
             });
             const { content, conversationId, currentSpeakerLabel, isExplicitCommand, pendingToolSession, recentConversation } = pipelineContext;
+
+            if (!content) {
+              pipelineOutcome = "ignored_empty";
+              return;
+            }
+
+            accessDecision = evaluateAccess({
+              authorId: event.payload.sender.actorId,
+              ownerUserId,
+              isDirectMessage: event.payload.isDirectMessage,
+              mentionedBot: event.payload.mentionedBot
+            });
             const publisher = createReplyPublisher({
               bus,
               chatService,
@@ -142,123 +149,23 @@ export function registerMessagePipeline(params: {
                 return;
               }
 
-              if (isSettingsCommand(content)) {
-                pipelineOutcome = "settings_command";
-                await publisher.publishReply(handleSettingsCommand(persistence.settings, content));
-                return;
-              }
-
-              if (isNewsPreferencesCommand(content)) {
-                pipelineOutcome = "news_preferences_command";
-                await publisher.publishReply(handleNewsPreferencesCommand(persistence, content));
-                return;
-              }
-
-              if (isPersonalityCommand(content)) {
-                pipelineOutcome = "personality_command";
-                await publisher.publishReply(handlePersonalityCommand(persistence, content));
-                return;
-              }
-
-              if (isContactCommand(content)) {
-                pipelineOutcome = "contact_command";
-                await publisher.publishReply(
-                  handleContactCommand({
-                    content,
-                    conversationId: event.correlation.conversationId ?? "",
-                    persistence
-                  }),
-                  "none"
-                );
-                return;
-              }
-
-              if (isPolicyCommand(content)) {
-                pipelineOutcome = "policy_command";
-                await publisher.publishReply(
-                  handlePolicyCommand({
-                    content,
-                    conversationId: event.correlation.conversationId ?? "",
-                    persistence
-                  }),
-                  "none"
-                );
-                return;
-              }
-
-              if (isEmailCommand(content)) {
-                pipelineOutcome = "email_command";
-                await publisher.publishReply(
-                  await handleEmailCommand({
-                    actorId: event.payload.sender.actorId,
-                    bus,
-                    content,
-                    conversationId: event.correlation.conversationId ?? "",
-                    persistence
-                  }),
-                  "none"
-                );
-                return;
-              }
-
-              const explicitToolDecision = parseExplicitToolDecision(content);
-              if (explicitToolDecision?.decision === "clarify") {
-                persistence.saveToolExecutionAudit({
-                  messageId: event.payload.messageId,
-                  toolName: explicitToolDecision.toolName,
-                  invocationSource: "explicit",
-                  status: "clarify",
-                  provider: null,
-                  detail: explicitToolDecision.reason
-                });
-                recordToolExecution({ toolName: explicitToolDecision.toolName, status: "clarify" });
-                pipelineOutcome = "tool_clarify";
-                await publisher.publishReply(explicitToolDecision.question, "none");
-                return;
-              }
-
-              if (explicitToolDecision?.decision === "execute") {
-                const result = await executeToolDecision({
+              if (isExplicitCommand) {
+                const commandResult = await handleOwnerCommand({
+                  bus,
                   calendarClient,
+                  content,
                   conversationId: event.correlation.conversationId ?? "",
-                  decision: explicitToolDecision,
+                  event,
                   groundedAnswerService,
+                  outlookOAuthClient,
                   persistence,
+                  publisher,
                   worldLookupAdapters
                 });
-                persistence.saveToolExecutionAudit({
-                  messageId: event.payload.messageId,
-                  toolName: result.toolName,
-                  invocationSource: "explicit",
-                  status: result.status,
-                  provider: result.route ?? null,
-                  detail:
-                    result.policyDecision?.reason ??
-                    result.detail ??
-                    explicitToolDecision.reason
-                });
-                recordToolExecution({ toolName: result.toolName, status: result.status });
-                pipelineOutcome = result.status === "executed" ? "tool_execute" : "tool_clarify";
-                await publisher.publishReply(result.reply, result.route ?? "none");
-                return;
-              }
-
-              if (isCalendarCommand(content)) {
-                pipelineOutcome = "calendar_command";
-                await publisher.publishReply(
-                  await handleCalendarCommand({
-                    calendarClient,
-                    content,
-                    oauthClient: outlookOAuthClient,
-                    persistence
-                  })
-                );
-                return;
-              }
-
-              if (!content) {
-                pipelineOutcome = "ignored_empty";
-                return;
+                if (commandResult.handled) {
+                  pipelineOutcome = commandResult.pipelineOutcome;
+                  return;
+                }
               }
 
               try {
@@ -313,19 +220,7 @@ export function registerMessagePipeline(params: {
               return;
             }
 
-            if (!content) {
-              pipelineOutcome = "ignored_empty";
-              return;
-            }
-
-            if (
-              isSettingsCommand(content) ||
-              isPersonalityCommand(content) ||
-              isContactCommand(content) ||
-              isPolicyCommand(content) ||
-              isReminderCommand(content) ||
-              isCalendarCommand(content)
-            ) {
+            if (isExplicitCommand && isOwnerOnlyCommand(content)) {
               pipelineOutcome = "owner_only_denied";
               await publisher.publishReply("That command is owner-only.", "none", false);
               return;
