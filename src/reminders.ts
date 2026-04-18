@@ -10,17 +10,6 @@ const NAG_FOLLOW_UP_MS = 5 * 60 * 1000;
 const DELIVERY_RETRY_MS = 60 * 1000;
 const MAX_NAG_NOTIFICATIONS = 3;
 
-export function isReminderCommand(content: string): boolean {
-  return (
-    content === "!reminder" ||
-    content === "!reminder help" ||
-    content === "!reminder show" ||
-    content.startsWith("!reminder add ") ||
-    content.startsWith("!reminder ack ") ||
-    content.startsWith("!remind ")
-  );
-}
-
 export function handleReminderCommand(persistence: Persistence, content: string, now = new Date()): string {
   const parts = normalizeReminderCommand(content).split(/\s+/);
 
