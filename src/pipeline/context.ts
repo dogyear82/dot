@@ -26,7 +26,6 @@ export function buildPipelineContext(params: {
         currentSpeakerLabel: formatCurrentSpeakerLabel(params.event),
         incomingMessage: mapInboundEventToIncomingMessage(params.event),
         isExplicitCommand: isValidExplicitCommand(params.event.payload.addressedContent.trim()),
-        pendingToolSession: getPendingToolSession(params.persistence, conversationId),
         recentConversation: params.persistence.listRecentConversationTurns(conversationId, RECENT_CHAT_HISTORY_LIMIT)
     };
 }

@@ -9,7 +9,6 @@ export interface PipelineContext {
     currentSpeakerLabel: string;
     incomingMessage: IncomingMessage;
     isExplicitCommand: boolean;
-    pendingToolSession: PendingConversationalToolSessionRecord | null;
     recentConversation: ConversationTurnRecord[];
 }
 

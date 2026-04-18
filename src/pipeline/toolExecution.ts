@@ -29,7 +29,6 @@ export async function executeInferredToolOrConversation(params: {
     event: import("../events.js").InboundMessageReceivedEvent;
     groundedAnswerService?: GroundedAnswerService;
     logger: Logger;
-    pendingToolSession: PendingConversationalToolSessionRecord | null;
     persistence: Persistence;
     precomputedIntentDecision: PrecomputedIntentDecision | null;
     publisher: ReplyPublisher;
@@ -37,7 +36,6 @@ export async function executeInferredToolOrConversation(params: {
     weatherClient?: WeatherLookupClient;
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
 }): Promise<{ pipelineOutcome: string }> {
-    let activePendingToolSession: PendingConversationalToolSessionRecord | null = params.pendingToolSession;
 
     try {
         const inferred = params.precomputedIntentDecision

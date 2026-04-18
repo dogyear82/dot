@@ -14,7 +14,6 @@ export async function resolveMessageRoute(params: {
     const deterministicAddressedDecision = evaluateDeterministicAddressednessFastPath({
         message: params.context.incomingMessage,
         isExplicitCommand: params.context.isExplicitCommand,
-        hasPendingToolSession: Boolean(params.context.pendingToolSession)
     });
 
     if (deterministicAddressedDecision) {
