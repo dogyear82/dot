@@ -1,6 +1,7 @@
 import type { InboundMessageReceivedEvent } from "../events.js";
-import type { ChatService, LlmRoute } from "../chat/modelRouter.js";
 import type { ConversationTurnRecord, IncomingMessage } from "../types.js";
+
+export type LlmRoute = "none" | "local" | "hosted";
 
 export interface PipelineContext {
     event: InboundMessageReceivedEvent;
@@ -35,8 +36,4 @@ export type MessageRoute =
 export interface ReplyPublisher {
     saveUserConversationTurn(): void;
     publishReply(reply: string, route?: LlmRoute, recordConversationTurn?: boolean): Promise<void>;
-}
-
-export interface ChatServiceWithOptionalAddressedness extends ChatService {
-    inferAddressedToolDecision?: ChatService["inferAddressedToolDecision"];
 }

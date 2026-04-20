@@ -30,3 +30,7 @@ export function createRouteDataFromCommand(content: string): {
         isValid: false
     };
 }
+
+export function isRegisteredExplicitCommand(content: string): boolean {
+    return content.trim().startsWith("!news.briefing");
+}

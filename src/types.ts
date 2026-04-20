@@ -1,5 +1,3 @@
-import type { ReminderIntakeState } from "./reminderIntake.js";
-
 export type ConversationParticipantKind = "assistant" | "owner" | "non-owner" | "unknown";
 
 export interface IncomingMessage {
@@ -196,7 +194,7 @@ export interface PendingConversationalToolSessionRecord {
   originalUserMessage: string;
   pendingStatus: "clarify" | "requires_confirmation";
   pendingPrompt: string;
-  sessionState?: ReminderIntakeState | null;
+  sessionState?: unknown;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;

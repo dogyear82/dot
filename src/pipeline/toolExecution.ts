@@ -17,11 +17,14 @@ export async function getToolResponse(
         const toolResponse = toolResult.isPrompt
             ? await llmService.generate(buildToolPrompt(toolResult.result, toolResult.additionalInstructions?? "", messages, currentSpeakerLabel, currentMessage))
             : toolResult.result;
-        return toolResponse;
+        return {
+            success: true,
+            response: toolResponse
+        };
     }
 
     return {
         success: false,
-        response: ""
+        response: toolResult.result
     };
 }

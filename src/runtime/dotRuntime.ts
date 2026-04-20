@@ -8,11 +8,8 @@ import { createDiagnosticsObserver, createHostHealthEvent } from "../diagnostics
 import { createConfiguredEventBus } from "../eventBus.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
 import { startObservability } from "../observability.js";
-import { MicrosoftGraphOutlookCalendarClient } from "../outlookCalendar.js";
-import { MicrosoftOutlookOAuthClient } from "../outlookOAuth.js";
 import { initializePersistence } from "../persistence.js";
-import { startReminderScheduler } from "../reminders.js";
-import { createDefaultWorldLookupAdapters } from "../worldLookupAdapters.js";
+import { createDefaultWorldLookupAdapters } from "../tools/shared/worldLookupAdapters.js";
 import type { ServiceHost, ServiceStatus } from "./serviceHost.js";
 import { createServiceCoordinator, createServiceHost } from "./serviceHost.js";
 
@@ -29,8 +26,6 @@ export async function createDotRuntime(params: {
   const { config, logger } = params;
   const persistence = initializePersistence(config.DATA_DIR, config.SQLITE_PATH);
   const bus = await createConfiguredEventBus(config);
-  const outlookOAuthClient = new MicrosoftOutlookOAuthClient(config, persistence);
-  const calendarClient = new MicrosoftGraphOutlookCalendarClient(config, outlookOAuthClient);
   const llmService = createLlmService({
     config,
     settings: persistence.settings
@@ -38,7 +33,6 @@ export async function createDotRuntime(params: {
   const worldLookupAdapters = createRuntimeWorldLookupAdapters(config);
 
   let unregisterMessagePipeline: (() => void) | undefined;
-  let reminderScheduler: ReturnType<typeof startReminderScheduler> | undefined;
   let diagnosticsObserver: ReturnType<typeof createDiagnosticsObserver> | undefined;
   let observability: ReturnType<typeof startObservability> | undefined;
 
@@ -105,11 +99,6 @@ export async function createDotRuntime(params: {
       }
     }),
     createServiceHost({
-      name: "outlook",
-      onStatusChange: emitHostHealth,
-      start() {}
-    }),
-    createServiceHost({
       name: "llm",
       onStatusChange: emitHostHealth,
       start() {}
@@ -120,10 +109,8 @@ export async function createDotRuntime(params: {
       start() {
         unregisterMessagePipeline = registerMessagePipeline({
           bus,
-          calendarClient,
           llmService,
           logger,
-          outlookOAuthClient,
           ownerUserId: config.DISCORD_OWNER_USER_ID,
           persistence,
           worldLookupAdapters
@@ -132,22 +119,6 @@ export async function createDotRuntime(params: {
       stop() {
         unregisterMessagePipeline?.();
         unregisterMessagePipeline = undefined;
-      }
-    }),
-    createServiceHost({
-      name: "reminders",
-      onStatusChange: emitHostHealth,
-      start() {
-        reminderScheduler = startReminderScheduler({
-          bus,
-          logger,
-          ownerUserId: config.DISCORD_OWNER_USER_ID,
-          persistence
-        });
-      },
-      stop() {
-        reminderScheduler?.stop();
-        reminderScheduler = undefined;
       }
     })
   ];
@@ -170,7 +141,7 @@ export async function createDotRuntime(params: {
 
       logger.info(
         {
-          services: ["event-bus", "observability", "diagnostics", "outlook", "llm", "message-router", "reminders"]
+          services: ["event-bus", "observability", "diagnostics", "llm", "message-router"]
         },
         "Initialized Dot service host topology"
       );

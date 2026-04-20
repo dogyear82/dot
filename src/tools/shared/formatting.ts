@@ -5,7 +5,6 @@ import type {
     WorldLookupResult,
     WorldLookupSourceName
 } from "../../types.js";
-import type { WeatherLookupSuccess } from "../../weatherLookup.js";
 
 export function formatWorldLookupSource(source: WorldLookupSourceName): string {
     switch (source) {
@@ -59,48 +58,9 @@ export function buildWorldLookupReply(
     return `According to ${sourceLabel}, ${first.snippet}${linkBlock}`;
 }
 
-export function formatWeatherReply(result: WeatherLookupSuccess, userMessage?: string): string {
-    const location = result.location.label;
-    const temperatureUnit = `°${result.units.temperature}`;
-    const currentTemperature = formatNullableNumber(result.current.temperature, temperatureUnit);
-    const currentCondition = result.current.condition ?? "unknown conditions";
-    const wind = formatNullableNumber(result.current.windSpeed, ` ${result.units.windSpeed}`);
-
-    const daily = selectWeatherDay(result, userMessage);
-    if (daily) {
-        const high = formatNullableNumber(daily.temperatureMax, temperatureUnit);
-        const low = formatNullableNumber(daily.temperatureMin, temperatureUnit);
-        const precipitation = formatNullableNumber(daily.precipitationProbabilityMax, "%");
-        return `Weather for ${location}: ${daily.date} looks like ${daily.condition ?? "unknown conditions"} with a high of ${high} and a low of ${low}. Precipitation chance is ${precipitation}.`;
-    }
-
-    return `Weather for ${location}: currently ${currentTemperature}, ${currentCondition}, with winds around ${wind}.`;
-}
-
-function selectWeatherDay(result: WeatherLookupSuccess, userMessage?: string): WeatherLookupSuccess["daily"][number] | null {
-    const normalized = (userMessage ?? "").trim().toLowerCase();
-    if (normalized.includes("tomorrow")) {
-        return result.daily[1] ?? null;
-    }
-
-    if (normalized.includes("today")) {
-        return result.daily[0] ?? null;
-    }
-
-    return null;
-}
-
 export function formatLinks(urls: Array<string | null | undefined>): string {
     return urls
         .filter((url): url is string => typeof url === "string" && url.length > 0)
         .map((url) => `- ${url}`)
         .join("\n");
-}
-
-function formatNullableNumber(value: number | null, suffix: string): string {
-    if (typeof value !== "number") {
-        return `unknown${suffix.trim() ? ` ${suffix.trim()}` : ""}`.trim();
-    }
-
-    return `${Math.round(value)}${suffix}`;
 }

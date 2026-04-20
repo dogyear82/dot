@@ -1,28 +1,8 @@
-import { calendarRemindTool } from "./tools/calendar/remind.js";
-import { calendarShowTool } from "./tools/calendar/show.js";
-import { emailCommandTool } from "./tools/email/commandTool.js";
 import { newsBriefingTool } from "./tools/news/briefing.js";
-import { newsFollowUpTool } from "./tools/news/followUp.js";
-import { promptInjectionAlertTool } from "./tools/promptInjection/alert.js";
-import { reminderAckTool } from "./tools/reminder/ack.js";
-import { reminderAddTool } from "./tools/reminder/add.js";
-import { reminderShowTool } from "./tools/reminder/show.js";
-import { weatherLookupTool } from "./tools/weather/lookup.js";
-import { worldLookupTool } from "./tools/world/lookup.js";
 import type { Tool, ToolContext, ToolResult } from "./tools/types.js";
 
 const tools = {
-    [promptInjectionAlertTool.name]: promptInjectionAlertTool,
-    [reminderAddTool.name]: reminderAddTool,
-    [reminderShowTool.name]: reminderShowTool,
-    [reminderAckTool.name]: reminderAckTool,
-    [calendarShowTool.name]: calendarShowTool,
-    [calendarRemindTool.name]: calendarRemindTool,
-    [emailCommandTool.name]: emailCommandTool,
-    [weatherLookupTool.name]: weatherLookupTool,
-    [newsBriefingTool.name]: newsBriefingTool,
-    [newsFollowUpTool.name]: newsFollowUpTool,
-    [worldLookupTool.name]: worldLookupTool
+    [newsBriefingTool.name]: newsBriefingTool
 } as Record<string, Tool>;
 
 export type { ToolContext, ToolResult } from "./tools/types.js";

@@ -1,7 +1,7 @@
 import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "../events.js";
 import type { EventBus } from "../eventBus.js";
 import type { Persistence } from "../persistence.js";
-import type { ReplyPublisher } from "./types.js";
+import type { LlmRoute, ReplyPublisher } from "./types.js";
 
 export function createReplyPublisher(params: {
     bus: EventBus;

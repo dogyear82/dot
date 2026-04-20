@@ -3,35 +3,29 @@ import { SpanKind } from "@opentelemetry/api";
 
 import { evaluateAccess } from "./auth.js";
 import type { LlmService } from "./chat/llmService.js";
-import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "./events.js";
+import type { InboundMessageReceivedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
 import { getOnboardingPrompt, handleOnboardingReply } from "./onboarding.js";
-import type { OutlookCalendarClient } from "./outlookCalendar.js";
-import type { MicrosoftOutlookOAuthClient } from "./outlookOAuth.js";
 import { createSpanAttributesForEvent, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
 import type { Persistence } from "./persistence.js";
 import type { WorldLookupSourceName } from "./types.js";
-import type { WorldLookupAdapter } from "./worldLookup.js";
-import type { WeatherLookupClient } from "./weatherLookup.js";
 import { buildPipelineContext } from "./pipeline/context.js";
 import { createReplyPublisher } from "./pipeline/publish.js";
 import { resolveMessageRoute } from "./pipeline/routing.js";
-import { executeTool, ToolContext } from "./toolExecutor.js";
-import { buildGeneralConversationPrompt, buildToolPrompt } from "./utilities/promptUtility.js";
+import type { WorldLookupAdapter } from "./tools/shared/worldLookup.js";
+import type { ToolContext } from "./toolExecutor.js";
+import { buildGeneralConversationPrompt } from "./utilities/promptUtility.js";
 import { getToolResponse } from "./pipeline/toolExecution.js";
 
 export function registerMessagePipeline(params: {
     bus: EventBus;
-    calendarClient: OutlookCalendarClient;
     llmService: LlmService;
     logger: Logger;
-    outlookOAuthClient: MicrosoftOutlookOAuthClient;
     ownerUserId: string;
     persistence: Persistence;
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
-    weatherClient?: WeatherLookupClient;
 }): () => void {
-    const { bus, calendarClient, llmService, logger, outlookOAuthClient, ownerUserId, persistence, worldLookupAdapters, weatherClient } = params;
+    const { bus, llmService, logger, ownerUserId, persistence, worldLookupAdapters } = params;
 
     return bus.subscribeInboundMessage(async (event) => {
         await withEventContext(event, async () => {
@@ -143,24 +137,15 @@ export function registerMessagePipeline(params: {
                                 const { name, args } = routingData.route;
                                 const toolContext: ToolContext = {
                                     actorId: event.payload.sender.actorId,
-                                    bus,
-                                    calendarClient,
                                     persistence,
                                     conversationId,
-                                    userMessage: undefined,
-                                    worldLookupAdapters,
-                                    articleReader: undefined,
-                                    weatherClient
+                                    worldLookupAdapters
                                 };
                                 const toolResponse = await getToolResponse(name, args, recentConversation, currentSpeakerLabel, content, toolContext, params.llmService);
                                 if (toolResponse.success) {                                                  
-                                    await bus.publishOutboundMessage(
-                                        createOutboundMessageRequestedEvent({
-                                            inboundEvent: event,
-                                            content: toolResponse.response,
-                                            recordConversationTurn: true
-                                        })
-                                    );
+                                    await publisher.publishReply(toolResponse.response);
+                                    pipelineOutcome = "tool";
+                                    return;
                                 }
                             }
                         }
@@ -168,14 +153,9 @@ export function registerMessagePipeline(params: {
                         const additionalInstructions = routingData.route.name === "execute_tool" ? "You tried to look up additional data using a tool, but the tool call failed." : routingData.route.instructions;
                         const generalConversationPrompt = buildGeneralConversationPrompt(recentConversation, currentSpeakerLabel, content, additionalInstructions);
                         const response = await params.llmService.generate(generalConversationPrompt);
-                                        
-                        await bus.publishOutboundMessage(
-                            createOutboundMessageRequestedEvent({
-                                inboundEvent: event,
-                                content: response,
-                                recordConversationTurn: true
-                            })
-                        );
+
+                        await publisher.publishReply(response);
+                        pipelineOutcome = "conversation";
                     } finally {
                         span.setAttribute("dot.pipeline.outcome", pipelineOutcome);
                         stopPipelineTimer();
