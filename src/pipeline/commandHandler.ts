@@ -19,7 +19,7 @@ export function createRouteDataFromCommand(content: string): {
                     toolName: "news.briefing",
                     reason: "From Command",
                     args: {
-                        query: parts[1]
+                        query: parts.slice(1).join(" ")
                     }
                 }
             }
