@@ -7,7 +7,7 @@ export interface ChatProvider {
   name: string;
   route: "local" | "hosted";
   isAvailable(): boolean;
-  generate(messages: ChatMessage[]): Promise<string>;
+  generate(messages: ChatMessage[], model?: string): Promise<string>;
 }
 
 export class OllamaChatProvider implements ChatProvider {
@@ -25,7 +25,7 @@ export class OllamaChatProvider implements ChatProvider {
     return Boolean(this.baseUrl && this.model);
   }
 
-  async generate(messages: ChatMessage[]): Promise<string> {
+  async generate(messages: ChatMessage[], model?: string): Promise<string> {
     const response = await withTimeout(
       this.fetchFn(`${this.baseUrl}/api/chat`, {
         method: "POST",
@@ -33,7 +33,7 @@ export class OllamaChatProvider implements ChatProvider {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: this.model,
+          model: model ?? this.model,
           stream: false,
           messages
         })
@@ -72,7 +72,7 @@ export class OneMinAiChatProvider implements ChatProvider {
     return Boolean(this.baseUrl && this.apiKey && this.model);
   }
 
-  async generate(messages: ChatMessage[]): Promise<string> {
+  async generate(messages: ChatMessage[], model?: string): Promise<string> {
     const response = await withTimeout(
       this.fetchFn(`${this.baseUrl.replace(/\/$/, "")}/api/chat-with-ai`, {
         method: "POST",
@@ -82,7 +82,7 @@ export class OneMinAiChatProvider implements ChatProvider {
         },
         body: JSON.stringify({
           type: "UNIFY_CHAT_WITH_AI",
-          model: this.model,
+          model: model ?? this.model,
           promptObject: {
             prompt: formatOneMinAiPrompt(messages)
           }

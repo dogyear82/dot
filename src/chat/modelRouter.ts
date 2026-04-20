@@ -17,7 +17,6 @@ import {
     buildAddressedToolInferencePrompt,
     buildPendingToolResolutionPrompt,
     parseAddressedToolDecision,
-    parsePendingToolDecision,
     parseToolDecision,
     type AddressedToolIntentDecision,
     type ConversationalIntentDecision
@@ -76,12 +75,6 @@ export interface LlmService {
         recentConversation?: ConversationTurnRecord[],
         currentSpeakerLabel?: string
     ): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
-    resolvePendingToolDecision?(params: {
-        userMessage: string;
-        session: PendingConversationalToolSessionRecord;
-        recentConversation?: ConversationTurnRecord[];
-        currentSpeakerLabel?: string;
-    }): Promise<{ route: LlmRoute; powerStatus: LlmPowerStatus; decision: ConversationalIntentDecision; rawModelOutput?: string; promptMessages?: ChatMessage[] }>;
     getPowerStatus(route?: LlmRoute): LlmPowerStatus;
 }
 
@@ -306,39 +299,6 @@ export function createLlmService(params: {
                     };
                 },
                 failurePrefix: "No LLM provider could infer addressedness and intent."
-            });
-
-            return {
-                route,
-                powerStatus: getPowerStatus(route),
-                decision: reply.decision,
-                rawModelOutput: reply.rawModelOutput,
-                promptMessages: reply.promptMessages
-            };
-        },
-        async resolvePendingToolDecision({ userMessage, session, recentConversation, currentSpeakerLabel }) {
-            const messages = buildPendingToolResolutionMessages({
-                userMessage,
-                session,
-                recentConversation,
-                currentSpeakerLabel,
-                mode: (params.settings.get("persona.mode") ?? "sheltered") as PersonaMode,
-                balance: (params.settings.get("persona.balance") ?? "balanced") as PersonaBalance,
-                settings: params.settings
-            });
-            const { route, reply } = await executeProviderRequest({
-                mode: getLlmMode(params.settings),
-                providers: intentProviders,
-                operation: "tool.resume",
-                invoke: async (provider) => {
-                    const rawModelOutput = await provider.generate(messages);
-                    return {
-                        promptMessages: messages,
-                        rawModelOutput,
-                        decision: parsePendingToolDecision(rawModelOutput)
-                    };
-                },
-                failurePrefix: "No LLM provider could resolve a pending tool clarification."
             });
 
             return {

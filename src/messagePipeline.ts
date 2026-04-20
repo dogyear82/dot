@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 import { SpanKind } from "@opentelemetry/api";
 
 import { evaluateAccess } from "./auth.js";
-import { appendPowerIndicator, type ChatService } from "./chat/modelRouter.js";
+import type { LlmService } from "./chat/llmService.js";
 import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
 import { getOnboardingPrompt, handleOnboardingReply } from "./onboarding.js";
@@ -16,14 +16,13 @@ import type { WeatherLookupClient } from "./weatherLookup.js";
 import { buildPipelineContext } from "./pipeline/context.js";
 import { createReplyPublisher } from "./pipeline/publish.js";
 import { resolveMessageRoute } from "./pipeline/routing.js";
-import { executeConversationResponse } from "./pipeline/conversationResponse.js";
-import { executeInferredToolOrConversation } from "./pipeline/toolExecution.js";
-import { handleCommand } from "./pipeline/commandHandler.js";
+import { executeTool, ToolContext } from "./toolExecutor.js";
+import { buildGeneralConversationPrompt, buildToolPrompt } from "./utilities/promptUtility.js";
 
 export function registerMessagePipeline(params: {
     bus: EventBus;
     calendarClient: OutlookCalendarClient;
-    chatService: ChatService;
+    llmService: LlmService;
     logger: Logger;
     outlookOAuthClient: MicrosoftOutlookOAuthClient;
     ownerUserId: string;
@@ -31,7 +30,7 @@ export function registerMessagePipeline(params: {
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
     weatherClient?: WeatherLookupClient;
 }): () => void {
-    const { bus, calendarClient, chatService, logger, outlookOAuthClient, ownerUserId, persistence, worldLookupAdapters, weatherClient } = params;
+    const { bus, calendarClient, llmService, logger, outlookOAuthClient, ownerUserId, persistence, worldLookupAdapters, weatherClient } = params;
 
     return bus.subscribeInboundMessage(async (event) => {
         await withEventContext(event, async () => {
@@ -89,36 +88,26 @@ export function registerMessagePipeline(params: {
                         });
                         const publisher = createReplyPublisher({
                             bus,
-                            chatService,
                             content,
                             conversationId,
                             event,
                             persistence
                         });
-
-                        const groundedAnswerService = chatService.generateGroundedReply
-                            ? {
-                                generateGroundedReply: chatService.generateGroundedReply.bind(chatService),
-                                generateNewsBriefingReply: chatService.generateNewsBriefingReply?.bind(chatService),
-                                generateStoryFollowUpReply: chatService.generateStoryFollowUpReply?.bind(chatService)
-                            }
-                            : undefined;
-                        const routingDecision = await resolveMessageRoute({
-                            chatService,
+                        const routingData = await resolveMessageRoute({
+                            llmService,
                             context: pipelineContext,
                             correlationId: event.correlation.correlationId,
                             logger,
                             messageId: event.payload.messageId
                         });
-                        const { addressed, addressedReason, precomputedIntentDecision } = routingDecision;
 
-                        span.setAttribute("dot.addressed", addressed);
-                        span.setAttribute("dot.addressed.reason", addressedReason);
+                        span.setAttribute("dot.addressed", routingData.addressed);
+                        span.setAttribute("dot.addressed.reason", routingData.reason);
                         logger.info(
                             {
                                 messageId: event.payload.messageId,
-                                addressed,
-                                addressedReason,
+                                addressed: routingData.addressed,
+                                addressedReason: routingData.reason,
                                 actorRole: accessDecision.actorRole
                             },
                             "Evaluated message addressedness"
@@ -128,13 +117,13 @@ export function registerMessagePipeline(params: {
                             actorRole: accessDecision.actorRole,
                             canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
                             decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
-                            addressed,
-                            addressedReason,
+                            addressed: routingData.addressed,
+                            addressedReason: routingData.reason,
                             transport: event.routing.transport ?? "unknown",
                             conversationId: event.correlation.conversationId ?? "unknown"
                         });
 
-                        if (!addressed) {
+                        if (!routingData.addressed || !routingData.route) {
                             pipelineOutcome = "ignored_unaddressed";
                             return;
                         }
@@ -149,78 +138,47 @@ export function registerMessagePipeline(params: {
                                 return;
                             }
 
-                            if (isExplicitCommand) {
-                                const commandResult = await handleCommand({
+                            if (routingData.route.name === "execute_tool") {
+                                const { name, args } = routingData.route;
+                                const toolContext: ToolContext = {
+                                    actorId: event.payload.sender.actorId,
                                     bus,
                                     calendarClient,
-                                    content,
-                                    conversationId: event.correlation.conversationId ?? "",
-                                    event,
-                                    groundedAnswerService,
-                                    outlookOAuthClient,
                                     persistence,
-                                    worldLookupAdapters
-                                });
-                                if (commandResult.handled) {
-                                    pipelineOutcome = commandResult.pipelineOutcome;
-                                    return;
+                                    conversationId,
+                                    userMessage: undefined,
+                                    worldLookupAdapters,
+                                    articleReader: undefined,
+                                    weatherClient
+                                };
+                                const toolResult = await executeTool(name, args, toolContext);
+                                if (toolResult.success) {                                    
+                                    const toolResponse = toolResult.isPrompt
+                                        ? await params.llmService.generate(buildToolPrompt(toolResult.result, toolResult.additionalInstructions, recentConversation, currentSpeakerLabel, content))
+                                        : toolResult.result;
+                                        
+                                    await bus.publishOutboundMessage(
+                                        createOutboundMessageRequestedEvent({
+                                            inboundEvent: event,
+                                            content: toolResponse,
+                                            recordConversationTurn: true
+                                        })
+                                    );
                                 }
                             }
-
-                            try {
-                                const inferredResult = await executeInferredToolOrConversation({
-                                    calendarClient,
-                                    chatService,
-                                    content,
-                                    conversationId,
-                                    currentSpeakerLabel,
-                                    event,
-                                    groundedAnswerService,
-                                    logger,
-                                    persistence,
-                                    precomputedIntentDecision,
-                                    publisher,
-                                    recentConversation,
-                                    weatherClient,
-                                    worldLookupAdapters
-                                });
-                                pipelineOutcome = inferredResult.pipelineOutcome;
-                            } catch (error) {
-                                pipelineOutcome = "owner_chat_error";
-                                logger.error({ err: error, messageId: event.payload.messageId }, "Failed to generate owner chat response");
-                                await bus.publishOutboundMessage(
-                                    createOutboundMessageRequestedEvent({
-                                        inboundEvent: event,
-                                        content: appendPowerIndicator(
-                                            "I couldn't generate a response from the configured model provider. Check the model settings or provider configuration.",
-                                            chatService.getPowerStatus("none")
-                                        ),
-                                        recordConversationTurn: false
-                                    })
-                                );
-                            }
-
-                            return;
                         }
-
-                        try {
-                            await executeConversationResponse({
-                                chatService,
-                                content,
-                                conversationId,
-                                currentSpeakerLabel,
-                                logger,
-                                logMessage: "Generated non-owner chat response",
-                                messageId: event.payload.messageId,
-                                persistence,
-                                publisher
-                            });
-                            pipelineOutcome = "non_owner_chat";
-                        } catch (error) {
-                            pipelineOutcome = "non_owner_chat_error";
-                            logger.error({ err: error, messageId: event.payload.messageId }, "Failed to generate non-owner chat response");
-                            await publisher.publishReply("I couldn't generate a response right now.", "none", false);
-                        }
+                        
+                        const additionalInstructions = routingData.route.name === "execute_tool" ? "You tried to look up additional data using a tool, but the tool call failed." : "none";
+                        const generalConversationPrompt = buildGeneralConversationPrompt(recentConversation, currentSpeakerLabel, content, additionalInstructions);
+                        const response = await params.llmService.generate(generalConversationPrompt);
+                                        
+                        await bus.publishOutboundMessage(
+                            createOutboundMessageRequestedEvent({
+                                inboundEvent: event,
+                                content: response,
+                                recordConversationTurn: true
+                            })
+                        );
                     } finally {
                         span.setAttribute("dot.pipeline.outcome", pipelineOutcome);
                         stopPipelineTimer();

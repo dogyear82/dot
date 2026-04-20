@@ -1,11 +1,10 @@
 import type { InboundMessageReceivedEvent } from "../events.js";
 import type { Persistence } from "../persistence.js";
-import type { IncomingMessage, PendingConversationalToolSessionRecord } from "../types.js";
+import type { IncomingMessage } from "../types.js";
 import type { PipelineContext } from "./types.js";
 import { isRegisteredExplicitCommand } from "./commandHandler.js";
 
-const RECENT_CHAT_HISTORY_LIMIT = 10;
-const PENDING_TOOL_SESSION_TTL_MS = 15 * 60 * 1000;
+const RECENT_CHAT_HISTORY_LIMIT = 20;
 
 export function buildPipelineContext(params: {
     event: InboundMessageReceivedEvent;
@@ -21,27 +20,6 @@ export function buildPipelineContext(params: {
         isExplicitCommand: isValidExplicitCommand(params.event.payload.addressedContent.trim()),
         recentConversation: params.persistence.listRecentConversationTurns(conversationId, RECENT_CHAT_HISTORY_LIMIT)
     };
-}
-
-function getPendingToolSession(
-    persistence: Persistence,
-    conversationId: string
-): PendingConversationalToolSessionRecord | null {
-    if (!conversationId) {
-        return null;
-    }
-
-    const session = persistence.getPendingConversationalToolSession(conversationId);
-    if (!session) {
-        return null;
-    }
-
-    if (new Date(session.expiresAt).getTime() <= Date.now()) {
-        persistence.clearPendingConversationalToolSession(conversationId);
-        return null;
-    }
-
-    return session;
 }
 
 function mapInboundEventToIncomingMessage(event: InboundMessageReceivedEvent): IncomingMessage {
@@ -70,12 +48,8 @@ function formatCurrentSpeakerLabel(event: InboundMessageReceivedEvent): string {
 
     switch (event.payload.sender.actorRole) {
         case "owner":
-            return displayName ? `Owner (${displayName})` : "Owner";
-        case "non-owner":
-            return displayName ? `Participant (${displayName})` : `Participant (${actorId})`;
+            return displayName ? `Owner::${displayName}//${actorId}` : "Owner";
         default:
-            return displayName ? `User (${displayName})` : `User (${actorId})`;
+            return displayName ? `User::(${displayName}//${actorId})` : `User::UNKNOWN`;
     }
 }
-
-export { PENDING_TOOL_SESSION_TTL_MS };

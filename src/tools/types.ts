@@ -6,23 +6,14 @@ import type { WorldLookupAdapter } from "./shared/worldLookup.js";
 import type { WorldLookupArticleReader } from "./shared/worldLookupArticles.js";
 import type { WeatherLookupClient } from "./weather/openMeteoClient.js";
 
-export type ToolName =
-    | "prompt_injection.alert"
-    | "reminder.add"
-    | "reminder.show"
-    | "reminder.ack"
-    | "calendar.show"
-    | "calendar.remind"
-    | "email.command"
-    | "weather.lookup"
-    | "news.briefing"
-    | "news.follow_up"
-    | "world.lookup";
 
 export type ToolResult =
     | {
         success: true;
+        isPrompt: boolean;
         result: string;
+        contentToAppend: string;
+        additionalInstructions: string;
     }
     | {
         success: false;
@@ -40,9 +31,8 @@ export interface ToolContext {
     articleReader?: WorldLookupArticleReader;
     weatherClient?: WeatherLookupClient;
 }
-
 export interface Tool {
-    name: ToolName;
+    name: string;
     description: string;
-    execute(args: string[], context: ToolContext): Promise<ToolResult> | ToolResult;
+    execute(args: Record<string, string | number>, context: ToolContext): Promise<ToolResult> | ToolResult;
 }

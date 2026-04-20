@@ -24,20 +24,6 @@ export function formatWorldLookupSource(source: WorldLookupSourceName): string {
     }
 }
 
-export function buildNewsBriefingReply(result: WorldLookupResult): string {
-    if (result.evidence.length === 0) {
-        return "I couldn't pull together a reliable news briefing from the public sources I checked just now.";
-    }
-
-    const lines = result.evidence.slice(0, 5).map((record, index) => {
-        const sourceLabel = record.publisher ?? formatWorldLookupSource(record.source);
-        return `${index + 1}. ${record.title} (${sourceLabel})`;
-    });
-    const links = formatLinks(result.evidence.slice(0, 5).map((record) => record.url));
-
-    return `Here are the main headlines I found:\n${lines.join("\n")}${links ? `\n\nLinks:\n${links}` : ""}`;
-}
-
 export function buildNewsFollowUpReply(
     item: NewsBrowseSessionItemRecord,
     articles: WorldLookupArticleRecord[]
@@ -104,7 +90,7 @@ function selectWeatherDay(result: WeatherLookupSuccess, userMessage?: string): W
     return null;
 }
 
-function formatLinks(urls: Array<string | null | undefined>): string {
+export function formatLinks(urls: Array<string | null | undefined>): string {
     return urls
         .filter((url): url is string => typeof url === "string" && url.length > 0)
         .map((url) => `- ${url}`)

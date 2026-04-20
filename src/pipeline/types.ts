@@ -1,6 +1,6 @@
 import type { InboundMessageReceivedEvent } from "../events.js";
-import type { ChatService, LlmPowerStatus, LlmRoute } from "../chat/modelRouter.js";
-import type { ConversationTurnRecord, IncomingMessage, PendingConversationalToolSessionRecord } from "../types.js";
+import type { ChatService, LlmRoute } from "../chat/modelRouter.js";
+import type { ConversationTurnRecord, IncomingMessage } from "../types.js";
 
 export interface PipelineContext {
     event: InboundMessageReceivedEvent;
@@ -12,17 +12,25 @@ export interface PipelineContext {
     recentConversation: ConversationTurnRecord[];
 }
 
-export interface PrecomputedIntentDecision {
-    route: LlmRoute;
-    powerStatus: LlmPowerStatus;
-    decision: import("../toolInvocation.js").ConversationalIntentDecision;
+export interface RoutingData {
+    addressed: boolean;
+    reason: string;
+    route: MessageRoute | null;
 }
 
-export interface AddressedRouteResult {
-    addressed: boolean;
-    addressedReason: string;
-    precomputedIntentDecision: PrecomputedIntentDecision | null;
-}
+export type MessageRoute =
+    | {
+        name: "respond";
+        reason: string;
+        instructions: string;
+    }
+    | {
+        name: "execute_tool";
+        toolName: string;
+        reason: string;
+        args: Record<string, string | number>;
+    };
+
 
 export interface ReplyPublisher {
     saveUserConversationTurn(): void;

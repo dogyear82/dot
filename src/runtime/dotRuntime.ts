@@ -2,7 +2,7 @@ import process from "node:process";
 
 import type { Logger } from "pino";
 
-import { createLlmService } from "../chat/modelRouter.js";
+import { createLlmService } from "../chat/llmService.js";
 import type { AppConfig } from "../config.js";
 import { createDiagnosticsObserver, createHostHealthEvent } from "../diagnostics.js";
 import { createConfiguredEventBus } from "../eventBus.js";
@@ -31,7 +31,7 @@ export async function createDotRuntime(params: {
   const bus = await createConfiguredEventBus(config);
   const outlookOAuthClient = new MicrosoftOutlookOAuthClient(config, persistence);
   const calendarClient = new MicrosoftGraphOutlookCalendarClient(config, outlookOAuthClient);
-  const chatService = createLlmService({
+  const llmService = createLlmService({
     config,
     settings: persistence.settings
   });
@@ -121,7 +121,7 @@ export async function createDotRuntime(params: {
         unregisterMessagePipeline = registerMessagePipeline({
           bus,
           calendarClient,
-          chatService,
+          llmService,
           logger,
           outlookOAuthClient,
           ownerUserId: config.DISCORD_OWNER_USER_ID,

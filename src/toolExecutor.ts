@@ -9,7 +9,7 @@ import { reminderAddTool } from "./tools/reminder/add.js";
 import { reminderShowTool } from "./tools/reminder/show.js";
 import { weatherLookupTool } from "./tools/weather/lookup.js";
 import { worldLookupTool } from "./tools/world/lookup.js";
-import type { Tool, ToolContext, ToolName, ToolResult } from "./tools/types.js";
+import type { Tool, ToolContext, ToolResult } from "./tools/types.js";
 
 const tools = {
     [promptInjectionAlertTool.name]: promptInjectionAlertTool,
@@ -23,11 +23,11 @@ const tools = {
     [newsBriefingTool.name]: newsBriefingTool,
     [newsFollowUpTool.name]: newsFollowUpTool,
     [worldLookupTool.name]: worldLookupTool
-} as Record<ToolName, Tool>;
+} as Record<string, Tool>;
 
-export type { ToolContext, ToolName, ToolResult } from "./tools/types.js";
+export type { ToolContext, ToolResult } from "./tools/types.js";
 
-export async function executeTool(name: ToolName, args: string[], context: ToolContext): Promise<ToolResult> {
+export async function executeTool(name: string, args: Record<string, string | number>, context: ToolContext): Promise<ToolResult> {
     const tool = tools[name];
 
     if (!tool) {

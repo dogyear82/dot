@@ -17,17 +17,16 @@ export type ExplicitToolName =
     | "calendar.show"
     | "calendar.remind";
 
-export type ConversationalIntentDecision =
+export type MessageRoute =
     | {
-        decision: "respond";
+        name: "respond";
         reason: string;
-        response: string;
+        instructions: string;
     }
     | {
-        decision: "execute_tool";
+        name: "execute_tool";
         toolName: ToolName;
         reason: string;
-        confidence: "medium" | "high";
         args: Record<string, string | number>;
     };
 
@@ -38,7 +37,7 @@ export type AddressedToolIntentDecision =
     }
     | ({
         addressed: true;
-    } & ConversationalIntentDecision);
+    } & MessageRoute);
 
 export type ToolDecision =
     | {
@@ -232,25 +231,25 @@ export function buildPendingToolResolutionPrompt(params: {
     ].join("\n");
 }
 
-export function parseToolDecision(payload: string): ConversationalIntentDecision {
-    const parsed = JSON.parse(extractJsonObject(payload)) as Partial<ConversationalIntentDecision> & {
+export function parseToolDecision(payload: string): MessageRoute {
+    const parsed = JSON.parse(extractJsonObject(payload)) as Partial<MessageRoute> & {
         confidence?: unknown;
     };
     if (
-        parsed.decision === "respond" &&
+        parsed.name === "respond" &&
         typeof parsed.reason === "string" &&
         typeof parsed.response === "string" &&
         parsed.response.trim().length > 0
     ) {
         return {
-            decision: "respond",
+            name: "respond",
             reason: parsed.reason,
             response: parsed.response.trim()
         };
     }
 
     if (
-        parsed.decision === "execute_tool" &&
+        parsed.name === "execute_tool" &&
         isToolName(parsed.toolName) &&
         typeof parsed.reason === "string" &&
         (parsed.confidence === "medium" || parsed.confidence === "high") &&
@@ -258,7 +257,7 @@ export function parseToolDecision(payload: string): ConversationalIntentDecision
         typeof parsed.args === "object"
     ) {
         return {
-            decision: "execute_tool",
+            name: "execute_tool",
             toolName: parsed.toolName,
             reason: parsed.reason,
             confidence: parsed.confidence,
@@ -271,7 +270,7 @@ export function parseToolDecision(payload: string): ConversationalIntentDecision
 
 export function parseAddressedToolDecision(payload: string): AddressedToolIntentDecision {
     const parsed = JSON.parse(extractJsonObject(payload)) as Partial<AddressedToolIntentDecision> &
-        Partial<ConversationalIntentDecision> & {
+        Partial<MessageRoute> & {
             confidence?: unknown;
         };
     if (parsed.addressed === false && typeof parsed.reason === "string") {
@@ -283,14 +282,14 @@ export function parseAddressedToolDecision(payload: string): AddressedToolIntent
 
     if (
         parsed.addressed === true &&
-        parsed.decision === "respond" &&
+        parsed.name === "respond" &&
         typeof parsed.reason === "string" &&
         typeof parsed.response === "string" &&
         parsed.response.trim().length > 0
     ) {
         return {
             addressed: true,
-            decision: "respond",
+            name: "respond",
             reason: parsed.reason,
             response: parsed.response.trim()
         };
@@ -298,7 +297,7 @@ export function parseAddressedToolDecision(payload: string): AddressedToolIntent
 
     if (
         parsed.addressed === true &&
-        parsed.decision === "execute_tool" &&
+        parsed.name === "execute_tool" &&
         isToolName(parsed.toolName) &&
         typeof parsed.reason === "string" &&
         (parsed.confidence === "medium" || parsed.confidence === "high") &&
@@ -307,7 +306,7 @@ export function parseAddressedToolDecision(payload: string): AddressedToolIntent
     ) {
         return {
             addressed: true,
-            decision: "execute_tool",
+            name: "execute_tool",
             toolName: parsed.toolName,
             reason: parsed.reason,
             confidence: parsed.confidence,
@@ -316,43 +315,6 @@ export function parseAddressedToolDecision(payload: string): AddressedToolIntent
     }
 
     throw new Error("Conversational intent inference returned an invalid response");
-}
-
-export function parsePendingToolDecision(payload: string): ConversationalIntentDecision {
-    const parsed = JSON.parse(extractJsonObject(payload)) as Partial<ConversationalIntentDecision> & {
-        confidence?: unknown;
-    };
-    if (
-        parsed.decision === "respond" &&
-        typeof parsed.reason === "string" &&
-        typeof parsed.response === "string" &&
-        parsed.response.trim().length > 0
-    ) {
-        return {
-            decision: "respond",
-            reason: parsed.reason,
-            response: parsed.response.trim()
-        };
-    }
-
-    if (
-        parsed.decision === "execute_tool" &&
-        isToolName(parsed.toolName) &&
-        typeof parsed.reason === "string" &&
-        (parsed.confidence === "medium" || parsed.confidence === "high") &&
-        parsed.args &&
-        typeof parsed.args === "object"
-    ) {
-        return {
-            decision: "execute_tool",
-            toolName: parsed.toolName,
-            reason: parsed.reason,
-            confidence: parsed.confidence,
-            args: parsed.args as Record<string, string | number>
-        };
-    }
-
-    throw new Error("Pending tool resolution returned an invalid response");
 }
 
 export async function executeToolDecision(params: {

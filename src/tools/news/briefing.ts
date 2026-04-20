@@ -3,7 +3,8 @@ import { executeWorldLookup } from "../shared/worldLookup.js";
 import { createDefaultWorldLookupAdapters } from "../shared/worldLookupAdapters.js";
 import type { Tool } from "../types.js";
 import { getStringArg } from "../shared/args.js";
-import { buildNewsBriefingReply } from "../shared/formatting.js";
+import { WorldLookupResult } from "../../types.js";
+import { formatLinks, formatWorldLookupSource } from "../shared/formatting.js";
 
 export const newsBriefingTool: Tool = {
     name: "news.briefing",
@@ -46,7 +47,23 @@ export const newsBriefingTool: Tool = {
 
         return {
             success: true,
-            result: buildNewsBriefingReply(lookupResult)
+            isPrompt: true,
+            result: `News lookup results for query "":\n\n${constructPrompt(lookupResult)}`,
+            contentToAppend: formatLinks(lookupResult.evidence.slice(0, 5).map((record) => record.url)),
+            additionalInstructions: null
         };
     }
 };
+
+function constructPrompt(result: WorldLookupResult): string {
+    if (result.evidence.length === 0) {
+        return "I couldn't pull together a reliable news briefing from the public sources I checked just now.";
+    }
+
+    const lines = result.evidence.slice(0, 5).map((record, index) => {
+        const sourceLabel = record.publisher ?? formatWorldLookupSource(record.source);
+        return `${index + 1}. ${record.title} (${sourceLabel})`;
+    });
+
+    return `${lines.join("\n")}`;
+}

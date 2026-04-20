@@ -1,4 +1,3 @@
-import { appendPowerIndicator, type ChatService, type LlmRoute } from "../chat/modelRouter.js";
 import { createOutboundMessageRequestedEvent, type InboundMessageReceivedEvent } from "../events.js";
 import type { EventBus } from "../eventBus.js";
 import type { Persistence } from "../persistence.js";
@@ -6,7 +5,6 @@ import type { ReplyPublisher } from "./types.js";
 
 export function createReplyPublisher(params: {
     bus: EventBus;
-    chatService: ChatService;
     content: string;
     conversationId: string;
     event: InboundMessageReceivedEvent;
@@ -42,7 +40,7 @@ export function createReplyPublisher(params: {
             await params.bus.publishOutboundMessage(
                 createOutboundMessageRequestedEvent({
                     inboundEvent: params.event,
-                    content: appendPowerIndicator(reply, params.chatService.getPowerStatus(route)),
+                    content: reply,
                     recordConversationTurn
                 })
             );

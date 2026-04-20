@@ -3,12 +3,12 @@ import type { Logger } from "pino";
 import type { ChatService } from "../chat/modelRouter.js";
 import { recordToolExecution } from "../observability.js";
 import type { Persistence } from "../persistence.js";
-import type { GroundedAnswerService } from "../toolInvocation.js";
+import type { GroundedAnswerService, MessageRoute } from "../toolInvocation.js";
 import { executeTool } from "../toolExecutor.js";
-import type { WorldLookupSourceName } from "../types.js";
+import type { WorldLookupSourceName,  } from "../types.js";
 import type { WorldLookupAdapter } from "../worldLookup.js";
 import type { WeatherLookupClient } from "../weatherLookup.js";
-import type { PrecomputedIntentDecision, ReplyPublisher } from "./types.js";
+import type { ReplyPublisher } from "./types.js";
 
 export async function executeInferredToolOrConversation(params: {
     calendarClient: import("../outlookCalendar.js").OutlookCalendarClient;
@@ -20,7 +20,7 @@ export async function executeInferredToolOrConversation(params: {
     groundedAnswerService?: GroundedAnswerService;
     logger: Logger;
     persistence: Persistence;
-    precomputedIntentDecision: PrecomputedIntentDecision | null;
+    messageRoute: MessageRoute | null;
     publisher: ReplyPublisher;
     recentConversation: import("../types.js").ConversationTurnRecord[];
     weatherClient?: WeatherLookupClient;
@@ -28,22 +28,22 @@ export async function executeInferredToolOrConversation(params: {
 }): Promise<{ pipelineOutcome: string }> {
 
     try {
-        const inferred = params.precomputedIntentDecision
-            ? params.precomputedIntentDecision
+        const inferred = params.messageRoute
+            ? params.messageRoute
             : await params.chatService.inferToolDecision(
                 params.content,
                 params.recentConversation,
                 params.currentSpeakerLabel
             );
 
-        if (!params.precomputedIntentDecision) {
+        if (!params.messageRoute) {
             params.logger.info(
                 {
                     messageId: params.event.payload.messageId,
                     correlationId: params.event.correlation.correlationId,
                     conversationId: params.conversationId,
                     stage: "tool.infer",
-                    provider: inferred.route,
+                    provider: inferred.name,
                     inputUserMessage: params.content,
                     promptMessages: "promptMessages" in inferred ? inferred.promptMessages : undefined,
                     promptMessagesPresent:
@@ -68,7 +68,7 @@ export async function executeInferredToolOrConversation(params: {
                 invocationSource: "inferred",
                 status: "executed",
                 provider: inferred.route,
-                detail: `decision=${inferred.decision.decision}; reason=${inferred.decision.reason}`
+                detail: `decision=${inferred.name.decision}; reason=${inferred.decision.reason}`
             });
             recordToolExecution({ toolName: "respond", status: "executed" });
             await params.publisher.publishReply(inferred.decision.response, inferred.route);
