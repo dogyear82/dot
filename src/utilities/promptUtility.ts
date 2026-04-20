@@ -9,7 +9,7 @@ export function buildGeneralConversationPrompt(
     recentConversation: ConversationTurnRecord[],
     currentSpeakerLabel: string,
     currentMessage: string,
-    additionalInstructions: string,
+    additionalInstructions: string
 ): ChatMessage[] {
     const prompt = [
         buildDateTimeBlock(),

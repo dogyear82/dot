@@ -2,7 +2,6 @@ import { getNewsPreferences } from "../shared/newsPreferences.js";
 import { executeWorldLookup } from "../shared/worldLookup.js";
 import { createDefaultWorldLookupAdapters } from "../shared/worldLookupAdapters.js";
 import type { Tool } from "../types.js";
-import { getStringArg } from "../shared/args.js";
 import { WorldLookupResult } from "../../types.js";
 import { formatLinks, formatWorldLookupSource } from "../shared/formatting.js";
 
@@ -10,13 +9,7 @@ export const newsBriefingTool: Tool = {
     name: "news.briefing",
     description: "Fetch a news briefing.",
     async execute(args, context) {
-        const query = getStringArg(args, "query");
-        if (!query) {
-            return {
-                success: false,
-                reason: "What news topic should I brief you on?"
-            };
-        }
+        const query = args["query"] as string;
 
         const newsPreferences = getNewsPreferences(context.persistence.settings);
         const lookupResult = await executeWorldLookup({
@@ -50,7 +43,7 @@ export const newsBriefingTool: Tool = {
             isPrompt: true,
             result: `News lookup results for query "":\n\n${constructPrompt(lookupResult)}`,
             contentToAppend: formatLinks(lookupResult.evidence.slice(0, 5).map((record) => record.url)),
-            additionalInstructions: null
+            additionalInstructions: undefined
         };
     }
 };

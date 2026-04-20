@@ -7,18 +7,13 @@ import type { WorldLookupArticleReader } from "./shared/worldLookupArticles.js";
 import type { WeatherLookupClient } from "./weather/openMeteoClient.js";
 
 
-export type ToolResult =
-    | {
-        success: true;
-        isPrompt: boolean;
-        result: string;
-        contentToAppend: string;
-        additionalInstructions: string;
-    }
-    | {
-        success: false;
-        reason: string;
-    };
+export type ToolResult = {
+    success: boolean;
+    isPrompt?: boolean;
+    result: string;
+    contentToAppend?: string;
+    additionalInstructions?: string;
+}
 
 export interface ToolContext {
     actorId?: string;
@@ -34,5 +29,5 @@ export interface ToolContext {
 export interface Tool {
     name: string;
     description: string;
-    execute(args: Record<string, string | number>, context: ToolContext): Promise<ToolResult> | ToolResult;
+    execute(args: Record<string, string | number>, context: ToolContext): Promise<ToolResult>;
 }

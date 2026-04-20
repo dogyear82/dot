@@ -18,6 +18,7 @@ import { createReplyPublisher } from "./pipeline/publish.js";
 import { resolveMessageRoute } from "./pipeline/routing.js";
 import { executeTool, ToolContext } from "./toolExecutor.js";
 import { buildGeneralConversationPrompt, buildToolPrompt } from "./utilities/promptUtility.js";
+import { getToolResponse } from "./pipeline/toolExecution.js";
 
 export function registerMessagePipeline(params: {
     bus: EventBus;
@@ -151,16 +152,12 @@ export function registerMessagePipeline(params: {
                                     articleReader: undefined,
                                     weatherClient
                                 };
-                                const toolResult = await executeTool(name, args, toolContext);
-                                if (toolResult.success) {                                    
-                                    const toolResponse = toolResult.isPrompt
-                                        ? await params.llmService.generate(buildToolPrompt(toolResult.result, toolResult.additionalInstructions, recentConversation, currentSpeakerLabel, content))
-                                        : toolResult.result;
-                                        
+                                const toolResponse = await getToolResponse(name, args, recentConversation, currentSpeakerLabel, content, toolContext, params.llmService);
+                                if (toolResponse.success) {                                                  
                                     await bus.publishOutboundMessage(
                                         createOutboundMessageRequestedEvent({
                                             inboundEvent: event,
-                                            content: toolResponse,
+                                            content: toolResponse.response,
                                             recordConversationTurn: true
                                         })
                                     );
@@ -168,7 +165,7 @@ export function registerMessagePipeline(params: {
                             }
                         }
                         
-                        const additionalInstructions = routingData.route.name === "execute_tool" ? "You tried to look up additional data using a tool, but the tool call failed." : "none";
+                        const additionalInstructions = routingData.route.name === "execute_tool" ? "You tried to look up additional data using a tool, but the tool call failed." : routingData.route.instructions;
                         const generalConversationPrompt = buildGeneralConversationPrompt(recentConversation, currentSpeakerLabel, content, additionalInstructions);
                         const response = await params.llmService.generate(generalConversationPrompt);
                                         

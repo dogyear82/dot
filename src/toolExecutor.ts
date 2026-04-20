@@ -34,5 +34,5 @@ export async function executeTool(name: string, args: Record<string, string | nu
         throw new Error(`executeTool is not implemented for tool "${name}"`);
     }
 
-    return tool.execute(args, context);
+    return await tool.execute(args, context);
 }
