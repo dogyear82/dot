@@ -23,7 +23,7 @@ export async function resolveMessageRoute(params: {
         userMessage: params.context.content, 
         recentConversation: params.context.recentConversation, 
         currentSpeakerLabel: params.context.currentSpeakerLabel, 
-        isDotAddressed: true
+        isDotAddressed: params.context.isExplicitCommand
     });
     const result = await params.llmService.generate(prompt, "gpt-4o-mini");
     params.logger.info(

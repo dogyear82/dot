@@ -93,7 +93,7 @@ export function buildMessageRoutingPrompt(params: {
         currentMessage: params.userMessage
     });
 
-    const prohibitionAgainstWaywardResponses = `YOU WILL ONLY RESPOND IF ADDRESSED AND ONLY TO ${params.currentSpeakerLabel}'s message, "${params.userMessage}". DO NOT RESPOND TO ANY OTHER USER'S MESSAGES. DO NOT RESPOND UNLESS ADDRESSED.`;
+    const prohibitionAgainstWaywardResponses = `YOU WILL ONLY RESPOND IF ADDRESSED AND ONLY TO ${params.currentSpeakerLabel}'s message, "${params.userMessage}". DO NOT RESPOND TO ANY OTHER USER'S MESSAGES. DO NOT RESPOND UNLESS ADDRESSED. USERS TALKING ABOUT YOU IS NOT THE SAME AS ADDRESSING YOU.`;
     const addressednessCheckPrompt = params.isDotAddressed
         ? [
             `You have been addressed directly by ${params.currentSpeakerLabel}, so always set 'addressed' to true in your reply, and the reason should be simply, "Direct Message.`,
