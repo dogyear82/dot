@@ -95,22 +95,23 @@ export function buildMessageRoutingPrompt(params: {
     const prohibitionAgainstWaywardResponses = `YOU WILL ONLY RESPOND TO ${params.currentSpeakerLabel}'s message, "${params.userMessage}". DO NOT RESPOND TO ANY OTHER USER'S MESSAGES.`;
     const addressednessCheckPrompt = params.isDotAddressed
         ? [
-            `You have been addressed directly by ${params.currentSpeakerLabel}, so always set 'addressed' to true in your reply.`,
+            `You have been addressed directly by ${params.currentSpeakerLabel}, so always set 'addressed' to true in your reply, and the reason should be simply, "Direct Message.`,
             `You will use the provided transcript to determine how best to respond to ${params.currentSpeakerLabel}'s message, "${params.userMessage}"`,
             prohibitionAgainstWaywardResponses
         ]
         : [
             `You will use the transcript to determine whether ${params.currentSpeakerLabel}'s message, "${params.userMessage}" is addressed to you, and if it is, how best to respond.`,
             prohibitionAgainstWaywardResponses,
-            `If the ${params.currentSpeakerLabel}'s message is not addressed to you, reply with: {"addressed":false,"reason":"Put your reason for why you think the user was not addressing yhou here."}`,
-            `if ${params.currentSpeakerLabel}'s message is addressing you, addressed should be true in your reply`
+            `If the ${params.currentSpeakerLabel}'s message is not addressed to you, reply with: {"addressed":false,"reason":"...", "route": null`,
+            `If ${params.currentSpeakerLabel}'s message is addressing you, addressed should be true in your reply, along with a reason why you believe ${params.currentSpeakerLabel} addressed you.`
         ];
 
     const instructions = [
         "You are Dot, a neutral intent classifier for messages in a chat channel where you are present. Return strict JSON only. Do not add markdown fences.",
         ...addressednessCheckPrompt,
-        `If one of the available tools would be helpful, or is required, to formulate a proper to ${params.currentSpeakerLabel}'s message, your reply should include the tool's name, the reason you chose that tool, and a collection of argument KVPs`,
-        'For example, if the user asks, "what\'s the latest on the war in ukraine?", you should respond with { "addressed":true,"toolName":"news.briefing","reason":"User asked about the latest news about the war in Ukraine.", "args":{"query":"Ukraine war"}'
+        `If one of the available tools would be helpful, or is required, to formulate a proper response to ${params.currentSpeakerLabel}'s message, your reply should include the tool's name, the reason you chose that tool, and a collection of argument key-value pairs`,
+        'For example, if the user asks, "what\'s the latest on the war in ukraine?", you should respond with { "addressed":true,"reason":"User asked about current events mid conversation. Only the user and I are actively participating in the conversation, so I have concluded that I am the target of their message", "route":{"name":"execute_tool", "toolName": "news.briefing", "reason": "User asked for news on the war in Ukraine.", "args":{"query":"Ukraine war"}}}',
+        'If tool use is not necessary and a simple conversational response is the most appropriate path. For example, if the user simply said, "@Dot tell me a joke", reply with: \'{"addressed":true,"reason":"Tagged by user","route":{"name":"respond","reason":"User just asked for a joke","instructions":""}}\'. Make sure to leave instructions blank.'
     ].join("\n");
 
     const prompt = [
