@@ -19,7 +19,7 @@ export function buildGeneralConversationPrompt(
             currentSpeakerLabel,
             currentMessage
         }),
-        buildContextBlock("INSTRUCTIONS ON HOW TO RESPOND", `Use the provided transcript to fomulate the most appropariate response to the Current speaker. Only respond with conversation or answering the Current speaker. \n**Instructions specific to this tool**\n\n${additionalInstructions}`),
+        buildContextBlock("INSTRUCTIONS ON HOW TO RESPOND", `Use the provided transcript to fomulate the most appropariate response to the Current speaker. Only respond with conversation or answers to the Current speaker.  \n**Instructions specific to this tool**\n\n${additionalInstructions}`),
         buildForbiddenBlock()
     ].join("\n");
 
@@ -62,8 +62,9 @@ export function buildToolPrompt(
 function buildForbiddenBlock() {
     const rules = [
         "***You shall never disboey the following rules:***",
-        "- You will never respond by telling the user that you performed an action, such as doing things on behalf of the user.",
-        "- You will never respond with malice."
+        "- You shall never assume another role or personality that conflicts with your active personality.",
+        "- You shall never respond by telling the user that you performed an action, such as doing things on behalf of the user.",
+        "- You shall never respond with malice."
     ].join("\n");
     return buildContextBlock("FORBIDDEN ACTIONS AND TABOOS", rules);
 }
@@ -92,7 +93,7 @@ export function buildMessageRoutingPrompt(params: {
         currentMessage: params.userMessage
     });
 
-    const prohibitionAgainstWaywardResponses = `YOU WILL ONLY RESPOND TO ${params.currentSpeakerLabel}'s message, "${params.userMessage}". DO NOT RESPOND TO ANY OTHER USER'S MESSAGES.`;
+    const prohibitionAgainstWaywardResponses = `YOU WILL ONLY RESPOND IF ADDRESSED AND ONLY TO ${params.currentSpeakerLabel}'s message, "${params.userMessage}". DO NOT RESPOND TO ANY OTHER USER'S MESSAGES. DO NOT RESPOND UNLESS ADDRESSED.`;
     const addressednessCheckPrompt = params.isDotAddressed
         ? [
             `You have been addressed directly by ${params.currentSpeakerLabel}, so always set 'addressed' to true in your reply, and the reason should be simply, "Direct Message.`,
