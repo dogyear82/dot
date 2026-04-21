@@ -25,6 +25,17 @@ export async function resolveMessageRoute(params: {
         currentSpeakerLabel: params.context.currentSpeakerLabel, 
         isDotAddressed: params.context.isExplicitCommand
     });
+    params.logger.info(
+        {
+            messageId: params.messageId,
+            correlationId: params.correlationId,
+            conversationId: params.context.conversationId,
+            stage: "address.infer.prompt",
+            inputUserMessage: params.context.content,
+            promptMessages: prompt
+        },
+        "Intent classification prompt"
+    );
     const result = await params.llmService.generate(prompt, "gpt-4o-mini");
     params.logger.info(
         {
