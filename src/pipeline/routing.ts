@@ -73,13 +73,9 @@ function parseMessageRoutingResponse(response: string): RoutingData {
     let hasValidPathReason = typeof parsed.route.reason === "string" && parsed.route.reason && parsed.reason.trim() !== "";
 
     if (parsed.route.name === "respond") {
-        let hasValidResponseInstructions = typeof parsed.route.instructions === "string" && parsed.route.instructions && parsed.route.instructions.trim() !== "";
         parsed.route.reason = hasValidPathReason 
             ? parsed.route.reason 
             : "The reason the respond path was chosen is either missing, or could not be extracted, from the LLM response. Therefore we'll proceed with a natural language response.";
-        parsed.route.instructions = hasValidResponseInstructions 
-            ? parsed.route.instructions 
-            : "Respond to the user, asking for clarification on their last message, as you were unable to parse it's meaning or intent.";
         return parsed;
     }
 
