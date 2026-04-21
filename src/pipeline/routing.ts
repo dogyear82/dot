@@ -80,6 +80,7 @@ function parseMessageRoutingResponse(response: string): RoutingData {
         parsed.route.instructions = hasValidResponseInstructions 
             ? parsed.route.instructions 
             : "Respond to the user, asking for clarification on their last message, as you were unable to parse it's meaning or intent.";
+        return parsed;
     }
 
     if (parsed.route.name === "execute_tool") {
