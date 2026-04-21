@@ -93,7 +93,7 @@ export function buildMessageRoutingPrompt(params: {
         currentMessage: params.userMessage
     });
 
-    const prohibitionAgainstWaywardResponses = `YOU WILL ONLY RESPOND IF ADDRESSED AND ONLY TO ${params.currentSpeakerLabel}'s message, "${params.userMessage}". DO NOT RESPOND TO ANY OTHER USER'S MESSAGES. DO NOT RESPOND UNLESS ADDRESSED. USERS TALKING ABOUT YOU IS NOT THE SAME AS ADDRESSING YOU.`;
+    const prohibitionAgainstWaywardResponses = `You will only respond to ${params.currentSpeakerLabel}'s message, "${params.userMessage}". Do not respond to any other uesrs messages.`;
     const addressednessCheckPrompt = params.isDotAddressed
         ? [
             `You have been addressed directly by ${params.currentSpeakerLabel}, so always set 'addressed' to true in your reply, and the reason should be simply, "Direct Message.`,
@@ -101,10 +101,19 @@ export function buildMessageRoutingPrompt(params: {
             prohibitionAgainstWaywardResponses
         ]
         : [
-            `You will use the transcript to determine whether ${params.currentSpeakerLabel}'s message, "${params.userMessage}" is addressed to you, and if it is, how best to respond.`,
-            prohibitionAgainstWaywardResponses,
-            `If the ${params.currentSpeakerLabel}'s message is not addressed to you, reply with: {"addressed":false,"reason":"...", "route": null`,
-            `If ${params.currentSpeakerLabel}'s message is addressing you, addressed should be true in your reply, along with a reason why you believe ${params.currentSpeakerLabel} addressed you.`
+            'You are not a proactive participant in the conversation. You only speak when the latest message is clearly directed at you. If the evidence is weak, ambiguous, indirect, or missing, set "addressed": false.',
+            `You will use the transcript to determine whether ${params.currentSpeakerLabel}'s message, "${params.userMessage}" is addressed to you.`,
+            'Do not infer you are being addressed from:',
+            '- your presence in the channel',
+            '- prior participation in the conversation',
+            '- users talking near you',
+            '- users talking about you',
+            '- users continuing a conversation with someone else',
+            '- vague conversational momentum',
+            'Users mentioning Dot in the third person is not the same as addressing Dot. Messages that could plausibly be meant for another human are not addressed to Dot. When in doubt, do not respond.',
+            `If the ${params.currentSpeakerLabel}'s latest message is not clearly directed at you, reply with: {"addressed":false,"reason":"The latest message is not clearly directed at Dot.","route":null}`,
+            `Only if ${params.currentSpeakerLabel}'s latest message is clearly addressing you, "addressed" should be true in your reply, along with a reason why you believe ${params.currentSpeakerLabel} addressed you.`,
+            prohibitionAgainstWaywardResponses
         ];
 
     const instructions = [
