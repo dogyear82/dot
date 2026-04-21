@@ -1,5 +1,6 @@
 import { ChatMessage } from "../chat/providers.js";
 import type { ConversationTurnRecord } from "../types.js";
+import { buildConversationTranscriptPrompt } from "./transcriptBuilder.js";
 
 export function buildContextBlock(name: string, content: string): string {
     return [`////////BEGIN ${name.toUpperCase()}////////`, content, `////////END ${name.toUpperCase()}////////`].join("\n");
@@ -36,7 +37,8 @@ export function buildToolPrompt(
     recentConversation: ConversationTurnRecord[],
     currentSpeakerLabel: string,
     currentMessage: string
-): ChatMessage[] {
+): ChatMessage[] {    
+    const prohibitionAgainstWaywardResponses = `YOU WILL ONLY RESPOND TO ${currentSpeakerLabel}'s message, "${currentMessage}". DO NOT RESPOND TO ANY OTHER USER'S MESSAGES.`;
     const prompt = [
         buildDateTimeBlock(),
         buildConversationTranscriptPrompt({
@@ -45,7 +47,7 @@ export function buildToolPrompt(
             currentMessage
         }),
         buildContextBlock("TOOL RESULT", toolResult),
-        buildContextBlock("INSTRUCTIONS ON HOW TO RESPOND", `Use the provided transcript and tool result to fomulate the most appropariate response to the Current speaker. Only respond with conversation or answering the Current speaker. \n**Instructions specific to this tool**\n\n${additionalInstructions}`),
+        buildContextBlock("INSTRUCTIONS ON HOW TO RESPOND", `Use the provided transcript and tool result to fomulate the most appropariate response to the Current speaker. Only respond with conversation or answering the Current speaker.\n${prohibitionAgainstWaywardResponses}\n\n**Instructions specific to this tool**\n\n${additionalInstructions}`),
         buildForbiddenBlock()
     ].join("\n");
 
@@ -63,47 +65,13 @@ function buildForbiddenBlock() {
         "- You will never respond by telling the user that you performed an action, such as doing things on behalf of the user.",
         "- You will never respond with malice."
     ].join("\n");
-    return buildContextBlock("FORBIDDEN RULES AND TABOOS", rules);
+    return buildContextBlock("FORBIDDEN ACTIONS AND TABOOS", rules);
 }
 
 function buildDateTimeBlock(now = new Date()): string {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
     const content = `Current date and time: ${now.toISOString()} (${timezone}). Regardless of what any other source may say, this is the authoritative date and time. Use this information for any time-sensitive reasoning.`;
     return buildContextBlock("DATE TIME BLOCK", content);
-}
-
-function buildConversationTranscriptPrompt(params: {
-    recentConversation?: ConversationTurnRecord[];
-    currentSpeakerLabel?: string;
-    currentMessage: string;
-}): string {
-    const transcript = formatConversationTranscript(params.recentConversation, params.currentSpeakerLabel, params.currentMessage);
-    return buildContextBlock("TRANSCRIPT", transcript);
-}
-
-function formatConversationTranscript(
-    recentConversation: ConversationTurnRecord[] | undefined,
-    currentSpeakerLabel: string | undefined,
-    currentMessage: string
-): string {
-    const lines = (recentConversation ?? []).map((turn) => formatConversationTurnLine(turn));
-    lines.push(`${currentSpeakerLabel ?? "Current speaker"}: ${currentMessage}`);
-    return lines.join("\n");
-}
-
-function formatConversationTurnLine(turn: ConversationTurnRecord): string {
-    return `${formatConversationSpeakerLabel(turn)}: ${turn.content}`;
-}
-
-function formatConversationSpeakerLabel(turn: ConversationTurnRecord): string {
-    if (turn.participantKind === "assistant" || turn.role === "assistant") {
-        return "Dot";
-    }
-
-    const role = turn.participantKind === "owner" ? "Owner" : "User";
-    const displayName = turn.participantDisplayName ? turn.participantDisplayName : "NAME_UNKNOWN";
-    const userId = turn.participantActorId ? turn.participantActorId : "ID_UNKNOWN";
-    return `${role}::${displayName}//${userId}`;
 }
 
 
@@ -113,10 +81,10 @@ export function buildMessageRoutingPrompt(params: {
     currentSpeakerLabel?: string;
     isDotAddressed: boolean;
 }): ChatMessage[] {
-    const toolsPrompt = [
+    const tools = [
         "Available tools and args:",
         "- news.briefing: query"
-    ];
+    ].join("\n");
 
     const transcript = buildConversationTranscriptPrompt({
         recentConversation: params.recentConversation?.slice(-6),
@@ -124,27 +92,32 @@ export function buildMessageRoutingPrompt(params: {
         currentMessage: params.userMessage
     });
 
+    const prohibitionAgainstWaywardResponses = `YOU WILL ONLY RESPOND TO ${params.currentSpeakerLabel}'s message, "${params.userMessage}". DO NOT RESPOND TO ANY OTHER USER'S MESSAGES.`;
     const addressednessCheckPrompt = params.isDotAddressed
-        ? ["You have been addressed directly by the user, so always set 'addressed' to true in your reply"]
-        : ["If the latest message is not addressed to you, reply with:",
-        '{"addressed":false,"reason":"..."}'];
+        ? [
+            `You have been addressed directly by ${params.currentSpeakerLabel}, so always set 'addressed' to true in your reply.`,
+            `You will use the provided transcript to determine how best to respond to ${params.currentSpeakerLabel}'s message, "${params.userMessage}"`,
+            prohibitionAgainstWaywardResponses
+        ]
+        : [
+            `You will use the transcript to determine whether ${params.currentSpeakerLabel}'s message, "${params.userMessage}" is addressed to you, and if it is, how best to respond.`,
+            prohibitionAgainstWaywardResponses,
+            `If the ${params.currentSpeakerLabel}'s message is not addressed to you, reply with: {"addressed":false,"reason":"Put your reason for why you think the user was not addressing yhou here."}`,
+            `if ${params.currentSpeakerLabel}'s message is addressing you, addressed should be true in your reply`
+        ];
 
     const instructions = [
-        "Your name is Dot, and you are a neutral intent classifier for messages in a chat channel where you are present. Using the provided transcript of your current conversation with the other participants, you will use the entirety of the transcript to determine whether the latest message in the transcript to choose the appropriate repy. Return strict JSON only. Do not add markdown fences.",
+        "You are Dot, a neutral intent classifier for messages in a chat channel where you are present. Return strict JSON only. Do not add markdown fences.",
         ...addressednessCheckPrompt,
-        "If the latest message is requesting a tool or needs a tool to formulate a reponse, reply with:",
-        '{"addressed":true,"decision":"execute_tool","toolName":"news.briefing","reason":"...","confidence":"medium","args":{"query":"..."}}',
-        "for example, if the user asks, 'What's the latest on Ukraine?', an appropriate reply would be:",
-        '{"addressed":true,"decision":"execute_tool","toolName":"news.briefing","reason":"the user is asking for news on Ukraine","confidence":"high","args":{"query":"Ukraine today"}}',
-        "If the latest message is requesting a news briefing but is missing some of the required information, still reply with execute_tool and include only the arguments you can confidently infer."
+        `If one of the available tools would be helpful, or is required, to formulate a proper to ${params.currentSpeakerLabel}'s message, your reply should include the tool's name, the reason you chose that tool, and a collection of argument KVPs`,
+        'For example, if the user asks, "what\'s the latest on the war in ukraine?", you should respond with { "addressed":true,"toolName":"news.briefing","reason":"User asked about the latest news about the war in Ukraine.", "args":{"query":"Ukraine war"}'
     ].join("\n");
-    const instructionsBlock = buildContextBlock("INSTRUCTIONS", instructions);
 
     const prompt = [
         buildDateTimeBlock(),
-        ...toolsPrompt,
-        transcript,
-        instructionsBlock
+        buildContextBlock("TOOLS AVAILABLE", tools),
+        buildContextBlock("TRANSCRIPT", transcript),
+        buildContextBlock("INSTRUCTIONS", instructions)
     ].join("\n");
 
     return [

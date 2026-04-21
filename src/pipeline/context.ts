@@ -50,6 +50,6 @@ function formatCurrentSpeakerLabel(event: InboundMessageReceivedEvent): string {
         case "owner":
             return displayName ? `Owner::${displayName}//${actorId}` : "Owner";
         default:
-            return displayName ? `User::(${displayName}//${actorId})` : `User::UNKNOWN`;
+            return displayName ? `User::${displayName}//${actorId}` : `User::UNKNOWN`;
     }
 }
