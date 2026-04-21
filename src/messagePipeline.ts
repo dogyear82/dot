@@ -134,14 +134,14 @@ export function registerMessagePipeline(params: {
                             }
 
                             if (routingData.route.name === "execute_tool") {
-                                const { name, args } = routingData.route;
+                                const { toolName, args } = routingData.route;
                                 const toolContext: ToolContext = {
                                     actorId: event.payload.sender.actorId,
                                     persistence,
                                     conversationId,
                                     worldLookupAdapters
                                 };
-                                const toolResponse = await getToolResponse(name, args, recentConversation, currentSpeakerLabel, content, toolContext, params.llmService);
+                                const toolResponse = await getToolResponse(toolName, args, recentConversation, currentSpeakerLabel, content, toolContext, params.llmService);
                                 if (toolResponse.success) {                                                  
                                     await publisher.publishReply(toolResponse.response);
                                     pipelineOutcome = "tool";
