@@ -113,7 +113,7 @@ export function registerMessagePipeline(params: {
                             canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,
                             decision: accessDecision.canUsePrivilegedFeatures ? "owner-allowed" : "non-owner-routed",
                             addressed: routingData.addressed,
-                            addressedReason: routingData.reason,
+                            addressedReason: routingData.reason ?? "unknown",
                             transport: event.routing.transport ?? "unknown",
                             conversationId: event.correlation.conversationId ?? "unknown"
                         });
