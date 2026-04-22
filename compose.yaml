@@ -5,7 +5,7 @@ services:
             context: ./dot
             dockerfile: Containerfile
         env_file:
-            - .env
+            - ./dot/.env
         environment:
             EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
             NATS_URL: ${NATS_URL:-nats://nats:4222}
@@ -34,7 +34,7 @@ services:
             dockerfile: Containerfile
         command: [ "node", "dist/src/discordIngressService.js" ]
         env_file:
-            - .env
+            - ./dot/.env
         environment:
             EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
             NATS_URL: ${NATS_URL:-nats://nats:4222}
@@ -59,7 +59,7 @@ services:
             dockerfile: Containerfile
         command: [ "node", "dist/src/discordEgressService.js" ]
         env_file:
-            - .env
+            - ./dot/.env
         environment:
             EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
             NATS_URL: ${NATS_URL:-nats://nats:4222}
@@ -113,7 +113,7 @@ services:
         ports:
             - "9090:9090"
         volumes:
-            - ./ops/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+            - ./dot/ops/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
             - prometheus_data:/prometheus
 
     loki:
@@ -125,7 +125,7 @@ services:
         ports:
             - "3100:3100"
         volumes:
-            - ./ops/observability/loki/config.yml:/etc/loki/config.yml:ro,Z
+            - ./dot/ops/observability/loki/config.yml:/etc/loki/config.yml:ro,Z
             - loki_data:/loki
 
     promtail:
@@ -138,7 +138,7 @@ services:
             loki:
                 condition: service_started
         volumes:
-            - ./ops/observability/promtail/config.yml:/etc/promtail/config.yml:ro,Z
+            - ./dot/ops/observability/promtail/config.yml:/etc/promtail/config.yml:ro,Z
             - dot_data:/var/lib/dot-data:ro
             - promtail_data:/tmp/promtail
 
@@ -152,7 +152,7 @@ services:
             - "3200:3200"
             - "4318:4318"
         volumes:
-            - ./ops/observability/tempo/config.yml:/etc/tempo/config.yml:ro,Z
+            - ./dot/ops/observability/tempo/config.yml:/etc/tempo/config.yml:ro,Z
             - tempo_data:/var/tempo
 
     grafana:
@@ -172,8 +172,8 @@ services:
             tempo:
                 condition: service_started
         volumes:
-            - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro,Z
-            - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro,Z
+            - ./dot/ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro,Z
+            - ./dot/ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro,Z
             - grafana_data:/var/lib/grafana
 
 volumes:
