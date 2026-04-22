@@ -92,10 +92,7 @@ export function buildMessageRoutingPrompt(params: {
                 return `- ${tool.name}: ${args}${tool.description ? ` (${tool.description})` : ""}`;
             })
         ].join("\n")
-        : [
-            "Available tools and args:",
-            "- none"
-        ].join("\n");
+        : "ATTENTION: NO TOOLS FOUND";
 
     const transcript = buildConversationTranscriptPrompt({
         recentConversation: params.recentConversation?.slice(-6),
@@ -138,7 +135,7 @@ export function buildMessageRoutingPrompt(params: {
 
     const prompt = [
         buildDateTimeBlock(),
-        buildContextBlock("TOOLS AVAILABLE", tools),
+        buildContextBlock("AVAILABLE TOOLS", tools),
         buildContextBlock("TRANSCRIPT", transcript),
         buildContextBlock("INSTRUCTIONS", instructions)
     ].join("\n");

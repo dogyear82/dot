@@ -3,7 +3,6 @@ import { SpanKind } from "@opentelemetry/api";
 
 import { evaluateAccess } from "./auth.js";
 import type { LlmService } from "./chat/llmService.js";
-import type { InboundMessageReceivedEvent } from "./events.js";
 import type { EventBus } from "./eventBus.js";
 import { getOnboardingPrompt, handleOnboardingReply } from "./onboarding.js";
 import { createSpanAttributesForEvent, startPipelineTimer, withEventContext, withSpan } from "./observability.js";
@@ -88,16 +87,7 @@ export function registerMessagePipeline(params: {
                             event,
                             persistence
                         });
-                        const availableTools = await params.toolService.listToolsForRouting().catch((error) => {
-                            logger.warn(
-                                {
-                                    err: error,
-                                    messageId: event.payload.messageId
-                                },
-                                "Unable to load MCP tool catalog for routing"
-                            );
-                            return [];
-                        });
+                        const availableTools = await params.toolService.listToolsForRouting();
                         const routingData = await resolveMessageRoute({
                             llmService,
                             context: pipelineContext,
