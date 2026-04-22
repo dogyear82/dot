@@ -25,6 +25,13 @@ test("loadConfig applies defaults for optional values", () => {
   assert.equal(config.OUTLOOK_MAIL_WHITELIST, "");
   assert.equal(config.OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS, 7);
   assert.equal(config.OUTLOOK_MAIL_SYNC_INTERVAL_MS, 300000);
+  assert.deepEqual(config.DOT_MCP_SERVERS, [
+    {
+      name: "mcp",
+      url: "http://mcp:8000/mcp",
+      enabled: true
+    }
+  ]);
 });
 
 test("loadConfig preserves an explicit NewsData API key", () => {
@@ -45,4 +52,36 @@ test("loadConfig preserves an explicit intent model override", () => {
   });
 
   assert.equal(config.ONEMINAI_INTENT_MODEL, "deepseek-chat");
+});
+
+test("loadConfig parses multiple MCP servers from JSON", () => {
+  const config = loadConfig({
+    DISCORD_BOT_TOKEN: "token",
+    DISCORD_OWNER_USER_ID: "owner-1",
+    DOT_MCP_SERVERS_JSON: JSON.stringify([
+      {
+        name: "weather",
+        url: "http://weather:8000/mcp",
+        enabled: true
+      },
+      {
+        name: "calendar",
+        url: "http://calendar:9000/mcp",
+        enabled: true
+      }
+    ])
+  });
+
+  assert.deepEqual(config.DOT_MCP_SERVERS, [
+    {
+      name: "weather",
+      url: "http://weather:8000/mcp",
+      enabled: true
+    },
+    {
+      name: "calendar",
+      url: "http://calendar:9000/mcp",
+      enabled: true
+    }
+  ]);
 });

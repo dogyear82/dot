@@ -78,6 +78,17 @@ services:
             - dot_data:/app/data
         restart: unless-stopped
 
+    mcp:
+        build:
+            context: ./mcp
+            dockerfile: Containerfile
+        environment:
+            DOT_MCP_HOST: 0.0.0.0
+            DOT_MCP_PORT: 8000
+        ports:
+            - "8000:8000"
+        restart: unless-stopped
+
     ollama:
         image: ollama/ollama:latest
         container_name: ollama

@@ -1,4 +1,5 @@
 import { ChatMessage } from "../chat/providers.js";
+import type { RoutingToolDefinition } from "../tools/mcp/types.js";
 import type { ConversationTurnRecord } from "../types.js";
 import { buildConversationTranscriptPrompt } from "./transcriptBuilder.js";
 
@@ -81,11 +82,20 @@ export function buildMessageRoutingPrompt(params: {
     recentConversation?: ConversationTurnRecord[];
     currentSpeakerLabel?: string;
     isDotAddressed: boolean;
+    availableTools: RoutingToolDefinition[];
 }): ChatMessage[] {
-    const tools = [
-        "Available tools and args:",
-        "- news.briefing: query"
-    ].join("\n");
+    const tools = params.availableTools.length > 0
+        ? [
+            "Available tools and args:",
+            ...params.availableTools.map((tool) => {
+                const args = tool.args.length > 0 ? tool.args.join(", ") : "no arguments";
+                return `- ${tool.name}: ${args}${tool.description ? ` (${tool.description})` : ""}`;
+            })
+        ].join("\n")
+        : [
+            "Available tools and args:",
+            "- none"
+        ].join("\n");
 
     const transcript = buildConversationTranscriptPrompt({
         recentConversation: params.recentConversation?.slice(-6),
@@ -119,8 +129,10 @@ export function buildMessageRoutingPrompt(params: {
     const instructions = [
         "You are Dot, a neutral intent classifier for messages in a chat channel where you are present. Return strict JSON only. Do not add markdown fences.",
         ...addressednessCheckPrompt,
-        `If one of the available tools would be helpful, or is required, to formulate a proper response to ${params.currentSpeakerLabel}'s message, your reply should include the tool's name, the reason you chose that tool, and a collection of argument key-value pairs`,
-        'For example, if the user asks, "what\'s the latest on the war in ukraine?", you should respond with { "addressed":true,"reason":"User asked about current events mid conversation. Only the user and I are actively participating in the conversation, so I have concluded that I am the target of their message", "route":{"name":"execute_tool", "toolName": "news.briefing", "reason": "User asked for news on the war in Ukraine.", "args":{"query":"Ukraine war"}}}',
+        params.availableTools.length > 0
+            ? `If one of the available tools would be helpful, or is required, to formulate a proper response to ${params.currentSpeakerLabel}'s message, your reply should include the tool's exact name, the reason you chose that tool, and a collection of argument key-value pairs.`
+            : `No tools are currently available, so you must choose the respond path.`,
+        'For example, if the user asks, "what\'s the weather in phoenix?", you should respond with { "addressed":true,"reason":"User asked for current weather information.", "route":{"name":"execute_tool", "toolName": "mcp.get_weather_by_city", "reason": "User asked for weather information.", "args":{"city":"Phoenix"}}}',
         'If tool use is not necessary and a simple conversational response is the most appropriate path. For example, if the user simply said, "@Dot tell me a joke", reply with: \'{"addressed":true,"reason":"Tagged by user","route":{"name":"respond","reason":"User just asked for a joke","instructions":""}}\'. Make sure to leave instructions blank.'
     ].join("\n");
 

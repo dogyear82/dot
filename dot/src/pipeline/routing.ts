@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type { RoutingData, PipelineContext } from "./types.js";
 import type { LlmService } from "../chat/llmService.js";
+import type { RoutingToolDefinition } from "../tools/mcp/types.js";
 import { buildMessageRoutingPrompt } from "../utilities/promptUtility.js";
 import { createRouteDataFromCommand } from "./commandHandler.js";
 
@@ -11,6 +12,7 @@ export async function resolveMessageRoute(params: {
     correlationId: string;
     logger: Logger;
     messageId: string;
+    availableTools: RoutingToolDefinition[];
 }): Promise<RoutingData> {
     if (params.context.isExplicitCommand) {
         const routeFromCommand = createRouteDataFromCommand(params.context.content);
@@ -23,7 +25,8 @@ export async function resolveMessageRoute(params: {
         userMessage: params.context.content, 
         recentConversation: params.context.recentConversation, 
         currentSpeakerLabel: params.context.currentSpeakerLabel, 
-        isDotAddressed: params.context.isExplicitCommand
+        isDotAddressed: params.context.isExplicitCommand,
+        availableTools: params.availableTools
     });
     params.logger.info(
         {

@@ -9,6 +9,7 @@ import { createConfiguredEventBus } from "../eventBus.js";
 import { registerMessagePipeline } from "../messagePipeline.js";
 import { startObservability } from "../observability.js";
 import { initializePersistence } from "../persistence.js";
+import { createMcpToolService } from "../tools/mcp/service.js";
 import { createDefaultWorldLookupAdapters } from "../tools/shared/worldLookupAdapters.js";
 import type { ServiceHost, ServiceStatus } from "./serviceHost.js";
 import { createServiceCoordinator, createServiceHost } from "./serviceHost.js";
@@ -29,6 +30,10 @@ export async function createDotRuntime(params: {
   const llmService = createLlmService({
     config,
     settings: persistence.settings
+  });
+  const toolService = createMcpToolService({
+    logger,
+    servers: config.DOT_MCP_SERVERS
   });
   const worldLookupAdapters = createRuntimeWorldLookupAdapters(config);
 
@@ -113,6 +118,7 @@ export async function createDotRuntime(params: {
           logger,
           ownerUserId: config.DISCORD_OWNER_USER_ID,
           persistence,
+          toolService,
           worldLookupAdapters
         });
       },

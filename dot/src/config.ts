@@ -1,7 +1,23 @@
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
 
+import type { McpServerConfig } from "./tools/mcp/types.js";
+
 loadEnv();
+
+const defaultMcpServers = JSON.stringify([
+  {
+    name: "mcp",
+    url: "http://mcp:8000/mcp",
+    enabled: true
+  }
+]);
+
+const mcpServerConfigSchema = z.object({
+  name: z.string().min(1, "MCP server name is required"),
+  url: z.string().url("MCP server URL must be a valid URL"),
+  enabled: z.boolean().default(true)
+});
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -38,11 +54,39 @@ const envSchema = z.object({
   OUTLOOK_MAIL_NEEDS_ATTENTION_FOLDER: z.string().default("Needs Attention"),
   OUTLOOK_MAIL_WHITELIST: z.string().default(""),
   OUTLOOK_MAIL_INITIAL_LOOKBACK_DAYS: z.coerce.number().int().positive().default(7),
-  OUTLOOK_MAIL_SYNC_INTERVAL_MS: z.coerce.number().int().positive().default(300000)
+  OUTLOOK_MAIL_SYNC_INTERVAL_MS: z.coerce.number().int().positive().default(300000),
+  DOT_MCP_SERVERS_JSON: z.string().default(defaultMcpServers)
 });
 
-export type AppConfig = z.infer<typeof envSchema>;
+type ParsedEnvConfig = z.infer<typeof envSchema>;
+
+export type AppConfig = Omit<ParsedEnvConfig, "DOT_MCP_SERVERS_JSON"> & {
+  DOT_MCP_SERVERS: McpServerConfig[];
+};
+
+function parseMcpServers(payload: string): McpServerConfig[] {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(payload);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error";
+    throw new Error(`DOT_MCP_SERVERS_JSON must be valid JSON: ${reason}`);
+  }
+
+  const result = z.array(mcpServerConfigSchema).safeParse(parsed);
+  if (!result.success) {
+    throw new Error(`DOT_MCP_SERVERS_JSON is invalid: ${result.error.message}`);
+  }
+
+  return result.data.filter((server) => server.enabled !== false);
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  return envSchema.parse(env);
+  const parsed = envSchema.parse(env);
+
+  return {
+    ...parsed,
+    DOT_MCP_SERVERS: parseMcpServers(parsed.DOT_MCP_SERVERS_JSON)
+  };
 }

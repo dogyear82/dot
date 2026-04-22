@@ -12,10 +12,9 @@ import type { WorldLookupSourceName } from "./types.js";
 import { buildPipelineContext } from "./pipeline/context.js";
 import { createReplyPublisher } from "./pipeline/publish.js";
 import { resolveMessageRoute } from "./pipeline/routing.js";
+import type { ToolCallService } from "./tools/mcp/service.js";
 import type { WorldLookupAdapter } from "./tools/shared/worldLookup.js";
-import type { ToolContext } from "./toolExecutor.js";
-import { buildGeneralConversationPrompt } from "./utilities/promptUtility.js";
-import { getToolResponse } from "./pipeline/toolExecution.js";
+import { buildGeneralConversationPrompt, buildToolPrompt } from "./utilities/promptUtility.js";
 
 export function registerMessagePipeline(params: {
     bus: EventBus;
@@ -23,9 +22,10 @@ export function registerMessagePipeline(params: {
     logger: Logger;
     ownerUserId: string;
     persistence: Persistence;
+    toolService: ToolCallService;
     worldLookupAdapters?: Partial<Record<WorldLookupSourceName, WorldLookupAdapter>>;
 }): () => void {
-    const { bus, llmService, logger, ownerUserId, persistence, worldLookupAdapters } = params;
+    const { bus, llmService, logger, ownerUserId, persistence } = params;
 
     return bus.subscribeInboundMessage(async (event) => {
         await withEventContext(event, async () => {
@@ -88,12 +88,23 @@ export function registerMessagePipeline(params: {
                             event,
                             persistence
                         });
+                        const availableTools = await params.toolService.listToolsForRouting().catch((error) => {
+                            logger.warn(
+                                {
+                                    err: error,
+                                    messageId: event.payload.messageId
+                                },
+                                "Unable to load MCP tool catalog for routing"
+                            );
+                            return [];
+                        });
                         const routingData = await resolveMessageRoute({
                             llmService,
                             context: pipelineContext,
                             correlationId: event.correlation.correlationId,
                             logger,
-                            messageId: event.payload.messageId
+                            messageId: event.payload.messageId,
+                            availableTools
                         });
 
                         span.setAttribute("dot.addressed", routingData.addressed);
@@ -135,22 +146,42 @@ export function registerMessagePipeline(params: {
 
                             if (routingData.route.name === "execute_tool") {
                                 const { toolName, args } = routingData.route;
-                                const toolContext: ToolContext = {
-                                    actorId: event.payload.sender.actorId,
-                                    persistence,
-                                    conversationId,
-                                    worldLookupAdapters
-                                };
-                                const toolResponse = await getToolResponse(toolName, args, recentConversation, currentSpeakerLabel, content, toolContext, params.llmService);
-                                if (toolResponse.success) {                                                  
-                                    await publisher.publishReply(toolResponse.response);
+                                const toolResponse = await params.toolService.executeTool(toolName, args);
+
+                                if (toolResponse.success) {
+                                    const prompt = buildToolPrompt(
+                                        toolResponse.content,
+                                        `Use the tool result to answer ${currentSpeakerLabel}'s message directly. Do not mention internal MCP server names unless they are directly relevant to the answer.`,
+                                        recentConversation,
+                                        currentSpeakerLabel,
+                                        content
+                                    );
+                                    const response = await params.llmService.generate(prompt);
+                                    await publisher.publishReply(response);
                                     pipelineOutcome = "tool";
                                     return;
                                 }
+
+                                const failureInstructions = toolResponse.failureDetail
+                                    ? `You tried to look up additional data using the tool "${toolName}", but the tool call failed with: ${toolResponse.failureDetail}`
+                                    : "You tried to look up additional data using a tool, but the tool call failed.";
+                                const generalConversationPrompt = buildGeneralConversationPrompt(
+                                    recentConversation,
+                                    currentSpeakerLabel,
+                                    content,
+                                    failureInstructions
+                                );
+                                const response = await params.llmService.generate(generalConversationPrompt);
+
+                                await publisher.publishReply(response);
+                                pipelineOutcome = "tool";
+                                return;
                             }
                         }
                         
-                        const additionalInstructions = routingData.route.name === "execute_tool" ? "You tried to look up additional data using a tool, but the tool call failed." : routingData.route.instructions;
+                        const additionalInstructions = routingData.route.name === "respond"
+                            ? routingData.route.instructions
+                            : "";
                         const generalConversationPrompt = buildGeneralConversationPrompt(recentConversation, currentSpeakerLabel, content, additionalInstructions);
                         const response = await params.llmService.generate(generalConversationPrompt);
 
