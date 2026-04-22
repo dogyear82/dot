@@ -4,10 +4,15 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import * as z from "zod/v4";
 
 import type { Settings } from "./config.js";
+import { NewsLookupClient } from "./integrations/news.js";
 import { OpenMeteoClient } from "./integrations/openMeteo.js";
+import { NewsToolService } from "./tools/news.js";
 import { WeatherToolService } from "./tools/weather.js";
 
-const createMcpServer = (weatherService: WeatherToolService): McpServer => {
+const createMcpServer = (
+  weatherService: WeatherToolService,
+  newsToolService: NewsToolService
+): McpServer => {
   const server = new McpServer(
     {
       name: "dot-mcp",
@@ -44,6 +49,31 @@ const createMcpServer = (weatherService: WeatherToolService): McpServer => {
     }
   );
 
+  server.registerTool(
+    "news_briefing",
+    {
+      title: "News Briefing",
+      description:
+        "Fetch a concise current-events briefing for a topic or headline query from public news sources.",
+      inputSchema: {
+        query: z.string().min(2).describe("Topic or headline query to brief")
+      }
+    },
+    async ({ query }) => {
+      const result = await newsToolService.getNewsBriefing(query);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }
+        ],
+        structuredContent: result
+      };
+    }
+  );
+
   return server;
 };
 
@@ -59,8 +89,14 @@ const handleMcpRequest = async (
       searchLimit: settings.weatherSearchLimit
     })
   );
+  const newsToolService = new NewsToolService(
+    new NewsLookupClient({
+      newsDataApiKey: settings.newsDataApiKey,
+      gdeltDocApiUrl: settings.gdeltDocApiUrl
+    })
+  );
 
-  const server = createMcpServer(weatherService);
+  const server = createMcpServer(weatherService, newsToolService);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true

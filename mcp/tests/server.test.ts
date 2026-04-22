@@ -12,7 +12,9 @@ const settings = {
   port: 8000,
   weatherSearchLimit: 5,
   openMeteoGeocodingUrl: "https://geocoding-api.open-meteo.com/v1/search",
-  openMeteoForecastUrl: "https://api.open-meteo.com/v1/forecast"
+  openMeteoForecastUrl: "https://api.open-meteo.com/v1/forecast",
+  newsDataApiKey: "newsdata-test-key",
+  gdeltDocApiUrl: "https://api.gdeltproject.org/api/v2/doc/doc"
 };
 
 const originalFetch = globalThis.fetch;
@@ -119,6 +121,39 @@ describe("HTTP server", () => {
         );
       }
 
+      if (url.hostname === "newsdata.io") {
+        return new Response(
+          JSON.stringify({
+            results: [
+              {
+                title: "Ukraine aid package advances",
+                link: "https://example.com/aid-package",
+                description: "Lawmakers advanced a new aid package.",
+                pubDate: "2026-04-21T10:00:00Z",
+                source_name: "Example News"
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.hostname === "api.gdeltproject.org") {
+        return new Response(
+          JSON.stringify({
+            articles: [
+              {
+                title: "Ukraine ceasefire talks continue",
+                url: "https://example.com/ceasefire-talks",
+                seendate: "20260421T120000Z",
+                domain: "example.com"
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       return originalFetch(input, init);
     };
 
@@ -134,6 +169,7 @@ describe("HTTP server", () => {
 
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name)).toContain("get_weather_by_city");
+      expect(tools.map((tool) => tool.name)).toContain("news_briefing");
 
       const ambiguous = await client.callTool({
         name: "get_weather_by_city",
@@ -160,6 +196,19 @@ describe("HTTP server", () => {
       expect(phoenix.structuredContent).toMatchObject({
         resultType: "weather_found",
         location: { name: "Phoenix", admin1: "Arizona" }
+      });
+
+      const briefing = await client.callTool({
+        name: "news_briefing",
+        arguments: { query: "Ukraine today" }
+      });
+      expect(briefing.structuredContent).toMatchObject({
+        resultType: "news_briefing_found",
+        query: "Ukraine today"
+      });
+      expect(Array.isArray(briefing.structuredContent?.briefing)).toBe(true);
+      expect(briefing.structuredContent?.briefing?.[0]).toMatchObject({
+        title: "Ukraine aid package advances"
       });
     } finally {
       await transport.terminateSession();

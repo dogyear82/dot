@@ -4,6 +4,8 @@ export type Settings = {
   weatherSearchLimit: number;
   openMeteoGeocodingUrl: string;
   openMeteoForecastUrl: string;
+  newsDataApiKey: string;
+  gdeltDocApiUrl: string;
 };
 
 const parseInteger = (value: string | undefined, fallback: number): number => {
@@ -27,6 +29,7 @@ export const loadSettings = (): Settings => ({
     process.env.DOT_MCP_OPEN_METEO_GEOCODING_URL ??
     "https://geocoding-api.open-meteo.com/v1/search",
   openMeteoForecastUrl:
-    process.env.DOT_MCP_OPEN_METEO_FORECAST_URL ?? "https://api.open-meteo.com/v1/forecast"
+    process.env.DOT_MCP_OPEN_METEO_FORECAST_URL ?? "https://api.open-meteo.com/v1/forecast",
+  newsDataApiKey: process.env.NEWSDATA_API_KEY?.trim() ?? "",
+  gdeltDocApiUrl: process.env.DOT_MCP_GDELT_DOC_API_URL ?? "https://api.gdeltproject.org/api/v2/doc/doc"
 });
-

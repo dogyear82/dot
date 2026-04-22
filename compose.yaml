@@ -82,6 +82,8 @@ services:
         build:
             context: ./mcp
             dockerfile: Containerfile
+        env_file:
+            - ./dot/.env
         environment:
             DOT_MCP_HOST: 0.0.0.0
             DOT_MCP_PORT: 8000
