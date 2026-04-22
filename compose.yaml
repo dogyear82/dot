@@ -1,7 +1,8 @@
 services:
     bot:
+        image: dot-ai
         build:
-            context: .
+            context: ./dot
             dockerfile: Containerfile
         env_file:
             - .env
@@ -29,7 +30,7 @@ services:
 
     discord-ingress:
         build:
-            context: .
+            context: ./dot
             dockerfile: Containerfile
         command: [ "node", "dist/src/discordIngressService.js" ]
         env_file:
@@ -54,7 +55,7 @@ services:
 
     discord-egress:
         build:
-            context: .
+            context: ./dot
             dockerfile: Containerfile
         command: [ "node", "dist/src/discordEgressService.js" ]
         env_file:
