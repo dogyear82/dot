@@ -22,10 +22,7 @@ export async function resolveMessageRoute(params: {
     }
 
     const prompt = buildMessageRoutingPrompt({
-        userMessage: params.context.content, 
-        recentConversation: params.context.recentConversation, 
-        currentSpeakerLabel: params.context.currentSpeakerLabel, 
-        isDotAddressed: params.context.isExplicitCommand,
+        context: params.context, 
         availableTools: params.availableTools
     });
     params.logger.info(
