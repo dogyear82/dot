@@ -9,13 +9,15 @@ import type {
 export type NewsSettings = {
     newsDataApiKey: string;
     gdeltDocApiUrl: string;
+    requestTimeoutMs: number;
 }
 
 export const createNewsService = (settings: NewsSettings): NewsService => {
     return new NewsService(
         new NewsLookupClient({
             newsDataApiKey: settings.newsDataApiKey,
-            gdeltDocApiUrl: settings.gdeltDocApiUrl
+            gdeltDocApiUrl: settings.gdeltDocApiUrl,
+            requestTimeoutMs: settings.requestTimeoutMs
         })
     );
 }
@@ -51,8 +53,4 @@ export class NewsService {
     }
   }
 
-  async testFunc(): Promise<string> {
-    const huh = this.getNewsBriefing
-    return "blah";
-  }
 }

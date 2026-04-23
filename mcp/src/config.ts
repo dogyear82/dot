@@ -34,6 +34,7 @@ export const loadSettings = (): Settings => ({
     },
     news: {
         newsDataApiKey: process.env.NEWSDATA_API_KEY?.trim() ?? "",
-        gdeltDocApiUrl: process.env.DOT_MCP_GDELT_DOC_API_URL ?? "https://api.gdeltproject.org/api/v2/doc/doc"
+        gdeltDocApiUrl: process.env.DOT_MCP_GDELT_DOC_API_URL ?? "https://api.gdeltproject.org/api/v2/doc/doc",
+        requestTimeoutMs: parseInteger(process.env.DOT_MCP_NEWS_TIMEOUT_MS, 4000)
     }
 });

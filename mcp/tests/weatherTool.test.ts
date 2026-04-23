@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { OpenMeteoError } from "../src/integrations/openMeteo.js";
 import type { CurrentWeather, LocationCandidate } from "../src/models/weather.js";
-import { WeatherToolService } from "../src/tools/weather.js";
+import { WeatherService } from "../src/tools/services/weatherService.js";
 
 class StubClient {
   constructor(
@@ -32,9 +32,9 @@ class StubClient {
   }
 }
 
-describe("WeatherToolService", () => {
+describe("WeatherService", () => {
   it("returns an ambiguous result for multiple candidates", async () => {
-    const service = new WeatherToolService(
+    const service = new WeatherService(
       new StubClient([
         { name: "Springfield", admin1: "Illinois", country: "United States", latitude: 1, longitude: 1 },
         { name: "Springfield", admin1: "Missouri", country: "United States", latitude: 2, longitude: 2 }
@@ -47,7 +47,7 @@ describe("WeatherToolService", () => {
   });
 
   it("returns not found when geocoding returns nothing", async () => {
-    const service = new WeatherToolService(new StubClient([]) as never);
+    const service = new WeatherService(new StubClient([]) as never);
 
     await expect(service.getWeatherByCity("Missingtown")).resolves.toMatchObject({
       resultType: "location_not_found"
@@ -55,7 +55,7 @@ describe("WeatherToolService", () => {
   });
 
   it("returns weather when a single location resolves", async () => {
-    const service = new WeatherToolService(
+    const service = new WeatherService(
       new StubClient(
         [
           {
@@ -126,7 +126,7 @@ describe("WeatherToolService", () => {
       }
     }
 
-    const service = new WeatherToolService(new ClarifyingStubClient() as never);
+    const service = new WeatherService(new ClarifyingStubClient() as never);
 
     await expect(service.getWeatherByCity("Springfield, Missouri")).resolves.toMatchObject({
       resultType: "weather_found",
@@ -135,7 +135,7 @@ describe("WeatherToolService", () => {
   });
 
   it("returns provider errors for upstream failures", async () => {
-    const service = new WeatherToolService(
+    const service = new WeatherService(
       new StubClient([], undefined, new OpenMeteoError("boom")) as never
     );
 
@@ -144,4 +144,3 @@ describe("WeatherToolService", () => {
     });
   });
 });
-

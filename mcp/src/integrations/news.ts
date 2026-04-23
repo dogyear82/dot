@@ -5,6 +5,7 @@ type FetchLike = typeof fetch;
 type NewsClientOptions = {
   newsDataApiKey: string;
   gdeltDocApiUrl: string;
+  requestTimeoutMs: number;
   fetchImpl?: FetchLike;
 };
 
@@ -34,11 +35,13 @@ export class NewsLookupError extends Error {}
 export class NewsLookupClient {
   private readonly newsDataApiKey: string;
   private readonly gdeltDocApiUrl: string;
+  private readonly requestTimeoutMs: number;
   private readonly fetchImpl: FetchLike;
 
   constructor(options: NewsClientOptions) {
     this.newsDataApiKey = options.newsDataApiKey;
     this.gdeltDocApiUrl = options.gdeltDocApiUrl;
+    this.requestTimeoutMs = options.requestTimeoutMs;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
@@ -46,10 +49,13 @@ export class NewsLookupClient {
     const normalizedQuery = query.trim();
     const genericHeadlines = looksLikeGenericHeadlinesQuery(normalizedQuery);
 
-    const [newsDataItems, gdeltItems] = await Promise.all([
+    const settled = await Promise.allSettled([
       this.lookupNewsData(normalizedQuery, genericHeadlines),
       genericHeadlines ? Promise.resolve([]) : this.lookupGdelt(normalizedQuery)
     ]);
+
+    const newsDataItems = settled[0].status === "fulfilled" ? settled[0].value : [];
+    const gdeltItems = settled[1].status === "fulfilled" ? settled[1].value : [];
 
     return dedupeBriefingItems([...newsDataItems, ...gdeltItems]).slice(0, 5);
   }
@@ -109,18 +115,25 @@ export class NewsLookupClient {
 
   private async fetchJson<T>(url: URL, provider: string): Promise<T> {
     let response: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, this.requestTimeoutMs);
 
     try {
       response = await this.fetchImpl(url, {
         headers: {
           accept: "application/json"
-        }
+        },
+        signal: controller.signal
       });
     } catch (error) {
+      clearTimeout(timeout);
       throw new NewsLookupError(
         `${provider} request failed: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+    clearTimeout(timeout);
 
     if (!response.ok) {
       throw new NewsLookupError(`${provider} returned HTTP ${response.status} for ${url.toString()}`);

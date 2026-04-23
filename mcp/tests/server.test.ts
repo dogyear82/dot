@@ -10,11 +10,15 @@ import { buildApp } from "../src/server.js";
 const settings = {
   host: "127.0.0.1",
   port: 8000,
-  weatherSearchLimit: 5,
-  openMeteoGeocodingUrl: "https://geocoding-api.open-meteo.com/v1/search",
-  openMeteoForecastUrl: "https://api.open-meteo.com/v1/forecast",
-  newsDataApiKey: "newsdata-test-key",
-  gdeltDocApiUrl: "https://api.gdeltproject.org/api/v2/doc/doc"
+  weather: {
+    searchLimit: 5,
+    openMeteoGeocodingUrl: "https://geocoding-api.open-meteo.com/v1/search",
+    openMeteoForecastUrl: "https://api.open-meteo.com/v1/forecast"
+  },
+  news: {
+    newsDataApiKey: "newsdata-test-key",
+    gdeltDocApiUrl: "https://api.gdeltproject.org/api/v2/doc/doc"
+  }
 };
 
 const originalFetch = globalThis.fetch;
