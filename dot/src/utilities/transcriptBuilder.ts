@@ -9,7 +9,6 @@ export function buildConversationTranscriptPrompt(params: {
         formatConversationTranscript(params.recentConversation, params.currentSpeakerLabel, params.currentMessage),
         "\n\nTranscript Legend:",
         '- Parcitipants are labeled using the format "Role::Name//OptionalDiscordId"',
-        '- You are identified as "Self::Dot"',
         '- Users are identified as "User::{discordName}//{discordId}"',
         '- Your creator is identified as "Owner::dogyear//{ownerDiscordId}"'
     ].join("\n");
