@@ -33,7 +33,7 @@ const envSchema = z.object({
   EVENT_BUS_ADAPTER: z.enum(["in-memory", "nats"]).default("in-memory"),
   NATS_URL: z.string().url().default("nats://localhost:4222"),
   DATA_DIR: z.string().default("./data"),
-  SQLITE_PATH: z.string().default("./data/dot.sqlite"),
+  POSTGRES_URL: z.string().url().default("postgresql://dot:dot@postgres:5432/dot"),
   OLLAMA_BASE_URL: z.string().url().default("http://ollama:11434"),
   OLLAMA_MODEL: z.string().default("llama3.1:8b"),
   NEWSDATA_API_KEY: z.string().optional().default(""),

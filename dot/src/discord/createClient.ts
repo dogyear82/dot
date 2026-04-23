@@ -36,7 +36,7 @@ export function createDiscordClient(params: {
     );
   });
 
-  client.on(Events.MessageCreate, (message) => {
+  client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot || !client.user) {
       return;
     }
@@ -44,7 +44,6 @@ export function createDiscordClient(params: {
     const botUserId = client.user.id;
     const botRoleIds = message.guild?.members.me?.roles.cache.map((role) => role.id) ?? [];
     const normalized = normalizeMessage(message, { botUserId, botUsername: client.user.username, botRoleIds });
-    persistence.saveNormalizedMessage(normalized);
     const inboundEvent = createDiscordInboundMessageEvent({
       message: normalized,
       botUserId,
@@ -53,41 +52,44 @@ export function createDiscordClient(params: {
       ownerUserId
     });
 
-    void withEventContext(inboundEvent, async () => {
-      await withSpan(
-        "discord.message.received",
-        {
-          kind: SpanKind.CONSUMER,
-          attributes: {
-            ...createSpanAttributesForEvent(inboundEvent),
-            "messaging.system": "discord",
-            "dot.actor.role": inboundEvent.payload.sender.actorRole
+    try {
+      await persistence.saveNormalizedMessage(normalized);
+      await withEventContext(inboundEvent, async () => {
+        await withSpan(
+          "discord.message.received",
+          {
+            kind: SpanKind.CONSUMER,
+            attributes: {
+              ...createSpanAttributesForEvent(inboundEvent),
+              "messaging.system": "discord",
+              "dot.actor.role": inboundEvent.payload.sender.actorRole
+            }
+          },
+          async () => {
+            recordInboundMessage({
+              transport: inboundEvent.routing.transport ?? "unknown",
+              actorRole: inboundEvent.payload.sender.actorRole
+            });
+
+            logger.info(
+              {
+                messageId: normalized.id,
+                channelId: normalized.channelId,
+                authorId: normalized.authorId,
+                actorRole: inboundEvent.payload.sender.actorRole,
+                isDirectMessage: normalized.isDirectMessage,
+                mentionedBot: normalized.mentionedBot
+              },
+              "Received Discord message and publishing canonical inbound event"
+            );
+
+            await bus.publishInboundMessage(inboundEvent);
           }
-        },
-        async () => {
-          recordInboundMessage({
-            transport: inboundEvent.routing.transport ?? "unknown",
-            actorRole: inboundEvent.payload.sender.actorRole
-          });
-
-          logger.info(
-            {
-              messageId: normalized.id,
-              channelId: normalized.channelId,
-              authorId: normalized.authorId,
-              actorRole: inboundEvent.payload.sender.actorRole,
-              isDirectMessage: normalized.isDirectMessage,
-              mentionedBot: normalized.mentionedBot
-            },
-            "Received Discord message and publishing canonical inbound event"
-          );
-
-          await bus.publishInboundMessage(inboundEvent);
-        }
-      );
-    }).catch((error) => {
+        );
+      });
+    } catch (error) {
       logger.error({ err: error, eventId: inboundEvent.eventId }, "Failed to publish inbound message event");
-    });
+    }
   });
 
   client.on(Events.Error, (error) => {

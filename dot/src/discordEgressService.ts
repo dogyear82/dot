@@ -12,7 +12,7 @@ import { createServiceCoordinator, createServiceHost, type ServiceStatus } from 
 async function main() {
   const config = loadConfig();
   const logger = createLogger(config.LOG_LEVEL, config.LOG_FILE_PATH);
-  const persistence = initializePersistence(config.DATA_DIR, config.SQLITE_PATH);
+  const persistence = await initializePersistence(config.DATA_DIR, config.POSTGRES_URL);
   const bus = await createConfiguredEventBus(config);
   const discordClient = createDiscordEgressClient();
 
@@ -81,7 +81,7 @@ async function main() {
   logger.info(
     {
       dataDir: config.DATA_DIR,
-      sqlitePath: config.SQLITE_PATH,
+      postgresUrl: redactConnectionString(config.POSTGRES_URL),
       eventBusAdapter: config.EVENT_BUS_ADAPTER,
       natsUrl: config.EVENT_BUS_ADAPTER === "nats" ? config.NATS_URL : null,
       ollamaBaseUrl: config.OLLAMA_BASE_URL,
@@ -110,7 +110,7 @@ async function main() {
 
     try {
       await coordinator.stopAll();
-      persistence.close();
+      await persistence.close();
       process.exit(0);
     } catch (error) {
       logger.fatal({ err: error }, "Discord egress service failed to stop cleanly");
@@ -124,6 +124,18 @@ async function main() {
   process.once("SIGTERM", () => {
     void handleSignal("SIGTERM");
   });
+}
+
+function redactConnectionString(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    if (url.password) {
+      url.password = "***";
+    }
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
 }
 
 main().catch((error) => {

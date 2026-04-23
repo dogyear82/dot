@@ -105,16 +105,16 @@ async function deliverDiscordMessage(params: {
         failIfNotExists: true
       }
     });
-    firstSent = persistSentDiscordMessage({ client, persistence, sent });
+    firstSent = await persistSentDiscordMessage({ client, persistence, sent });
 
     for (const chunk of chunks.slice(1)) {
       const followUp = await channel.send(chunk);
-      persistSentDiscordMessage({ client, persistence, sent: followUp });
+      await persistSentDiscordMessage({ client, persistence, sent: followUp });
     }
   } else {
     const recipient = await client.users.fetch(event.payload.delivery.recipientActorId);
     const sent = await recipient.send(chunks[0] ?? event.payload.content);
-    firstSent = persistSentDiscordMessage({ client, persistence, sent });
+    firstSent = await persistSentDiscordMessage({ client, persistence, sent });
 
     if (!sent.channel.isSendable()) {
       throw new Error("Unable to send follow-up Discord direct-message chunk");
@@ -122,12 +122,12 @@ async function deliverDiscordMessage(params: {
 
     for (const chunk of chunks.slice(1)) {
       const followUp = await sent.channel.send(chunk);
-      persistSentDiscordMessage({ client, persistence, sent: followUp });
+      await persistSentDiscordMessage({ client, persistence, sent: followUp });
     }
   }
 
   if (firstSent && event.payload.recordConversationTurn) {
-    persistence.saveConversationTurn({
+    await persistence.saveConversationTurn({
       conversationId: event.correlation.conversationId ?? "",
       role: "assistant",
       participantActorId: client.user!.id,
@@ -142,7 +142,7 @@ async function deliverDiscordMessage(params: {
   return firstSent;
 }
 
-function persistSentDiscordMessage(params: {
+async function persistSentDiscordMessage(params: {
   client: DiscordEgressClient;
   persistence: Persistence;
   sent: Message<boolean>;
@@ -153,7 +153,7 @@ function persistSentDiscordMessage(params: {
     botUsername: client.user!.username,
     botRoleIds: sent.guild?.members.me?.roles.cache.map((role) => role.id) ?? []
   });
-  persistence.saveNormalizedMessage(normalizedSent);
+  await persistence.saveNormalizedMessage(normalizedSent);
   return sent;
 }
 

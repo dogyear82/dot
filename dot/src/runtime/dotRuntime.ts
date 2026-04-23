@@ -25,7 +25,7 @@ export async function createDotRuntime(params: {
   logger: Logger;
 }): Promise<DotRuntime> {
   const { config, logger } = params;
-  const persistence = initializePersistence(config.DATA_DIR, config.SQLITE_PATH);
+  const persistence = await initializePersistence(config.DATA_DIR, config.POSTGRES_URL);
   const bus = await createConfiguredEventBus(config);
   const llmService = createLlmService({
     config,
@@ -136,7 +136,7 @@ export async function createDotRuntime(params: {
       logger.info(
         {
           dataDir: config.DATA_DIR,
-          sqlitePath: config.SQLITE_PATH,
+          postgresUrl: redactConnectionString(config.POSTGRES_URL),
           eventBusAdapter: config.EVENT_BUS_ADAPTER,
           natsUrl: config.EVENT_BUS_ADAPTER === "nats" ? config.NATS_URL : null,
           ollamaBaseUrl: config.OLLAMA_BASE_URL,
@@ -160,7 +160,7 @@ export async function createDotRuntime(params: {
       try {
         await coordinator.stopAll();
       } finally {
-        persistence.close();
+        await persistence.close();
       }
     },
     getServiceStatuses() {
@@ -201,4 +201,16 @@ export function registerRuntimeSignalHandlers(runtime: DotRuntime) {
   process.once("SIGTERM", () => {
     void handleSignal("SIGTERM");
   });
+}
+
+function redactConnectionString(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    if (url.password) {
+      url.password = "***";
+    }
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
 }

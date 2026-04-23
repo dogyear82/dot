@@ -63,7 +63,7 @@ export function registerMessagePipeline(params: {
                             "Processing inbound message event"
                         );
 
-                        const pipelineContext = buildPipelineContext({
+                        const pipelineContext = await buildPipelineContext({
                             event,
                             persistence
                         });
@@ -108,7 +108,7 @@ export function registerMessagePipeline(params: {
                             },
                             "Evaluated message addressedness"
                         );
-                        persistence.saveAccessAudit({
+                        await persistence.saveAccessAudit({
                             messageId: event.payload.messageId,
                             actorRole: accessDecision.actorRole,
                             canUsePrivilegedFeatures: accessDecision.canUsePrivilegedFeatures,

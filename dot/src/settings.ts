@@ -1,5 +1,3 @@
-import type Database from "better-sqlite3";
-
 export type SettingKey =
   | "persona.mode"
   | "persona.balance"
@@ -224,6 +222,10 @@ export function listUserEditableSettingDefinitions(): SettingDefinition[] {
   return settingDefinitions.filter((definition) => definition.userEditable);
 }
 
+export function getSettingDefinitions(): SettingDefinition[] {
+  return [...settingDefinitions];
+}
+
 export function validateSettingValue(key: SettingKey, value: string): string | null {
   const definition = definitionsByKey.get(key);
 
@@ -251,43 +253,24 @@ export function validateSettingValue(key: SettingKey, value: string): string | n
   return null;
 }
 
-export function createSettingsStore(db: Database.Database): SettingsStore {
-  const getStatement = db.prepare<[SettingKey], { value: string } | undefined>(
-    "SELECT value FROM settings WHERE key = ?"
-  );
-  const setStatement = db.prepare<[SettingKey, string]>(
-    `
-      INSERT INTO settings (key, value, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        updated_at = CURRENT_TIMESTAMP
-    `
-  );
-  const listStatement = db.prepare<[], { key: string; value: string }>(
-    "SELECT key, value FROM settings WHERE key != 'onboarding.completed' ORDER BY key"
-  );
+export function createSettingsStore(params: {
+  initialValues?: Partial<Record<SettingKey, string>>;
+  onSet?: (key: SettingKey, value: string) => Promise<void>;
+}): SettingsStore {
+  const values = new Map<SettingKey, string>();
+  const configuredKeys = new Set<SettingKey>();
 
-  for (const definition of settingDefinitions) {
-    if (
-      (definition.key === "onboarding.completed" ||
-        definition.key === "personality.activeProfile" ||
-        definition.key === "personality.quirkOverrides") &&
-      definition.defaultValue != null &&
-      getStatement.get(definition.key) == null
-    ) {
-      setStatement.run(definition.key, definition.defaultValue);
-    }
+  for (const [rawKey, value] of Object.entries(params.initialValues ?? {})) {
+    const key = rawKey as SettingKey;
+    values.set(key, value ?? "");
+    configuredKeys.add(key);
   }
 
-  const legacyActivePreset = getStatement.get("personality.activePreset")?.value;
-  if (getStatement.get("personality.activeProfile") == null && legacyActivePreset != null) {
-    setStatement.run("personality.activeProfile", legacyActivePreset);
-  }
+  ensureBootstrapDefaults(values, configuredKeys);
 
   return {
     get(key) {
-      const storedValue = getStatement.get(key)?.value;
+      const storedValue = values.get(key);
       if (storedValue != null) {
         return storedValue;
       }
@@ -301,20 +284,51 @@ export function createSettingsStore(db: Database.Database): SettingsStore {
         throw new Error(validationError);
       }
 
-      setStatement.run(key, value);
+      values.set(key, value);
+      configuredKeys.add(key);
+      void params.onSet?.(key, value).catch((error) => {
+        console.error(`Failed to persist setting "${key}"`, error);
+      });
     },
     getAllUserEditable() {
-      const storedEntries = Object.fromEntries(listStatement.all().map((row) => [row.key, row.value]));
-
       return Object.fromEntries(
-        listUserEditableSettingDefinitions().map((definition) => [definition.key, storedEntries[definition.key] ?? definition.defaultValue ?? ""])
+        listUserEditableSettingDefinitions().map((definition) => [
+          definition.key,
+          values.get(definition.key) ?? definition.defaultValue ?? ""
+        ])
       );
     },
     hasCompletedOnboarding() {
-      return getStatement.get("onboarding.completed")?.value === "true";
+      return values.get("onboarding.completed") === "true";
     },
     isConfigured(key) {
-      return getStatement.get(key) != null;
+      return configuredKeys.has(key);
     }
   };
+}
+
+function ensureBootstrapDefaults(values: Map<SettingKey, string>, configuredKeys: Set<SettingKey>): void {
+  const requiredDefaults: SettingKey[] = [
+    "onboarding.completed",
+    "personality.activeProfile",
+    "personality.quirkOverrides"
+  ];
+
+  for (const key of requiredDefaults) {
+    if (!values.has(key)) {
+      const defaultValue = definitionsByKey.get(key)?.defaultValue;
+      if (defaultValue != null) {
+        values.set(key, defaultValue);
+        configuredKeys.add(key);
+      }
+    }
+  }
+
+  if (!values.has("personality.activeProfile")) {
+    const legacyActivePreset = values.get("personality.activePreset");
+    if (legacyActivePreset != null) {
+      values.set("personality.activeProfile", legacyActivePreset);
+      configuredKeys.add("personality.activeProfile");
+    }
+  }
 }

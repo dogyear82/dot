@@ -18,11 +18,11 @@ export function createDiagnosticsObserver(params: {
   persistence: Persistence;
 }): DiagnosticsObserver {
   const unsubscribe = params.bus.subscribeAll(async (event) => {
-    params.persistence.saveDiagnosticEvent(event);
+    await params.persistence.saveDiagnosticEvent(event);
 
     if (isServiceHealthReportedEvent(event)) {
       const snapshot = buildServiceHealthSnapshotFromEvent(event);
-      params.persistence.upsertServiceHealthSnapshot(snapshot);
+      await params.persistence.upsertServiceHealthSnapshot(snapshot);
       recordServiceHealthSnapshot(snapshot);
     }
   });

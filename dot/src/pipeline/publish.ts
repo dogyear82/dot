@@ -12,12 +12,12 @@ export function createReplyPublisher(params: {
 }): ReplyPublisher {
     let hasSavedUserTurn = false;
 
-    const saveUserConversationTurn = () => {
+    const saveUserConversationTurn = async () => {
         if (hasSavedUserTurn || !params.content) {
             return;
         }
 
-        params.persistence.saveConversationTurn({
+        await params.persistence.saveConversationTurn({
             conversationId: params.conversationId,
             role: "user",
             participantActorId: params.event.payload.sender.actorId,
@@ -34,7 +34,7 @@ export function createReplyPublisher(params: {
         saveUserConversationTurn,
         async publishReply(reply: string, route: LlmRoute = "none", recordConversationTurn = true) {
             if (recordConversationTurn) {
-                saveUserConversationTurn();
+                await saveUserConversationTurn();
             }
 
             await params.bus.publishOutboundMessage(

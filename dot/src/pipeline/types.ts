@@ -34,6 +34,6 @@ export type MessageRoute =
 
 
 export interface ReplyPublisher {
-    saveUserConversationTurn(): void;
+    saveUserConversationTurn(): Promise<void>;
     publishReply(reply: string, route?: LlmRoute, recordConversationTurn?: boolean): Promise<void>;
 }

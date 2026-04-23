@@ -9,17 +9,17 @@ const RECENT_CHAT_HISTORY_LIMIT = 20;
 export function buildPipelineContext(params: {
     event: InboundMessageReceivedEvent;
     persistence: Persistence;
-}): PipelineContext {
+}): Promise<PipelineContext> {
     const conversationId = params.event.correlation.conversationId ?? "";
-    return {
+    return Promise.resolve(params.persistence.listRecentConversationTurns(conversationId, RECENT_CHAT_HISTORY_LIMIT)).then((recentConversation) => ({
         event: params.event,
         content: params.event.payload.addressedContent.trim(),
         conversationId,
         currentSpeakerLabel: formatCurrentSpeakerLabel(params.event),
         incomingMessage: mapInboundEventToIncomingMessage(params.event),
         isExplicitCommand: isValidExplicitCommand(params.event.payload.addressedContent.trim()),
-        recentConversation: params.persistence.listRecentConversationTurns(conversationId, RECENT_CHAT_HISTORY_LIMIT)
-    };
+        recentConversation
+    }));
 }
 
 function mapInboundEventToIncomingMessage(event: InboundMessageReceivedEvent): IncomingMessage {
