@@ -125,7 +125,7 @@ services:
             retries: 10
 
     postgres:
-        image: docker.io/library/postgres:17-alpine
+        image: docker.io/library/postgres:16
         container_name: dot-postgres
         restart: unless-stopped
         environment:
