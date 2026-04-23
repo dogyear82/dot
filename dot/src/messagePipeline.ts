@@ -160,6 +160,10 @@ export function registerMessagePipeline(params: {
                                     content,
                                     failureInstructions
                                 );
+                                logger.info({
+                                    messageId: event.payload.messageId,
+                                    prompt: generalConversationPrompt
+                                }, "Prompt for final tool augmented message output.");
                                 const response = await params.llmService.generate(generalConversationPrompt);
 
                                 await publisher.publishReply(response);
@@ -172,6 +176,10 @@ export function registerMessagePipeline(params: {
                             ? routingData.route.instructions
                             : "";
                         const generalConversationPrompt = buildGeneralConversationPrompt(recentConversation, currentSpeakerLabel, content, additionalInstructions);
+                        logger.info({
+                            messageId: event.payload.messageId,
+                            prompt: generalConversationPrompt
+                        }, "Prompt for finall message output.");
                         const response = await params.llmService.generate(generalConversationPrompt);
 
                         await publisher.publishReply(response);
