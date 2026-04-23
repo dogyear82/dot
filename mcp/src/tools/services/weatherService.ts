@@ -68,28 +68,23 @@ export class WeatherService {
   }
 
   private async resolveCandidates(city: string): Promise<LocationCandidate[]> {
-    const directMatches = await this.client.searchCity(city);
-    if (directMatches.length > 0) {
-      return directMatches;
-    }
-
-    if (!city.includes(",")) {
-      return [];
-    }
-
     const [baseCity, ...qualifierParts] = city
       .split(",")
       .map((part) => part.trim())
       .filter(Boolean);
 
-    if (!baseCity || qualifierParts.length === 0) {
+    if (!baseCity) {
       return [];
     }
 
-    const fallbackMatches = await this.client.searchCity(baseCity);
+    const matches = await this.client.searchCity(baseCity);
+    if (qualifierParts.length === 0) {
+      return matches;
+    }
+
     const qualifiers = qualifierParts.map((part) => part.toLowerCase());
 
-    return fallbackMatches.filter((candidate) => this.matchesQualifiers(candidate, qualifiers));
+    return matches.filter((candidate) => this.matchesQualifiers(candidate, qualifiers));
   }
 
   private matchesQualifiers(candidate: LocationCandidate, qualifiers: string[]): boolean {
@@ -101,11 +96,77 @@ export class WeatherService {
       candidate.country,
       candidate.countryCode,
       candidate.timezone
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
+    ].filter(Boolean)
+      .map((value) => value!.toLowerCase());
 
-    return qualifiers.every((qualifier) => haystack.includes(qualifier));
+    const normalizedTokens = new Set<string>(haystack);
+    const admin1Abbreviation = candidate.admin1 ? US_STATE_ABBREVIATIONS[candidate.admin1.toLowerCase()] : undefined;
+    if (admin1Abbreviation) {
+      normalizedTokens.add(admin1Abbreviation);
+    }
+
+    return qualifiers.every((qualifier) => {
+      for (const token of normalizedTokens) {
+        if (token.includes(qualifier)) {
+          return true;
+        }
+      }
+
+      return false;
+    });
   }
 }
+
+const US_STATE_ABBREVIATIONS: Record<string, string> = {
+  alabama: "al",
+  alaska: "ak",
+  arizona: "az",
+  arkansas: "ar",
+  california: "ca",
+  colorado: "co",
+  connecticut: "ct",
+  delaware: "de",
+  florida: "fl",
+  georgia: "ga",
+  hawaii: "hi",
+  idaho: "id",
+  illinois: "il",
+  indiana: "in",
+  iowa: "ia",
+  kansas: "ks",
+  kentucky: "ky",
+  louisiana: "la",
+  maine: "me",
+  maryland: "md",
+  massachusetts: "ma",
+  michigan: "mi",
+  minnesota: "mn",
+  mississippi: "ms",
+  missouri: "mo",
+  montana: "mt",
+  nebraska: "ne",
+  nevada: "nv",
+  "new hampshire": "nh",
+  "new jersey": "nj",
+  "new mexico": "nm",
+  "new york": "ny",
+  "north carolina": "nc",
+  "north dakota": "nd",
+  ohio: "oh",
+  oklahoma: "ok",
+  oregon: "or",
+  pennsylvania: "pa",
+  "rhode island": "ri",
+  "south carolina": "sc",
+  "south dakota": "sd",
+  tennessee: "tn",
+  texas: "tx",
+  utah: "ut",
+  vermont: "vt",
+  virginia: "va",
+  washington: "wa",
+  "west virginia": "wv",
+  wisconsin: "wi",
+  wyoming: "wy",
+  "district of columbia": "dc"
+};
