@@ -2,8 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WeatherService } from "./services/weatherService.js";
 import * as z from "zod/v4";
 
-const constructTextResult
-
 export const registerWeatherTool = (server: McpServer, service: WeatherService) => {
     server.registerTool(
         "get_weather_by_city",
