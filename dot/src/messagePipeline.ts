@@ -13,7 +13,7 @@ import { createReplyPublisher } from "./pipeline/publish.js";
 import { resolveMessageRoute } from "./pipeline/routing.js";
 import type { ToolCallService } from "./tools/mcp/service.js";
 import type { WorldLookupAdapter } from "./tools/shared/worldLookup.js";
-import { buildGeneralConversationPrompt, buildToolPrompt } from "./utilities/promptUtility.js";
+import { buildFinalOutputPrompt } from "./utilities/promptUtility.js";
 
 export function registerMessagePipeline(params: {
     bus: EventBus;
@@ -139,11 +139,12 @@ export function registerMessagePipeline(params: {
                                 const toolResponse = await params.toolService.executeTool(toolName, args);
 
                                 if (toolResponse.success) {
-                                    const prompt = buildToolPrompt(
+                                    const prompt = buildFinalOutputPrompt(
                                         toolResponse.content,
                                         recentConversation,
                                         currentSpeakerLabel,
-                                        content
+                                        content,
+                                        ""
                                     );
                                     const response = await params.llmService.generate(prompt);
                                     await publisher.publishReply(response);
@@ -154,7 +155,8 @@ export function registerMessagePipeline(params: {
                                 const failureInstructions = toolResponse.failureDetail
                                     ? `You tried to look up additional data using the tool "${toolName}", but the tool call failed with: ${toolResponse.failureDetail}`
                                     : "You tried to look up additional data using a tool, but the tool call failed.";
-                                const generalConversationPrompt = buildGeneralConversationPrompt(
+                                const generalConversationPrompt = buildFinalOutputPrompt(
+                                    "",
                                     recentConversation,
                                     currentSpeakerLabel,
                                     content,
@@ -176,7 +178,7 @@ export function registerMessagePipeline(params: {
                         const additionalInstructions = routingData.route.name === "respond"
                             ? routingData.route.instructions
                             : "";
-                        const generalConversationPrompt = buildGeneralConversationPrompt(recentConversation, currentSpeakerLabel, content, additionalInstructions);
+                        const generalConversationPrompt = buildFinalOutputPrompt("", recentConversation, currentSpeakerLabel, content, additionalInstructions);
                         const response = await params.llmService.generate(generalConversationPrompt);
                         logger.info({
                             messageId: event.payload.messageId,
