@@ -85,10 +85,10 @@ describe("WeatherService", () => {
 
   it("supports clarified retries by filtering fallback matches", async () => {
     class ClarifyingStubClient {
+      readonly seenQueries: string[] = [];
+
       async searchCity(city: string): Promise<LocationCandidate[]> {
-        if (city === "Springfield, Missouri") {
-          return [];
-        }
+        this.seenQueries.push(city);
 
         if (city === "Springfield") {
           return [
@@ -126,12 +126,61 @@ describe("WeatherService", () => {
       }
     }
 
-    const service = new WeatherService(new ClarifyingStubClient() as never);
+    const client = new ClarifyingStubClient();
+    const service = new WeatherService(client as never);
 
     await expect(service.getWeatherByCity("Springfield, Missouri")).resolves.toMatchObject({
       resultType: "weather_found",
       location: { admin1: "Missouri" }
     });
+
+    expect(client.seenQueries).toEqual(["Springfield"]);
+  });
+
+  it("supports state abbreviations during fallback matching", async () => {
+    class StateAbbreviationStubClient {
+      readonly seenQueries: string[] = [];
+
+      async searchCity(city: string): Promise<LocationCandidate[]> {
+        this.seenQueries.push(city);
+
+        if (city === "Phoenix") {
+          return [
+            {
+              name: "Phoenix",
+              admin1: "Arizona",
+              country: "United States",
+              countryCode: "US",
+              latitude: 33.4484,
+              longitude: -112.074
+            }
+          ];
+        }
+
+        throw new Error(`unexpected city query: ${city}`);
+      }
+
+      async getCurrentWeather(): Promise<CurrentWeather> {
+        return {
+          temperatureC: 26,
+          windSpeedMS: 3.5,
+          windDirectionDegrees: 180,
+          weatherCode: 1,
+          isDay: true,
+          observedAt: "2026-04-21T12:00"
+        };
+      }
+    }
+
+    const client = new StateAbbreviationStubClient();
+    const service = new WeatherService(client as never);
+
+    await expect(service.getWeatherByCity("Phoenix, AZ")).resolves.toMatchObject({
+      resultType: "weather_found",
+      location: { admin1: "Arizona" }
+    });
+
+    expect(client.seenQueries).toEqual(["Phoenix"]);
   });
 
   it("returns provider errors for upstream failures", async () => {
