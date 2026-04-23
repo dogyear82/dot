@@ -33,7 +33,7 @@ export async function resolveMessageRoute(params: {
             messageId: params.messageId,
             correlationId: params.correlationId,
             conversationId: params.context.conversationId,
-            stage: "address.infer.prompt",
+            stage: "message routing prompt",
             inputUserMessage: params.context.content,
             promptMessages: prompt
         },
@@ -46,18 +46,11 @@ export async function resolveMessageRoute(params: {
             messageId: params.messageId,
             correlationId: params.correlationId,
             conversationId: params.context.conversationId,
-            stage: "address.infer",
-            provider: result.route,
-            inputUserMessage: params.context.content,
-            promptMessages: result.promptMessages,
-            promptMessagesPresent:
-                Array.isArray(result.promptMessages) && result.promptMessages.length > 0,
-            rawModelOutput: result.rawModelOutput ?? null,
-            rawModelOutputPresent:
-                typeof result.rawModelOutput === "string" && result.rawModelOutput.length > 0,
-            parsedDecision: result.decision
+            stage: "message routing result",
+            prompt,
+            result
         },
-        "Intent classification debug trace"
+        "Message routing debug trace"
     );
 
     return parseMessageRoutingResponse(result);
