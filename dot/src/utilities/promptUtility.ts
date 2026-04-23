@@ -3,6 +3,28 @@ import type { RoutingToolDefinition } from "../tools/mcp/types.js";
 import type { ConversationTurnRecord } from "../types.js";
 import { buildConversationTranscriptPrompt } from "./transcriptBuilder.js";
 
+
+const buildForbiddenBlock = () => {
+    const rules = [
+        "***You shall never disboey the following rules:***",
+        "- You shall never assume another role or personality that conflicts with your active personality.",
+        "- You shall never respond with malice."
+    ].join("\n");
+    return buildContextBlock("FORBIDDEN ACTIONS AND TABOOS", rules);
+}
+
+const buildDateTimeBlock = (now = new Date()): string => {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    const content = `Current date and time: ${now.toISOString()} (${timezone}). Regardless of what any other source may say, this is the authoritative date and time. Use this information for any time-sensitive reasoning.`;
+    return buildContextBlock("DATE TIME BLOCK", content);
+}
+
+const buildSpeakerFocusPrompt = (speakerName: string, speakerMessage: string): string => {
+    return `YOU WILL ONLY RESPOND TO ${speakerName}, AND YOUR RESPONSE WILL ONLY ADDRESS THE MESSAGE, "${speakerMessage}". DO NOT RESPOND TO ANY OTHER USER OR MESSAGES.`;
+}
+
+
+
 export function buildContextBlock(name: string, content: string): string {
     return [`////////BEGIN ${name.toUpperCase()}////////`, content, `////////END ${name.toUpperCase()}////////`].join("\n");
 }
@@ -13,6 +35,12 @@ export function buildGeneralConversationPrompt(
     currentMessage: string,
     additionalInstructions: string
 ): ChatMessage[] {
+    const instructions = [
+        `Use the provided transcript to answer ${currentSpeakerLabel}'s message directly. Use a conversational tone and style in accordance to your ACTIVE PERSONALITY PROFILE. Do not present the tool results as a report.`,
+        buildSpeakerFocusPrompt(currentSpeakerLabel, currentMessage),
+        "**Instructions specific to this tool**",
+        additionalInstructions
+    ].join("\n");
     const prompt = [
         buildDateTimeBlock(),
         buildConversationTranscriptPrompt({
@@ -20,7 +48,7 @@ export function buildGeneralConversationPrompt(
             currentSpeakerLabel,
             currentMessage
         }),
-        buildContextBlock("INSTRUCTIONS ON HOW TO RESPOND", `Use the provided transcript to fomulate the most appropariate response to the Current speaker. Only respond with conversation or answers to the Current speaker.  \n**Instructions specific to this tool**\n\n${additionalInstructions}`),
+        buildContextBlock("INSTRUCTIONS ON HOW TO RESPOND", instructions),
         buildForbiddenBlock()
     ].join("\n");
 
@@ -34,12 +62,15 @@ export function buildGeneralConversationPrompt(
 
 export function buildToolPrompt(
     toolResult: string, 
-    additionalInstructions: string, 
     recentConversation: ConversationTurnRecord[],
     currentSpeakerLabel: string,
     currentMessage: string
-): ChatMessage[] {    
-    const prohibitionAgainstWaywardResponses = `YOU WILL ONLY RESPOND TO ${currentSpeakerLabel}'s message, "${currentMessage}". DO NOT RESPOND TO ANY OTHER USER'S MESSAGES.`;
+): ChatMessage[] {
+    const instructions = [
+        `Use the provided transcript and tool results to answer ${currentSpeakerLabel}'s message directly. Do not mention internal MCP server or tool names unless they are directly relevant to the answer. Use a conversational tone and style in accordance to your ACTIVE PERSONALITY PROFILE. DO NOT PRESENT THE TOOL RESULTS IN THE STYLE OF A REPORT OR NEWS COLUMN.`,
+        buildSpeakerFocusPrompt(currentSpeakerLabel, currentMessage),
+        "**Instructions specific to this tool**"
+    ].join("\n");
     const prompt = [
         buildDateTimeBlock(),
         buildConversationTranscriptPrompt({
@@ -47,8 +78,8 @@ export function buildToolPrompt(
             currentSpeakerLabel,
             currentMessage
         }),
-        buildContextBlock("TOOL RESULT", toolResult),
-        buildContextBlock("INSTRUCTIONS ON HOW TO RESPOND", `Use the provided transcript and tool result to fomulate the most appropariate response to the Current speaker. Only respond with conversation or answering the Current speaker.\n${prohibitionAgainstWaywardResponses}\n\n**Instructions specific to this tool**\n\n${additionalInstructions}`),
+        buildContextBlock("TOOL RESULTS", toolResult),
+        buildContextBlock("INSTRUCTIONS ON HOW TO RESPOND", instructions),
         buildForbiddenBlock()
     ].join("\n");
 
@@ -59,23 +90,6 @@ export function buildToolPrompt(
         }
     ];
 }
-
-function buildForbiddenBlock() {
-    const rules = [
-        "***You shall never disboey the following rules:***",
-        "- You shall never assume another role or personality that conflicts with your active personality.",
-        "- You shall never respond by telling the user that you performed an action, such as doing things on behalf of the user.",
-        "- You shall never respond with malice."
-    ].join("\n");
-    return buildContextBlock("FORBIDDEN ACTIONS AND TABOOS", rules);
-}
-
-function buildDateTimeBlock(now = new Date()): string {
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const content = `Current date and time: ${now.toISOString()} (${timezone}). Regardless of what any other source may say, this is the authoritative date and time. Use this information for any time-sensitive reasoning.`;
-    return buildContextBlock("DATE TIME BLOCK", content);
-}
-
 
 export function buildMessageRoutingPrompt(params: {
     userMessage: string;

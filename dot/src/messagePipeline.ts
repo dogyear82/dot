@@ -141,7 +141,6 @@ export function registerMessagePipeline(params: {
                                 if (toolResponse.success) {
                                     const prompt = buildToolPrompt(
                                         toolResponse.content,
-                                        `Use the tool result to answer ${currentSpeakerLabel}'s message directly. Do not mention internal MCP server names unless they are directly relevant to the answer.`,
                                         recentConversation,
                                         currentSpeakerLabel,
                                         content

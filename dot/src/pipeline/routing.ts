@@ -39,6 +39,7 @@ export async function resolveMessageRoute(params: {
         },
         "Intent classification prompt"
     );
+    
     const result = await params.llmService.generate(prompt, "gpt-4o-mini");
     params.logger.info(
         {
