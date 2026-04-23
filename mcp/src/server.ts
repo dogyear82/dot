@@ -1,172 +1,114 @@
 import express, { type Express, type Request, type Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import * as z from "zod/v4";
 
 import type { Settings } from "./config.js";
-import { NewsLookupClient } from "./integrations/news.js";
-import { OpenMeteoClient } from "./integrations/openMeteo.js";
-import { NewsToolService } from "./tools/news.js";
-import { WeatherToolService } from "./tools/weather.js";
+import { createNewsService, NewsService } from "./tools/services/newsService.js";
+import { createWeatherService, WeatherService } from "./tools/services/weatherService.js";
+import { registerNewsTool } from "./tools/news.js";
+import { registerWeatherTool } from "./tools/weather.js";
 
-const createMcpServer = (
-  weatherService: WeatherToolService,
-  newsToolService: NewsToolService
-): McpServer => {
-  const server = new McpServer(
-    {
-      name: "dot-mcp",
-      version: "0.1.0"
-    },
-    {
-      instructions:
-        "A minimal general-purpose MCP server. v1 exposes one weather tool backed by Open-Meteo."
-    }
-  );
+const createMcpServer = (services: {
+    weather: WeatherService
+    news: NewsService
+}): McpServer => {
+    const server = new McpServer(
+        {
+            name: "dot-mcp",
+            version: "0.1.0"
+        },
+        {
+            instructions:
+                "A minimal general-purpose MCP server. v1 exposes one weather tool backed by Open-Meteo."
+        }
+    );
 
-  server.registerTool(
-    "get_weather_by_city",
-    {
-      title: "Get Weather By City",
-      description:
-        "Resolve a city name with Open-Meteo and return current weather. If multiple locations match, return candidates so the client can ask for clarification.",
-      inputSchema: {
-        city: z.string().min(2).describe("City name to search in Open-Meteo geocoding")
-      }
-    },
-    async ({ city }) => {
-      const result = await weatherService.getWeatherByCity(city);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2)
-          }
-        ],
-        structuredContent: result
-      };
-    }
-  );
-
-  server.registerTool(
-    "news_briefing",
-    {
-      title: "News Briefing",
-      description:
-        "Fetch a concise current-events briefing for a topic or headline query from public news sources.",
-      inputSchema: {
-        query: z.string().min(2).describe("Topic or headline query to brief")
-      }
-    },
-    async ({ query }) => {
-      const result = await newsToolService.getNewsBriefing(query);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2)
-          }
-        ],
-        structuredContent: result
-      };
-    }
-  );
-
-  return server;
+    registerNewsTool(server, services.news);
+    registerWeatherTool(server, services.weather);
+    return server;
 };
 
 const handleMcpRequest = async (
-  request: Request,
-  response: Response,
-  settings: Settings
+    request: Request,
+    response: Response,
+    settings: Settings
 ): Promise<void> => {
-  const weatherService = new WeatherToolService(
-    new OpenMeteoClient({
-      geocodingUrl: settings.openMeteoGeocodingUrl,
-      forecastUrl: settings.openMeteoForecastUrl,
-      searchLimit: settings.weatherSearchLimit
-    })
-  );
-  const newsToolService = new NewsToolService(
-    new NewsLookupClient({
-      newsDataApiKey: settings.newsDataApiKey,
-      gdeltDocApiUrl: settings.gdeltDocApiUrl
-    })
-  );
+    const services = {
+        weather: createWeatherService(settings.weather),
+        news: createNewsService(settings.news)
+    };
 
-  const server = createMcpServer(weatherService, newsToolService);
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true
-  });
+    const server = createMcpServer(services);
+    const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true
+    });
 
-  response.on("close", () => {
-    void transport.close();
-    void server.close();
-  });
+    response.on("close", () => {
+        void transport.close();
+        void server.close();
+    });
 
-  try {
-    await server.connect(transport);
-    await transport.handleRequest(request, response, request.body);
-  } catch (error) {
-    if (!response.headersSent) {
-      response.status(500).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: "Internal server error"
-        },
-        id: null
-      });
+    try {
+        await server.connect(transport);
+        await transport.handleRequest(request, response, request.body);
+    } catch (error) {
+        if (!response.headersSent) {
+            response.status(500).json({
+                jsonrpc: "2.0",
+                error: {
+                    code: -32603,
+                    message: "Internal server error"
+                },
+                id: null
+            });
+        }
+
+        void transport.close();
+        void server.close();
+
+        if (error instanceof Error) {
+            console.error(error.message);
+            return;
+        }
+
+        console.error(String(error));
     }
-
-    void transport.close();
-    void server.close();
-
-    if (error instanceof Error) {
-      console.error(error.message);
-      return;
-    }
-
-    console.error(String(error));
-  }
 };
 
 export const buildApp = (settings: Settings): Express => {
-  const app = express();
-  app.use(express.json());
+    const app = express();
+    app.use(express.json());
 
-  app.get("/health", (_request, response) => {
-    response.json({ status: "ok" });
-  });
-
-  app.post("/mcp", async (request, response) => {
-    await handleMcpRequest(request, response, settings);
-  });
-
-  app.get("/mcp", (_request, response) => {
-    response.status(405).json({
-      jsonrpc: "2.0",
-      error: {
-        code: -32000,
-        message: "Method not allowed."
-      },
-      id: null
+    app.get("/health", (_request, response) => {
+        response.json({ status: "ok" });
     });
-  });
 
-  app.delete("/mcp", (_request, response) => {
-    response.status(405).json({
-      jsonrpc: "2.0",
-      error: {
-        code: -32000,
-        message: "Method not allowed."
-      },
-      id: null
+    app.post("/mcp", async (request, response) => {
+        await handleMcpRequest(request, response, settings);
     });
-  });
 
-  return app;
+    app.get("/mcp", (_request, response) => {
+        response.status(405).json({
+            jsonrpc: "2.0",
+            error: {
+                code: -32000,
+                message: "Method not allowed."
+            },
+            id: null
+        });
+    });
+
+    app.delete("/mcp", (_request, response) => {
+        response.status(405).json({
+            jsonrpc: "2.0",
+            error: {
+                code: -32000,
+                message: "Method not allowed."
+            },
+            id: null
+        });
+    });
+
+    return app;
 };

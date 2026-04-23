@@ -1,39 +1,30 @@
-import { NewsLookupClient, NewsLookupError } from "../integrations/news.js";
-import type {
-  NewsBriefingFoundResult,
-  NewsBriefingNoResultsResult,
-  NewsBriefingProviderErrorResult,
-  NewsBriefingResult
-} from "../models/news.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { NewsService } from "./services/newsService.js";
+import * as z from "zod/v4";
 
-export class NewsToolService {
-  constructor(private readonly client: NewsLookupClient) {}
+export const registerNewsTool = (server: McpServer, service: NewsService) => {
+    server.registerTool(
+        "news_briefing",
+        {
+            title: "News Briefing",
+            description:
+                "Fetch a concise current-events briefing for a topic or headline query from public news sources.",
+            inputSchema: {
+                query: z.string().min(2).describe("Topic or headline query to brief")
+            }
+        },
+        async ({ query }) => {
+            const result = await service.getNewsBriefing(query);
 
-  async getNewsBriefing(query: string): Promise<NewsBriefingResult> {
-    const normalizedQuery = query.trim();
-
-    try {
-      const briefing = await this.client.getBriefing(normalizedQuery);
-
-      if (briefing.length === 0) {
-        return {
-          resultType: "news_briefing_no_results",
-          query: normalizedQuery,
-          message: "I couldn't pull together a reliable news briefing from the public sources I checked just now."
-        } satisfies NewsBriefingNoResultsResult;
-      }
-
-      return {
-        resultType: "news_briefing_found",
-        query: normalizedQuery,
-        briefing
-      } satisfies NewsBriefingFoundResult;
-    } catch (error) {
-      return {
-        resultType: "news_briefing_provider_error",
-        query: normalizedQuery,
-        message: error instanceof NewsLookupError ? error.message : String(error)
-      } satisfies NewsBriefingProviderErrorResult;
-    }
-  }
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify(result, null, 2)
+                    }
+                ],
+                structuredContent: result
+            };
+        }
+    );
 }
