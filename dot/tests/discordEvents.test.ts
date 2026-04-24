@@ -33,7 +33,7 @@ test("createDiscordInboundMessageEvent produces a canonical transport-neutral en
   assert.equal(event.payload.sender.actorRole, "owner");
   assert.equal(event.payload.replyRoute.replyTo, "msg-1");
   assert.equal(event.payload.messageId, "msg-1");
-  assert.equal(event.payload.content, "<@bot-1> hello there");
+  assert.equal(event.payload.content, "@Dot hello there");
   assert.equal(event.payload.addressedContent, "hello there");
 });
 
@@ -84,6 +84,7 @@ test("createDiscordInboundMessageEvent strips the bot role mention prefix only w
   });
 
   assert.equal(event.payload.addressedContent, "!settings show");
+  assert.equal(event.payload.content, "@Dot !settings show");
 });
 
 test("createDiscordInboundMessageEvent does not strip unrelated leading role mentions", () => {
@@ -107,5 +108,6 @@ test("createDiscordInboundMessageEvent does not strip unrelated leading role men
     ownerUserId: "owner-1"
   });
 
-  assert.equal(event.payload.addressedContent, "<@&role-other> <@&role-bot> !settings show");
+  assert.equal(event.payload.content, "<@&role-other> @Dot !settings show");
+  assert.equal(event.payload.addressedContent, "<@&role-other> @Dot !settings show");
 });

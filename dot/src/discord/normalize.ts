@@ -49,6 +49,22 @@ export function stripLeadingBotMention(content: string, botUserId: string): stri
   return content.replace(mentionPattern, "").trim();
 }
 
+export function renderBotReferences(content: string, params: { botUserId: string; botUsername: string; botRoleIds?: string[] }): string {
+  const { botUserId, botUsername, botRoleIds = [] } = params;
+  const fallbackUsername = botUsername.trim() || "Dot";
+  const patterns = [
+    new RegExp(`<@!?${escapeRegExp(botUserId)}>`, "g"),
+    ...botRoleIds.map((roleId) => new RegExp(`<@&${escapeRegExp(roleId)}>`, "g"))
+  ];
+
+  let rendered = content;
+  for (const pattern of patterns) {
+    rendered = rendered.replace(pattern, `@${fallbackUsername}`);
+  }
+
+  return rendered;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

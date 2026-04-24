@@ -13,7 +13,7 @@ export function buildPipelineContext(params: {
     const conversationId = params.event.correlation.conversationId ?? "";
     return Promise.resolve(params.persistence.listRecentConversationTurns(conversationId, RECENT_CHAT_HISTORY_LIMIT)).then((recentConversation) => ({
         event: params.event,
-        content: params.event.payload.addressedContent.trim(),
+        content: params.event.payload.content.trim(),
         conversationId,
         currentSpeakerLabel: formatCurrentSpeakerLabel(params.event),
         incomingMessage: mapInboundEventToIncomingMessage(params.event),

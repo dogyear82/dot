@@ -1,5 +1,6 @@
 import { resolveActorRole } from "../auth.js";
 import { DOT_EVENT_VERSION, type InboundMessageReceivedEvent } from "../events.js";
+import { renderBotReferences, stripLeadingBotAddress } from "./normalize.js";
 import type { IncomingMessage } from "../types.js";
 
 export function createDiscordInboundMessageEvent(params: {
@@ -10,7 +11,16 @@ export function createDiscordInboundMessageEvent(params: {
   ownerUserId: string;
 }): InboundMessageReceivedEvent {
   const { message, botUserId, botUsername, botRoleIds = [], ownerUserId } = params;
-  const addressedContent = message.content;
+  const renderedContent = renderBotReferences(message.content, {
+    botUserId,
+    botUsername,
+    botRoleIds
+  });
+  const addressedContent = stripLeadingBotAddress(renderedContent, {
+    botUserId,
+    botUsername,
+    botRoleIds: []
+  });
 
   return {
     eventId: `discord:${message.id}`,
@@ -43,7 +53,7 @@ export function createDiscordInboundMessageEvent(params: {
         displayName: message.authorUsername,
         actorRole: resolveActorRole(message.authorId, ownerUserId)
       },
-      content: message.content,
+      content: renderedContent,
       addressedContent,
       isDirectMessage: message.isDirectMessage,
       mentionedBot: message.mentionedBot,

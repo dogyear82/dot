@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeMessage, stripLeadingBotAddress, stripLeadingBotMention } from "../src/discord/normalize.js";
+import { normalizeMessage, renderBotReferences, stripLeadingBotAddress, stripLeadingBotMention } from "../src/discord/normalize.js";
 
 test("normalizeMessage maps Discord message shape into IncomingMessage", () => {
   const createdAt = new Date("2026-04-07T00:00:00.000Z");
@@ -87,6 +87,26 @@ test("stripLeadingBotAddress removes a same-name role mention prefix", () => {
       botRoleIds: ["1492214618611908830"]
     }),
     "!settings show"
+  );
+});
+
+test("renderBotReferences rewrites user and role mentions to a readable Dot handle", () => {
+  assert.equal(
+    renderBotReferences("<@bot-1> you there?", {
+      botUserId: "bot-1",
+      botUsername: "Dot",
+      botRoleIds: ["role-bot"]
+    }),
+    "@Dot you there?"
+  );
+
+  assert.equal(
+    renderBotReferences("<@&role-bot> sheltered", {
+      botUserId: "bot-1",
+      botUsername: "Dot",
+      botRoleIds: ["role-bot"]
+    }),
+    "@Dot sheltered"
   );
 });
 
