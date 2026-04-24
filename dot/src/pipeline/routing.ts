@@ -65,6 +65,7 @@ function parseMessageRoutingResponse(response: string): RoutingData {
 
     if (!parsed.route || (!parsed.route.name || parsed.route.name.trim() === "")) {
         return {
+            isSuspectedPromptInjection: false,
             addressed: true,
             reason: parsed.reason,
             route: {
