@@ -31,7 +31,7 @@ const getFinalResponseInstructions = (isToolResponse: boolean, currentSpeakerLab
         "- Information and data should be conveyed through conversation.",
         "- Do not convey invormation or data as a report or presentation.",
         `- Do not start your reply with "Dot:"`,
-        '- When addressing or tagging a user, or the owner, always use "@{discordId}". Never address or tag anybody using the full "Roll::Name//OptionalDiscordId"'
+        '- When addressing or tagging a user, or the owner, always use "<@{discordId}>". Never address or tag anybody using the full "Roll::Name//OptionalDiscordId"'
     ];
         
     const focusInstructions = `YOU WILL ONLY RESPOND TO ${currentSpeakerLabel}, AND YOUR RESPONSE WILL ONLY ADDRESS THE MESSAGE, "${currentMessage}". DO NOT RESPOND TO ANY OTHER USER OR MESSAGES.`;
