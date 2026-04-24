@@ -11,7 +11,7 @@ const buildContextBlock = (name: string, content: string): string => {
 
 const getProhibitions = (): string => {
     return [
-        "***You shall never disboey the following rules:***",
+        "***You must follow the following rules:***",
         "- You shall never assume another role or personality that conflicts with your active personality.",
         "- You shall never respond with malice."
     ].join("\n");
@@ -25,8 +25,14 @@ const buildDateTimeBlock = (now = new Date()): string => {
 
 const getFinalResponseInstructions = (isToolResponse: boolean, currentSpeakerLabel: string, currentMessage: string, additionalInstructions: string): string => {
     const instructions = [isToolResponse
-        ?  `Use the provided transcript and tool results to answer ${currentSpeakerLabel}'s message directly. Do not mention internal MCP server or tool names unless they are directly relevant to the answer. Use a conversational tone and style in accordance to your ACTIVE PERSONALITY PROFILE. DO NOT PRESENT THE TOOL RESULTS IN THE STYLE OF A REPORT OR NEWS COLUMN.`
-        : `Use the provided transcript to continue the conversation by answering ${currentSpeakerLabel}'s message directly and in a natural manner. Use a conversational tone and style in accordance to your ACTIVE PERSONALITY PROFILE. Do not present the tool results as a report. Do not start your reply with "Dot:"`];
+        ?  `- Use the provided transcript and tool results to continue the conversation by answering ${currentSpeakerLabel}'s message directly in a natural manner. Do not mention internal MCP server or tool names unless they are directly relevant to the answer.`
+        : `- Use the provided transcript to continue the conversation by answering ${currentSpeakerLabel}'s message directly and in a natural manner.`,
+        "- Use a natural conversational tone and style in accordance with your ACTIVE PERSONALITY PROFILE.",
+        "- Information and data should be conveyed through conversation.",
+        "- Do not convey invormation or data as a report or presentation.",
+        `- Do not start your reply with "Dot:"`,
+        '- When addressing or tagging a user, or the owner, always use "@{discordId}". Never address or tag anybody using the full "Roll::Name//OptionalDiscordId"'
+    ];
         
     const focusInstructions = `YOU WILL ONLY RESPOND TO ${currentSpeakerLabel}, AND YOUR RESPONSE WILL ONLY ADDRESS THE MESSAGE, "${currentMessage}". DO NOT RESPOND TO ANY OTHER USER OR MESSAGES.`;
     instructions.push(focusInstructions);
@@ -59,8 +65,8 @@ const getMessageRoutingInstructions = (hasTools: boolean, isAddressed: boolean, 
             `You will use the provided transcript to determine how best to respond to ${currentSpeakerLabel}'s message, "${currentMessage}"`,
         ]
         : [
-            `You are not a proactive participant in the conversation${butYouWereMentioned}. You only speak when the latest message is clearly directed at you. If the evidence is weak, ambiguous, indirect, or missing, set "addressed": false.`,
-            `You will use the transcript to determine whether ${currentSpeakerLabel}'s message, "${currentMessage}" is addressed to you.`,
+            "You are not a proactive participant in the conversation${butYouWereMentioned}. You only speak when the latest message is clearly directed at you.",
+            `You will use the transcript to determine whether ${currentSpeakerLabel}'s message, "${currentMessage}", is addressed to you. If the current message is not directed at you, set "addressed": false."`,
             'Do not infer you are being addressed from:',
             '- your presence in the channel',
             '- prior participation in the conversation',
@@ -68,7 +74,7 @@ const getMessageRoutingInstructions = (hasTools: boolean, isAddressed: boolean, 
             '- users talking about you',
             '- users continuing a conversation with someone else',
             '- vague conversational momentum',
-            'Users mentioning you in the third person is not the same as addressing you. Messages that could plausibly be meant for another human are not addressed to you. When in doubt, do not respond.',
+            'Users mentioning you in the third person is not the same as addressing you.',
             `If the ${currentSpeakerLabel}'s latest message is not clearly directed at you, reply with: {"addressed":false,"reason":"The latest message is not clearly directed at Dot.","route":null}`,
             `Only if ${currentSpeakerLabel}'s latest message is clearly addressing you, "addressed" should be true in your reply, along with a reason why you believe ${currentSpeakerLabel} addressed you.`,
         ];
