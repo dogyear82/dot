@@ -101,6 +101,7 @@ const getMessageRoutingInstructions = (hasTools: boolean, isAddressed: boolean, 
 
 
 export function buildFinalOutputPrompt(
+    systemPrompt: string,
     toolResult: string, 
     recentConversation: ConversationTurnRecord[],
     currentSpeakerLabel: string,
@@ -108,6 +109,10 @@ export function buildFinalOutputPrompt(
     additionalInstructions: string
 ): ChatMessage[] {
     const prompt = [buildDateTimeBlock()];
+
+    if (systemPrompt.trim().length > 0) {
+        prompt.push(buildContextBlock("ACTIVE PERSONALITY PROFILE", systemPrompt));
+    }
 
     const transcript = buildConversationTranscriptPrompt({ recentConversation, currentSpeakerLabel, currentMessage });
     const transcriptContext = buildContextBlock("CHAT TRANSCRIPT", transcript);

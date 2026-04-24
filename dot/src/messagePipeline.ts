@@ -13,6 +13,7 @@ import { createReplyPublisher } from "./pipeline/publish.js";
 import { resolveMessageRoute } from "./pipeline/routing.js";
 import type { ToolCallService } from "./tools/mcp/service.js";
 import type { WorldLookupAdapter } from "./tools/shared/worldLookup.js";
+import { buildSystemPrompt, type PersonaBalance, type PersonaMode } from "./chat/persona.js";
 import { buildFinalOutputPrompt } from "./utilities/promptUtility.js";
 
 export function registerMessagePipeline(params: {
@@ -151,6 +152,7 @@ export function registerMessagePipeline(params: {
 
                                 if (toolResponse.success) {
                                     const prompt = buildFinalOutputPrompt(
+                                        getActiveSystemPrompt(persistence),
                                         toolResponse.content,
                                         recentConversation,
                                         currentSpeakerLabel,
@@ -167,6 +169,7 @@ export function registerMessagePipeline(params: {
                                     ? `You tried to look up additional data using the tool "${toolName}", but the tool call failed with: ${toolResponse.failureDetail}`
                                     : "You tried to look up additional data using a tool, but the tool call failed.";
                                 const generalConversationPrompt = buildFinalOutputPrompt(
+                                    getActiveSystemPrompt(persistence),
                                     "",
                                     recentConversation,
                                     currentSpeakerLabel,
@@ -189,7 +192,14 @@ export function registerMessagePipeline(params: {
                         const additionalInstructions = routingData.route.name === "respond"
                             ? routingData.route.instructions
                             : "";
-                        const generalConversationPrompt = buildFinalOutputPrompt("", recentConversation, currentSpeakerLabel, content, additionalInstructions);
+                        const generalConversationPrompt = buildFinalOutputPrompt(
+                            getActiveSystemPrompt(persistence),
+                            "",
+                            recentConversation,
+                            currentSpeakerLabel,
+                            content,
+                            additionalInstructions
+                        );
                         const response = await params.llmService.generate(generalConversationPrompt);
                         logger.info({
                             messageId: event.payload.messageId,
@@ -206,5 +216,19 @@ export function registerMessagePipeline(params: {
                 }
             );
         });
+    });
+}
+
+function getActiveSystemPrompt(persistence: Persistence): string {
+    const mode = persistence.settings.get("persona.mode");
+    const balance = persistence.settings.get("persona.balance");
+
+    return buildSystemPrompt({
+        mode: mode === "diagnostic" ? "diagnostic" : "sheltered" satisfies PersonaMode,
+        balance:
+            balance === "assistant" || balance === "companion"
+                ? balance
+                : "balanced" satisfies PersonaBalance,
+        settings: persistence.settings
     });
 }
