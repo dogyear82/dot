@@ -87,6 +87,21 @@ export function registerMessagePipeline(params: {
                             event,
                             persistence
                         });
+
+                        if (!persistence.settings.hasCompletedOnboarding()) {
+                            if (!accessDecision.canUsePrivilegedFeatures) {
+                                pipelineOutcome = "ignored_onboarding_incomplete";
+                                return;
+                            }
+
+                            const response = content
+                                ? handleOnboardingReply(persistence.settings, content)
+                                : { reply: getOnboardingPrompt(persistence.settings), onboardingComplete: false };
+                            pipelineOutcome = "onboarding";
+                            await publisher.publishReply(response.reply);
+                            return;
+                        }
+
                         const availableTools = await params.toolService.listToolsForRouting();
                         const routingData = await resolveMessageRoute({
                             llmService,
@@ -125,15 +140,6 @@ export function registerMessagePipeline(params: {
                         }
 
                         if (accessDecision.canUsePrivilegedFeatures) {
-                            if (!persistence.settings.hasCompletedOnboarding()) {
-                                const response = content
-                                    ? handleOnboardingReply(persistence.settings, content)
-                                    : { reply: getOnboardingPrompt(persistence.settings), onboardingComplete: false };
-                                pipelineOutcome = "onboarding";
-                                await publisher.publishReply(response.reply);
-                                return;
-                            }
-
                             if (routingData.route.name === "execute_tool") {
                                 const { toolName, args } = routingData.route;
                                 const toolResponse = await params.toolService.executeTool(toolName, args);
