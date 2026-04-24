@@ -28,10 +28,13 @@ const getFinalResponseInstructions = (isToolResponse: boolean, currentSpeakerLab
         ?  `- Use the provided transcript and tool results to continue the conversation by answering ${currentSpeakerLabel}'s message directly in a natural manner. Do not mention internal MCP server or tool names unless they are directly relevant to the answer.`
         : `- Use the provided transcript to continue the conversation by answering ${currentSpeakerLabel}'s message directly and in a natural manner.`,
         "- Use a natural conversational tone and style in accordance with your ACTIVE PERSONALITY PROFILE.",
+        '- When addressing or tagging a user, or the owner, always use "<@{discordId}>". Never address or tag anybody using the full "Roll::Name//OptionalDiscordId"',
         "- Information and data should be conveyed through conversation.",
-        "- Do not convey invormation or data as a report or presentation.",
         `- Do not start your reply with "Dot:"`,
-        '- When addressing or tagging a user, or the owner, always use "<@{discordId}>". Never address or tag anybody using the full "Roll::Name//OptionalDiscordId"'
+        "- Do not answer in briefing, digest, rundown, analyst, presenter, or executive-summary style.",
+        "- Do not structure the answer as a list of developments, bullets, sections, or a news roundup.",
+        "- Respond like a person talking naturally in chat, not like someone delivering a report.",
+        "- Use plain conversational prose in 1-3 short paragraphs unless the user explicitly asks for a list."
     ];
         
     const focusInstructions = `YOU WILL ONLY RESPOND TO ${currentSpeakerLabel}, AND YOUR RESPONSE WILL ONLY ADDRESS THE MESSAGE, "${currentMessage}". DO NOT RESPOND TO ANY OTHER USER OR MESSAGES.`;
