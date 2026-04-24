@@ -11,6 +11,7 @@ export function createRouteDataFromCommand(content: string): {
         return {
             isValid: true,
             routingData: {
+                isSuspectedPromptInjection: false,
                 addressed: true,
                 reason: "Command Requested: !weather",
                 route: {
@@ -38,6 +39,7 @@ export function createRouteDataFromCommand(content: string): {
         return {
             isValid: true,
             routingData: {
+                isSuspectedPromptInjection: false,
                 addressed: true,
                 reason: "Command Requested: !tool",
                 route: {
