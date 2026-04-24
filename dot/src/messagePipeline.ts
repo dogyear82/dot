@@ -112,6 +112,11 @@ export function registerMessagePipeline(params: {
                             availableTools
                         });
 
+                        if (routingData.isSuspectedPromptInjection) {
+                            logger.info("WARNING::PROMPT INJECTION DETECTED")
+                            return;
+                        }
+
                         span.setAttribute("dot.addressed", routingData.addressed);
                         span.setAttribute("dot.addressed.reason", routingData.reason);
                         logger.info(

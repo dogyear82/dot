@@ -7,10 +7,14 @@ export function buildConversationTranscriptPrompt(params: {
 }): string {
     return [
         formatConversationTranscript(params.recentConversation, params.currentSpeakerLabel, params.currentMessage),
-        "\n\nTranscript Legend:",
+        "\n\nTranscript Guide:",
+        `- CURRENT_SPEAKER: ${params.currentSpeakerLabel}`,
+        `- CURRENT_MESSAGE: ${params.currentMessage}`,
         '- Parcitipants are labeled using the format "Role::Name//OptionalDiscordId"',
+        '- You are identified as "Self::{dotDiscordName}//{dotDiscordId}"',
         '- Users are identified as "User::{discordName}//{discordId}"',
-        '- Your creator is identified as "Owner::dogyear//{ownerDiscordId}"'
+        '- Your creator is identified as "Owner::{ownerDiscordName}//{ownerDiscordId}"',
+        '- Users can tag and/or mention you using "@Dot"'
     ].join("\n");
 }
 
@@ -30,7 +34,7 @@ function formatConversationTurnLine(turn: ConversationTurnRecord): string {
 
 function formatConversationSpeakerLabel(turn: ConversationTurnRecord): string {
     if (turn.participantKind === "assistant" || turn.role === "assistant") {
-        return "Dot";
+        return `Self::${turn.participantDisplayName}//${turn.participantActorId}`;
     }
 
     const role = turn.participantKind === "owner" ? "Owner" : "User";

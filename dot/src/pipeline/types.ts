@@ -14,6 +14,7 @@ export interface PipelineContext {
 }
 
 export interface RoutingData {
+    isSuspectedPromptInjection: boolean;
     addressed: boolean;
     reason: string;
     route: MessageRoute | null;
