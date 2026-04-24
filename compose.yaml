@@ -1,13 +1,15 @@
 services:
     bot:
+        image: dot-ai
         build:
-            context: .
+            context: ./dot
             dockerfile: Containerfile
         env_file:
-            - .env
+            - ./dot/.env
         environment:
             EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
             NATS_URL: ${NATS_URL:-nats://nats:4222}
+            POSTGRES_URL: ${POSTGRES_URL:-postgresql://dot:dot@postgres:5432/dot}
             OLLAMA_BASE_URL: http://ollama:11434
             LOG_FILE_PATH: /app/data/logs/dot.log
             OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-dot}
@@ -19,6 +21,8 @@ services:
                 condition: service_started
             nats:
                 condition: service_healthy
+            postgres:
+                condition: service_healthy
             tempo:
                 condition: service_started
         volumes:
@@ -29,14 +33,15 @@ services:
 
     discord-ingress:
         build:
-            context: .
+            context: ./dot
             dockerfile: Containerfile
         command: [ "node", "dist/src/discordIngressService.js" ]
         env_file:
-            - .env
+            - ./dot/.env
         environment:
             EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
             NATS_URL: ${NATS_URL:-nats://nats:4222}
+            POSTGRES_URL: ${POSTGRES_URL:-postgresql://dot:dot@postgres:5432/dot}
             OLLAMA_BASE_URL: http://ollama:11434
             LOG_FILE_PATH: /app/data/logs/discord-ingress.log
             OTEL_SERVICE_NAME: ${OTEL_DISCORD_INGRESS_SERVICE_NAME:-dot-discord-ingress}
@@ -46,6 +51,8 @@ services:
         depends_on:
             nats:
                 condition: service_healthy
+            postgres:
+                condition: service_healthy
             tempo:
                 condition: service_started
         volumes:
@@ -54,14 +61,15 @@ services:
 
     discord-egress:
         build:
-            context: .
+            context: ./dot
             dockerfile: Containerfile
         command: [ "node", "dist/src/discordEgressService.js" ]
         env_file:
-            - .env
+            - ./dot/.env
         environment:
             EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
             NATS_URL: ${NATS_URL:-nats://nats:4222}
+            POSTGRES_URL: ${POSTGRES_URL:-postgresql://dot:dot@postgres:5432/dot}
             OLLAMA_BASE_URL: http://ollama:11434
             LOG_FILE_PATH: /app/data/logs/discord-egress.log
             OTEL_SERVICE_NAME: ${OTEL_DISCORD_EGRESS_SERVICE_NAME:-dot-discord-egress}
@@ -71,30 +79,7 @@ services:
         depends_on:
             nats:
                 condition: service_healthy
-            tempo:
-                condition: service_started
-        volumes:
-            - dot_data:/app/data
-        restart: unless-stopped
-
-    mail-sync:
-        build:
-            context: .
-            dockerfile: Containerfile
-        command: [ "node", "dist/src/mailSyncService.js" ]
-        env_file:
-            - .env
-        environment:
-            EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
-            NATS_URL: ${NATS_URL:-nats://nats:4222}
-            OLLAMA_BASE_URL: http://ollama:11434
-            LOG_FILE_PATH: /app/data/logs/mail-sync.log
-            OTEL_SERVICE_NAME: ${OTEL_MAIL_SYNC_SERVICE_NAME:-dot-mail-sync}
-            OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318/v1/traces}
-            METRICS_HOST: 0.0.0.0
-            METRICS_PORT: 9464
-        depends_on:
-            nats:
+            postgres:
                 condition: service_healthy
             tempo:
                 condition: service_started
@@ -102,54 +87,17 @@ services:
             - dot_data:/app/data
         restart: unless-stopped
 
-    mail-triage:
+    mcp:
         build:
-            context: .
+            context: ./mcp
             dockerfile: Containerfile
-        command: [ "node", "dist/src/mailTriageService.js" ]
         env_file:
-            - .env
+            - ./dot/.env
         environment:
-            EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
-            NATS_URL: ${NATS_URL:-nats://nats:4222}
-            OLLAMA_BASE_URL: http://ollama:11434
-            LOG_FILE_PATH: /app/data/logs/mail-triage.log
-            OTEL_SERVICE_NAME: ${OTEL_MAIL_TRIAGE_SERVICE_NAME:-dot-mail-triage}
-            OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318/v1/traces}
-            METRICS_HOST: 0.0.0.0
-            METRICS_PORT: 9464
-        depends_on:
-            nats:
-                condition: service_healthy
-            tempo:
-                condition: service_started
-        volumes:
-            - dot_data:/app/data
-        restart: unless-stopped
-
-    email-actions:
-        build:
-            context: .
-            dockerfile: Containerfile
-        command: [ "node", "dist/src/emailActionsService.js" ]
-        env_file:
-            - .env
-        environment:
-            EVENT_BUS_ADAPTER: ${EVENT_BUS_ADAPTER:-nats}
-            NATS_URL: ${NATS_URL:-nats://nats:4222}
-            OLLAMA_BASE_URL: http://ollama:11434
-            LOG_FILE_PATH: /app/data/logs/email-actions.log
-            OTEL_SERVICE_NAME: ${OTEL_EMAIL_ACTIONS_SERVICE_NAME:-dot-email-actions}
-            OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4318/v1/traces}
-            METRICS_HOST: 0.0.0.0
-            METRICS_PORT: 9464
-        depends_on:
-            nats:
-                condition: service_healthy
-            tempo:
-                condition: service_started
-        volumes:
-            - dot_data:/app/data
+            DOT_MCP_HOST: 0.0.0.0
+            DOT_MCP_PORT: 8000
+        ports:
+            - "8000:8000"
         restart: unless-stopped
 
     ollama:
@@ -176,6 +124,24 @@ services:
             timeout: 3s
             retries: 10
 
+    postgres:
+        image: docker.io/library/postgres:16
+        container_name: dot-postgres
+        restart: unless-stopped
+        environment:
+            POSTGRES_DB: ${POSTGRES_DB:-dot}
+            POSTGRES_USER: ${POSTGRES_USER:-dot}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dot}
+        healthcheck:
+            test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dot} -d ${POSTGRES_DB:-dot}" ]
+            interval: 5s
+            timeout: 3s
+            retries: 20
+        ports:
+            - "5432:5432"
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+
     prometheus:
         image: docker.io/prom/prometheus:v3.4.1
         container_name: dot-prometheus
@@ -187,7 +153,7 @@ services:
         ports:
             - "9090:9090"
         volumes:
-            - ./ops/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+            - ./dot/ops/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
             - prometheus_data:/prometheus
 
     loki:
@@ -199,7 +165,7 @@ services:
         ports:
             - "3100:3100"
         volumes:
-            - ./ops/observability/loki/config.yml:/etc/loki/config.yml:ro,Z
+            - ./dot/ops/observability/loki/config.yml:/etc/loki/config.yml:ro,Z
             - loki_data:/loki
 
     promtail:
@@ -212,7 +178,7 @@ services:
             loki:
                 condition: service_started
         volumes:
-            - ./ops/observability/promtail/config.yml:/etc/promtail/config.yml:ro,Z
+            - ./dot/ops/observability/promtail/config.yml:/etc/promtail/config.yml:ro,Z
             - dot_data:/var/lib/dot-data:ro
             - promtail_data:/tmp/promtail
 
@@ -226,7 +192,7 @@ services:
             - "3200:3200"
             - "4318:4318"
         volumes:
-            - ./ops/observability/tempo/config.yml:/etc/tempo/config.yml:ro,Z
+            - ./dot/ops/observability/tempo/config.yml:/etc/tempo/config.yml:ro,Z
             - tempo_data:/var/tempo
 
     grafana:
@@ -246,14 +212,15 @@ services:
             tempo:
                 condition: service_started
         volumes:
-            - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro,Z
-            - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro,Z
+            - ./dot/ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro,Z
+            - ./dot/ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro,Z
             - grafana_data:/var/lib/grafana
 
 volumes:
     dot_data:
     grafana_data:
     loki_data:
+    postgres_data:
     prometheus_data:
     promtail_data:
     tempo_data:
